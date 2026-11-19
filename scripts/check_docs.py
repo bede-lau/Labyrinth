@@ -4,7 +4,7 @@
 * status.md, architecture.md, decision.md, CLAUDE.md exist and are non-empty.
 * Every tasks/<feature>/TASK.md has the sections: Owner, Expected outcome, Tests, Status.
 * A task whose Status line says DONE must have tasks/<feature>/VERIFY.md containing
-  "Verdict: PASS" (written by the external verifier agent, with real test output).
+  a final line exactly "Verdict: PASS" (written by the external verifier agent).
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REQUIRED = ["status.md", "architecture.md", "decision.md", "CLAUDE.md"]
+STATES = {"TODO", "IN-PROGRESS", "VERIFYING", "DONE", "BLOCKED"}
 SECTIONS = ["## Owner", "## Expected outcome", "## Tests", "## Status"]
 
 
@@ -32,12 +33,15 @@ def main() -> int:
         for s in SECTIONS:
             if s not in text:
                 errors.append(f"{rel}: missing section '{s}'")
-        m = re.search(r"## Status\s*\n+\s*\**([A-Z\-]+)", text)
-        status = m.group(1) if m else "?"
+        m = re.search(r"^## Status[ \t]*\n+[ \t]*[`*_ ]*([A-Za-z][A-Za-z\-]*)", text, re.M)
+        status = m.group(1).upper() if m else "?"
+        if status not in STATES:
+            errors.append(f"{rel}: Status must be one of {sorted(STATES)}, found {status!r}")
         if status == "DONE":
             v = t.parent / "VERIFY.md"
-            if not v.exists() or "Verdict: PASS" not in v.read_text():
-                errors.append(f"{rel}: Status DONE but {v.relative_to(ROOT)} lacks 'Verdict: PASS' from the verifier")
+            verdicts = re.findall(r"^Verdict: (PASS|FAIL)[ \t]*$", v.read_text(), re.M) if v.exists() else []
+            if not verdicts or verdicts[-1] != "PASS":
+                errors.append(f"{rel}: Status DONE but {v.relative_to(ROOT)} has no final line 'Verdict: PASS' from the verifier")
     if errors:
         for e in errors:
             print(f"DOCS ERROR: {e}", file=sys.stderr)

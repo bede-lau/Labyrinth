@@ -14,6 +14,8 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+if [[ $# -gt 1 ]]; then echo "verify.sh: expected at most one scope argument, got $#" >&2; exit 2; fi
+if [[ $# -eq 1 && -z "$1" ]]; then echo "verify.sh: empty scope argument" >&2; exit 2; fi
 SCOPE="${1:-all}"
 PY="${PYTHON:-python3}"
 
@@ -52,6 +54,9 @@ if want docs; then
 fi
 
 # ---- main (backend) --------------------------------------------------------
+if want main || want boundary; then
+  stage "scripts:tests" "$PY" -m pytest -q -p no:cacheprovider scripts/tests
+fi
 if want main; then
   stage "main:lint"  "$PY" -m ruff check main scripts
   stage "main:tests" "$PY" -m pytest -q main/tests

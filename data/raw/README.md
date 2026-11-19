@@ -7,7 +7,7 @@ Committed so replay needs no network and $0. Integrity is enforced by
 |---|---|---|
 | `stella_benchmark_DOI_10_1017_S0022377822000393.h5` | stellaGK/stella @ `6f60964d` `AUTOMATIC_TESTS/quick_benchmarks/DOI_10_1017_S0022377822000393.h5` | `8560015e…9d4a` |
 | `wout_w7x_kjm.nc` | stellaGK/stella @ `6f60964d` `AUTOMATIC_TESTS/numerical_tests/test_5_fluxtube/wout_w7x_kjm.nc` (W7-X high-mirror "KJM" VMEC equilibrium) | `a811669f…f6` |
-| `stella_test2_vmec_geometry.geometry` | stellaGK/stella @ `6f60964d` `AUTOMATIC_TESTS/numerical_tests/test_2_geometry/EXPECTED_OUTPUT.vmec_geometry.geometry` | `5c156224…a4d` |
+| `stella_test2_vmec_geometry.geometry` | stellaGK/stella @ `6f60964d` `AUTOMATIC_TESTS/numerical_tests/test_2_geometry/EXPECTED_OUTPUT.vmec_geometry.geometry` | `5c156224…602d` |
 | `stella_test2_vmec_geometry.vmec.geo` | same directory, `EXPECTED_OUTPUT.vmec_geometry.vmec.geo` | `efccb0d3…491` |
 | `stella_test2_vmec_geometry.in` | same directory, `vmec_geometry.in` | `ea741f75…11d` |
 

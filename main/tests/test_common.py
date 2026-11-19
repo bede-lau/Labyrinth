@@ -42,3 +42,8 @@ def test_hash_helper_matches_hashlib(tmp_path):
     p = tmp_path / "f"
     p.write_bytes(b"abc")
     assert io.sha256_file(p) == hashlib.sha256(b"abc").hexdigest()
+
+
+def test_every_raw_file_is_pinned():
+    present = {p.name for p in paths.RAW.iterdir() if p.is_file() and p.name != "README.md"}
+    assert present == set(PINNED), f"unpinned or missing raw files: {present ^ set(PINNED)}"
