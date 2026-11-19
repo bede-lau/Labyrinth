@@ -8,12 +8,12 @@
 |---|---|---|---|---|---|
 | 00 scaffold | orchestrator | VERIFYING | run 1 FAIL (13 boundary bypasses, spoofable DONE gate) → fixed in 408ce44; re-verify running | — | boundary, verify loop, hooks, contracts, raw data, docs |
 | 01 geometry | backend-engineer / frontend-engineer | IN-PROGRESS: backend G1–G6 built (stella ρ0.7 reproduced: max |ΔB| 4.9e-4 ≤ 5e-4 printed), frontend TODO | backend verifier running | backend reviewer running | acceptance-129 BLOCKED (D-007) |
-| 02 transport | backend-engineer / frontend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | backend T1–T7 built; switching to edge-interpolated means (D-013: 2.68 reproduces) |
-| 03 forecast | backend-engineer / frontend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | backend F1–F3 built; MAE fixtures do not reproduce (D-008) |
-| 04 budget | backend-engineer / frontend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | |
-| 05 spatial | backend-engineer / frontend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | checkpoints not in repo → prd-reported |
-| 06 live-gx | backend-engineer / frontend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | UNREHEARSED, no Modal creds (D-011) |
-| 07 server | backend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | |
+| 02 transport | backend-engineer / frontend-engineer | IN-PROGRESS: backend T1–T7 built (all 4 PRD archive means reproduce, D-013); frontend TODO | backend verifier running | data reviewer running | stella trace has 8 duplicate restart samples (dropped, recorded) |
+| 03 forecast | backend-engineer / frontend-engineer | IN-PROGRESS: backend F1–F3 built; frontend TODO | backend verifier running | data reviewer running | MAE 0.0440/0.0418 vs PRD 0.0444/0.0423 — no definition reproduces (D-008) |
+| 04 budget | backend-engineer / frontend-engineer | IN-PROGRESS: backend B1–B5 built; frontend TODO | backend verifier running | data reviewer running | half-up cent rounding per item (PRD convention) |
+| 05 spatial | backend-engineer / frontend-engineer | IN-PROGRESS: backend S1–S4 built; frontend TODO | backend verifier running | data reviewer running | prd-reported; checkpoints not in repo → blocked |
+| 06 live-gx | backend-engineer / frontend-engineer | IN-PROGRESS: backend L1–L8 built (UNREHEARSED); frontend TODO | backend verifier running | live reviewer running | guard: slot $2.65, rehearsal $7.73, plan $26.21 (D-015) |
+| 07 server | backend-engineer | VERIFYING: H1–H6 built | verifier running | live reviewer running | loopback-only, no CORS → UI uses Vite proxy |
 | 08 design system | design-lead | IN-PROGRESS (backend/design wave 1) | — | — | |
 | 09 app shell | frontend-engineer | TODO | — | — | |
 
