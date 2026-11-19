@@ -1,13 +1,13 @@
 # Labyrinth · status
 
 > Single source of truth for handoff. Read this first. Update it whenever a task changes state.
-> Last updated by: orchestrator, 2026-11-19.
+> Last updated by: orchestrator, 2026-11-19 (wave 1 in flight).
 
 ## Where things stand
 | Task | Owner | State | Verify | Review | Notes |
 |---|---|---|---|---|---|
-| 00 scaffold | orchestrator | VERIFYING | verifier running |  — | boundary, verify loop, hooks, contracts, raw data, docs |
-| 01 geometry | backend-engineer / frontend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | acceptance-129 BLOCKED (D-007) |
+| 00 scaffold | orchestrator | VERIFYING | run 1 FAIL (13 boundary bypasses, spoofable DONE gate) → fixed in 408ce44; re-verify running | — | boundary, verify loop, hooks, contracts, raw data, docs |
+| 01 geometry | backend-engineer / frontend-engineer | IN-PROGRESS: backend G1–G6 built (stella ρ0.7 reproduced: max |ΔB| 4.9e-4 ≤ 5e-4 printed), frontend TODO | backend verifier running | backend reviewer running | acceptance-129 BLOCKED (D-007) |
 | 02 transport | backend-engineer / frontend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | 2.68 fixture expected mismatch (D-009) |
 | 03 forecast | backend-engineer / frontend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | MAE fixtures expected mismatch (D-008) |
 | 04 budget | backend-engineer / frontend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | |
