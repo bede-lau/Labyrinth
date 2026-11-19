@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://labyrinth.local/contracts/budget.schema.json",
+  "title": "Budget and presentation figures",
+  "type": "object",
+  "required": ["schemaVersion", "ceilingUsd", "postedUsd", "plannedUsd", "remainingAfterPlanUsd", "scenarios", "fixtures"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "ceilingUsd": { "type": "number" },
+    "postedUsd": { "type": "number", "description": "Provisionally posted earlier (PRD)." },
+    "plannedUsd": { "type": "number" },
+    "remainingAfterPlanUsd": { "type": "number" },
+    "scenarios": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "headline", "inputs", "derivation", "interpretation", "provenance"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "headline": { "type": "string" },
+          "inputs": { "type": "object", "additionalProperties": { "type": ["number", "string"] } },
+          "derivation": { "type": "string", "description": "Human-readable arithmetic, recomputed from inputs." },
+          "interpretation": { "type": "string" },
+          "provenance": { "$ref": "common.schema.json#/$defs/provenance" }
+        }
+      }
+    },
+    "fixtures": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/fixtureCheck" } }
+  }
+}

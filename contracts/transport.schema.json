@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://labyrinth.local/contracts/transport.schema.json",
+  "title": "Check transport: archived heat-flux traces, window statistics, fixtures",
+  "type": "object",
+  "required": ["schemaVersion", "units", "traces", "windows", "triangular", "reducedModalRun", "unitConversion", "fixtures"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "units": {
+      "type": "object",
+      "required": ["time", "heatFlux"],
+      "additionalProperties": false,
+      "properties": { "time": { "type": "string" }, "heatFlux": { "type": "string" } }
+    },
+    "traces": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "code", "tube", "t", "Q", "provenance"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "code": { "enum": ["stella", "GENE", "GX"] },
+          "tube": { "enum": ["bean", "triangular"] },
+          "t": { "type": "array", "items": { "type": "number" } },
+          "Q": { "type": "array", "items": { "type": "number" } },
+          "provenance": { "$ref": "common.schema.json#/$defs/provenance" }
+        }
+      }
+    },
+    "windows": {
+      "description": "Time-weighted means per trace and window, with stationarity and sampling uncertainty.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["traceId", "window", "covered", "nSamples", "mean", "stderr", "stationary", "saturatedClaimAllowed"],
+        "additionalProperties": false,
+        "properties": {
+          "traceId": { "type": "string" },
+          "window": { "$ref": "common.schema.json#/$defs/window" },
+          "covered": { "type": "boolean" },
+          "nSamples": { "type": "integer" },
+          "mean": { "type": ["number", "null"] },
+          "stderr": { "type": ["number", "null"], "description": "Autocorrelation-corrected sampling uncertainty of the mean." },
+          "stationary": { "type": ["boolean", "null"] },
+          "stationarityDetail": { "type": "string" },
+          "saturatedClaimAllowed": { "type": "boolean" }
+        }
+      }
+    },
+    "triangular": {
+      "type": "object",
+      "required": ["publishedMean", "window", "rawTraceStatus", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "publishedMean": { "type": "number" },
+        "window": { "$ref": "common.schema.json#/$defs/window" },
+        "rawTraceStatus": { "const": "unverified" },
+        "source": { "$ref": "common.schema.json#/$defs/source" }
+      }
+    },
+    "reducedModalRun": {
+      "type": "object",
+      "required": ["value", "window", "archive", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": "number" },
+        "window": { "$ref": "common.schema.json#/$defs/window" },
+        "archive": {
+          "type": "object",
+          "required": ["stella", "GENE"],
+          "additionalProperties": false,
+          "properties": { "stella": { "type": "number" }, "GENE": { "type": "number" } }
+        },
+        "provenance": { "$ref": "common.schema.json#/$defs/provenance" }
+      }
+    },
+    "unitConversion": {
+      "description": "Raw GX normalisation -> archive units, valid only for identical dimensional references.",
+      "type": "object",
+      "required": ["timeMultiplier", "heatFluxDivisor", "validity"],
+      "additionalProperties": false,
+      "properties": {
+        "timeMultiplier": { "type": "number" },
+        "heatFluxDivisor": { "type": "number" },
+        "validity": { "type": "string" }
+      }
+    },
+    "fixtures": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/fixtureCheck" } }
+  }
+}

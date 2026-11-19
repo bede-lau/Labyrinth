@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://labyrinth.local/contracts/common.schema.json",
+  "title": "Shared definitions",
+  "$defs": {
+    "source": {
+      "type": "object",
+      "required": ["label", "url", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "label": { "type": "string" },
+        "url": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$|^n/a$" },
+        "path": { "type": "string", "description": "Repo-relative path of the pinned copy, if committed." }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "required": ["outcome", "details"],
+      "additionalProperties": false,
+      "properties": {
+        "outcome": { "enum": ["passed", "failed", "blocked", "not-applicable"] },
+        "details": { "type": "string" }
+      }
+    },
+    "provenance": {
+      "description": "PRD: record solver revision, units, coverage, runtime and verification outcome with each result.",
+      "type": "object",
+      "required": ["kind", "solverRevision", "units", "coverage", "runtime", "verification", "sources"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["archive", "derived", "prd-reported", "live", "rehearsal"],
+          "description": "archive = read from a pinned upstream file; derived = computed by labyrinth_main from archives; prd-reported = number stated in PRD.md with no underlying data in this repo; live/rehearsal = produced by a GX worker."
+        },
+        "solverRevision": { "type": "string" },
+        "units": { "type": "string" },
+        "coverage": {
+          "type": "object",
+          "required": ["description"],
+          "additionalProperties": false,
+          "properties": {
+            "description": { "type": "string" },
+            "tStart": { "type": ["number", "null"] },
+            "tEnd": { "type": ["number", "null"] }
+          }
+        },
+        "runtime": { "type": "string", "description": "Wall-clock runtime of the producing run, or 'unknown'." },
+        "verification": { "$ref": "#/$defs/verification" },
+        "sources": { "type": "array", "items": { "$ref": "#/$defs/source" } }
+      }
+    },
+    "window": {
+      "type": "array",
+      "prefixItems": [{ "type": "number" }, { "type": "number" }],
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "fixtureCheck": {
+      "description": "A number claimed in PRD.md compared against the value this repo recomputes.",
+      "type": "object",
+      "required": ["id", "label", "claimed", "computed", "printedDecimals", "matches"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "claimed": { "type": "number" },
+        "computed": { "type": ["number", "null"] },
+        "printedDecimals": { "type": "integer", "minimum": 0 },
+        "matches": { "type": ["boolean", "null"], "description": "null when it cannot be recomputed from data in this repo." },
+        "note": { "type": "string" }
+      }
+    }
+  }
+}

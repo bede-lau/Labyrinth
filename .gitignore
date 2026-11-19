@@ -1,0 +1,12 @@
+node_modules/
+renderer/dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+.claude/state/
+.claude/settings.local.json
+.env
+.env.*
+*.log

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://labyrinth.local/contracts/forecast.schema.json",
+  "title": "Forecast replay: predict next 50-unit local mean, reveal, update, repeat",
+  "type": "object",
+  "required": ["schemaVersion", "traceId", "initWindow", "windowWidth", "method", "steps", "mae", "fixtures", "provenance"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "traceId": { "type": "string" },
+    "initWindow": { "$ref": "common.schema.json#/$defs/window" },
+    "windowWidth": { "type": "number" },
+    "method": { "type": "string", "description": "Exact definition of window mean and both forecasters." },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["window", "observed", "persistence", "frozen", "absErrPersistence", "absErrFrozen"],
+        "additionalProperties": false,
+        "properties": {
+          "window": { "$ref": "common.schema.json#/$defs/window" },
+          "observed": { "type": "number" },
+          "persistence": { "type": "number", "description": "Forecast = mean of the previous completed window." },
+          "frozen": { "type": "number", "description": "Forecast = mean of the initialization window, never updated." },
+          "absErrPersistence": { "type": "number" },
+          "absErrFrozen": { "type": "number" }
+        }
+      }
+    },
+    "mae": {
+      "type": "object",
+      "required": ["persistence", "frozen"],
+      "additionalProperties": false,
+      "properties": { "persistence": { "type": "number" }, "frozen": { "type": "number" } }
+    },
+    "fixtures": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/fixtureCheck" } },
+    "provenance": { "$ref": "common.schema.json#/$defs/provenance" }
+  }
+}

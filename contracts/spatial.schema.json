@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://labyrinth.local/contracts/spatial.schema.json",
+  "title": "Inspect spatial parallelism: GENE-X on separate Dommaschk geometry (replay)",
+  "type": "object",
+  "required": ["schemaVersion", "geometry", "code", "nPlanes", "ranks", "exchanges", "fieldSolve", "runs", "timing", "independenceNote", "provenance"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "geometry": { "const": "Dommaschk" },
+    "code": { "const": "GENE-X" },
+    "nPlanes": { "type": "integer" },
+    "ranks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rank", "device", "planes"],
+        "additionalProperties": false,
+        "properties": {
+          "rank": { "type": "integer" },
+          "device": { "type": "string" },
+          "planes": { "type": "array", "items": { "type": "integer" } }
+        }
+      }
+    },
+    "exchanges": {
+      "description": "MPI halo exchanges between neighbouring toroidal planes owned by different ranks (periodic).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["fromRank", "toRank", "planes"],
+        "additionalProperties": false,
+        "properties": {
+          "fromRank": { "type": "integer" },
+          "toRank": { "type": "integer" },
+          "planes": { "type": "array", "items": { "type": "integer" } }
+        }
+      }
+    },
+    "fieldSolve": { "type": "object", "required": ["device"], "properties": { "device": { "const": "CPU" } } },
+    "runs": {
+      "type": "object",
+      "required": ["controlled", "passedReference"],
+      "additionalProperties": false,
+      "properties": { "controlled": { "type": "integer" }, "passedReference": { "type": "integer" } }
+    },
+    "timing": {
+      "type": "object",
+      "required": ["cpuMeanS", "gpuMeanS", "speedup", "speedupRecomputed"],
+      "additionalProperties": false,
+      "properties": {
+        "cpuMeanS": { "type": "number" },
+        "gpuMeanS": { "type": "number" },
+        "speedup": { "type": "number" },
+        "speedupRecomputed": { "type": "number" }
+      }
+    },
+    "independenceNote": { "type": "string" },
+    "provenance": { "$ref": "common.schema.json#/$defs/provenance" }
+  }
+}

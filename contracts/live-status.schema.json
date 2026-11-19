@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://labyrinth.local/contracts/live-status.schema.json",
+  "title": "Advance plasma: live GX status (GET /api/live/status, SSE /api/live/stream events)",
+  "type": "object",
+  "required": ["schemaVersion", "mode", "reason", "budget", "workers", "fallback"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "mode": {
+      "enum": ["unavailable", "idle", "launching", "live", "fallback", "terminated"],
+      "description": "unavailable = no credentials or not qualified; fallback = a worker failed, saved run is playing."
+    },
+    "reason": { "type": "string" },
+    "qualified": { "type": "boolean", "description": "True only after a recorded rehearsal verified init + checkpoint continuation." },
+    "budget": {
+      "type": "object",
+      "required": ["ceilingUsd", "billedUsd", "pendingUsd", "slotEstimateUsd", "slotFits"],
+      "additionalProperties": false,
+      "properties": {
+        "ceilingUsd": { "type": "number" },
+        "billedUsd": { "type": "number" },
+        "pendingUsd": { "type": "number" },
+        "slotEstimateUsd": { "type": "number" },
+        "slotFits": { "type": "boolean" },
+        "hardTimeoutS": { "type": "integer" }
+      }
+    },
+    "workers": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["gpuIndex", "deviceId", "tube", "state", "simTime", "samples"],
+        "additionalProperties": false,
+        "properties": {
+          "gpuIndex": { "enum": [0, 1] },
+          "deviceId": { "type": "string", "description": "e.g. nvidia-smi UUID reported by the worker." },
+          "tube": { "enum": ["bean", "triangular"] },
+          "state": { "enum": ["pending", "initializing", "running", "checkpointed", "failed", "done"] },
+          "simTime": { "type": ["number", "null"], "description": "In archive units after conversion." },
+          "wallStart": { "type": ["string", "null"] },
+          "samples": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["t", "Q"],
+              "additionalProperties": false,
+              "properties": { "t": { "type": "number" }, "Q": { "type": "number" } }
+            }
+          },
+          "error": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "fallback": {
+      "type": "object",
+      "required": ["active", "label", "savedRunId"],
+      "additionalProperties": false,
+      "properties": {
+        "active": { "type": "boolean" },
+        "label": { "type": "string" },
+        "savedRunId": { "type": ["string", "null"], "description": "null when no qualified rehearsal recording exists." }
+      }
+    },
+    "provenance": { "$ref": "common.schema.json#/$defs/provenance" }
+  }
+}

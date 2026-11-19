@@ -1,0 +1,17 @@
+name: verify
+on:
+  push:
+  pull_request:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: renderer/package-lock.json }
+      - run: pip install -r main/requirements.txt
+      - run: npm --prefix renderer ci --no-audit --no-fund
+      - name: verify.sh (exits 2 on any failure)
+        run: bash scripts/verify.sh all

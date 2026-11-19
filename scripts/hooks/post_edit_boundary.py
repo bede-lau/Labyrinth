@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Claude Code PostToolUse hook (Edit|Write|MultiEdit).
+
+Reads the hook JSON on stdin, checks the edited file against the main/renderer
+import ban, and exits 2 with the violation on stderr so the agent must fix it.
+"""
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)  # not our concern; never block on malformed hook input
+path = (payload.get("tool_input") or {}).get("file_path") or ""
+if not path:
+    sys.exit(0)
+p = Path(path)
+try:
+    rel = p.resolve().relative_to(ROOT)
+except ValueError:
+    sys.exit(0)
+if not rel.parts or rel.parts[0] not in {"main", "renderer"}:
+    sys.exit(0)
+proc = subprocess.run(
+    [sys.executable, str(ROOT / "scripts/check_boundaries.py"), str(p.resolve())],
+    capture_output=True, text=True,
+)
+if proc.returncode != 0:
+    sys.stderr.write(proc.stderr or proc.stdout)
+    sys.exit(2)
+sys.exit(0)

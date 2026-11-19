@@ -1,0 +1,8 @@
+# Pinned backend deps. `pip install -r main/requirements.txt`
+numpy==2.5.3
+h5py==3.16.0
+netCDF4==1.7.5.1.post1
+jsonschema==4.26.0
+pytest==9.1.1
+ruff==0.16.9
+# Live GX only (not needed for replay or CI): pip install modal==1.6.4

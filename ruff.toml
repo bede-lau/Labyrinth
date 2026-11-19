@@ -1,0 +1,9 @@
+# Single lint config for main/ and scripts/.
+line-length = 160
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[lint.isort]
+known-first-party = ["labyrinth_main"]

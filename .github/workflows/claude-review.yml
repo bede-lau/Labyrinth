@@ -1,0 +1,25 @@
+# Automated agent review of every PR. Requires the repo secret ANTHROPIC_API_KEY
+# (Settings → Secrets and variables → Actions). Without it this job is skipped.
+name: claude-review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+jobs:
+  review:
+    if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this pull request following .claude/agents/reviewer.md exactly:
+            scientific correctness, honesty rules in CLAUDE.md, the main/renderer import ban,
+            correctness bugs, weak tests, security. Post findings as inline comments and finish
+            with "Review verdict: APPROVE" or "Review verdict: CHANGES REQUESTED".

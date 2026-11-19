@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://labyrinth.local/contracts/geometry.schema.json",
+  "title": "Locate the tubes: W7-X high-mirror geometry and sampled field lines",
+  "type": "object",
+  "required": ["schemaVersion", "equilibrium", "surface", "tubes", "validation", "provenance"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "equilibrium": {
+      "type": "object",
+      "required": ["name", "configuration", "nfp", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "configuration": { "type": "string" },
+        "nfp": { "type": "integer" },
+        "source": { "$ref": "common.schema.json#/$defs/source" }
+      }
+    },
+    "surface": {
+      "description": "Gray context mesh of the sampled flux surface (normalized radius rho, s = rho^2). Unsampled regions stay gray.",
+      "type": "object",
+      "required": ["rho", "s", "iota", "nTheta", "nPhi", "positions"],
+      "additionalProperties": false,
+      "properties": {
+        "rho": { "type": "number" },
+        "s": { "type": "number" },
+        "iota": { "type": "number" },
+        "nTheta": { "type": "integer", "minimum": 8 },
+        "nPhi": { "type": "integer", "minimum": 8 },
+        "positions": {
+          "description": "Flat [x0,y0,z0,x1,...] in metres, row-major over (phi, theta); length 3*nTheta*nPhi.",
+          "type": "array",
+          "items": { "type": "number" }
+        },
+        "boundary": {
+          "description": "Plasma boundary (s=1) cross-sections keyed by tube id, for the 2D inset.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["R", "Z"],
+            "properties": { "R": { "type": "array", "items": { "type": "number" } }, "Z": { "type": "array", "items": { "type": "number" } } }
+          }
+        }
+      }
+    },
+    "tubes": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "zetaCenterDeg", "alpha", "nSamples", "samples", "crossSection", "bmagRange"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "enum": ["bean", "triangular"] },
+          "label": { "type": "string" },
+          "zetaCenterDeg": { "type": "number" },
+          "alpha": { "type": "number" },
+          "nSamples": { "type": "integer" },
+          "bmagRange": { "$ref": "common.schema.json#/$defs/window" },
+          "samples": {
+            "description": "Ordered along the field line from start to end.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["thetaStar", "zeta", "bmag", "R", "Z", "x", "y", "z"],
+              "additionalProperties": false,
+              "properties": {
+                "thetaStar": { "type": "number", "description": "Straight-field-line poloidal angle (stella zed), rad." },
+                "zeta": { "type": "number", "description": "Toroidal angle, rad (VMEC phi)." },
+                "bmag": { "type": "number", "description": "|B| / B_ref (stella normalisation)." },
+                "R": { "type": "number" },
+                "Z": { "type": "number" },
+                "x": { "type": "number" },
+                "y": { "type": "number" },
+                "z": { "type": "number" }
+              }
+            }
+          },
+          "crossSection": {
+            "description": "The sampled surface at the tube's central toroidal angle.",
+            "type": "object",
+            "required": ["zetaDeg", "R", "Z"],
+            "additionalProperties": false,
+            "properties": {
+              "zetaDeg": { "type": "number" },
+              "R": { "type": "array", "items": { "type": "number" } },
+              "Z": { "type": "array", "items": { "type": "number" } }
+            }
+          }
+        }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "required": ["stellaReference", "acceptance129"],
+      "additionalProperties": false,
+      "properties": {
+        "stellaReference": {
+          "description": "Our VMEC field-line tracer vs stella's saved EXPECTED_OUTPUT geometry (rho=0.7, 25 samples).",
+          "type": "object",
+          "required": ["samplesCompared", "printedSignificantFigures", "maxAbsError", "maxRelError", "allWithinPrintedPrecision", "source"],
+          "additionalProperties": false,
+          "properties": {
+            "samplesCompared": { "type": "integer" },
+            "printedSignificantFigures": { "type": "integer" },
+            "maxAbsError": { "type": "number" },
+            "maxRelError": { "type": "number" },
+            "allWithinPrintedPrecision": { "type": "boolean" },
+            "source": { "$ref": "common.schema.json#/$defs/source" }
+          }
+        },
+        "acceptance129": {
+          "description": "PRD acceptance: bean |B| agrees with all 129 saved stella samples at rho=0.8.",
+          "$ref": "common.schema.json#/$defs/verification"
+        }
+      }
+    },
+    "provenance": { "$ref": "common.schema.json#/$defs/provenance" }
+  }
+}

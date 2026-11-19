@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://labyrinth.local/contracts/manifest.schema.json",
+  "title": "Artifact manifest (artifacts/manifest.json). Deterministic: no timestamps.",
+  "type": "object",
+  "required": ["schemaVersion", "generator", "artifacts"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "generator": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": { "name": { "const": "labyrinth_main" }, "version": { "type": "string" } }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "path", "schema", "sha256"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "enum": ["geometry", "transport", "forecast", "budget", "spatial"] },
+          "path": { "type": "string" },
+          "schema": { "type": "string" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    }
+  }
+}
