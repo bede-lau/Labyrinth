@@ -6,15 +6,15 @@
 ## Where things stand
 | Task | Owner | State | Verify | Review | Notes |
 |---|---|---|---|---|---|
-| 00 scaffold | orchestrator | VERIFYING | — | — | boundary, verify loop, hooks, contracts, raw data, docs |
-| 01 geometry | backend-engineer / frontend-engineer | TODO | — | — | acceptance-129 BLOCKED (D-007) |
-| 02 transport | backend-engineer / frontend-engineer | TODO | — | — | 2.68 fixture expected mismatch (D-009) |
-| 03 forecast | backend-engineer / frontend-engineer | TODO | — | — | MAE fixtures expected mismatch (D-008) |
-| 04 budget | backend-engineer / frontend-engineer | TODO | — | — | |
-| 05 spatial | backend-engineer / frontend-engineer | TODO | — | — | checkpoints not in repo → prd-reported |
-| 06 live-gx | backend-engineer / frontend-engineer | TODO | — | — | UNREHEARSED, no Modal creds (D-011) |
-| 07 server | backend-engineer | TODO | — | — | |
-| 08 design system | design-lead | TODO | — | — | |
+| 00 scaffold | orchestrator | VERIFYING | verifier running |  — | boundary, verify loop, hooks, contracts, raw data, docs |
+| 01 geometry | backend-engineer / frontend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | acceptance-129 BLOCKED (D-007) |
+| 02 transport | backend-engineer / frontend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | 2.68 fixture expected mismatch (D-009) |
+| 03 forecast | backend-engineer / frontend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | MAE fixtures expected mismatch (D-008) |
+| 04 budget | backend-engineer / frontend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | |
+| 05 spatial | backend-engineer / frontend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | checkpoints not in repo → prd-reported |
+| 06 live-gx | backend-engineer / frontend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | UNREHEARSED, no Modal creds (D-011) |
+| 07 server | backend-engineer | IN-PROGRESS (backend/design wave 1) | — | — | |
+| 08 design system | design-lead | IN-PROGRESS (backend/design wave 1) | — | — | |
 | 09 app shell | frontend-engineer | TODO | — | — | |
 
 States: TODO → IN-PROGRESS → VERIFYING → DONE (needs VERIFY.md `Verdict: PASS` + reviewer APPROVE) · BLOCKED.
@@ -26,6 +26,7 @@ States: TODO → IN-PROGRESS → VERIFYING → DONE (needs VERIFY.md `Verdict: P
 4. Final: design review screenshots, full `verify.sh all`, push.
 
 ## Blockers needing a human
+- **GitHub push is blocked (403):** the Claude GitHub App lacks write access to bede-lau/Labyrinth. All commits are local on `claude/focused-cori-6s5ucw` until access is fixed.
 - **129 saved stella samples at ρ 0.8** (PRD acceptance for Locate the tubes) — not in repo or at the cited stella commit. Provide the file. (D-007)
 - **Modal credentials + GX rehearsal** for live mode. (D-011)
 - **Dommaschk GENE-X checkpoints** to turn the spatial-parallelism replay from PRD-reported into verified. (05)
