@@ -93,3 +93,15 @@ live comparison and forecast. The sample-span value is kept in the fixture note 
 (0.0008, ~25× below that window's stderr) stays visible.
 **Consequences.** The 2.68 fixture matches. The forecast MAE fixtures (D-008) still do not reproduce
 under any tested definition (edge-interpolated ≈ 0.0440 / 0.0418 vs claimed 0.0444 / 0.0423).
+
+## D-015 · Live budget guard prices setup, idle and storage on top of GPU time
+**Context.** PRD: "$1.53 for 15 minutes" and "two one-hour rehearsals plus one live slot cost about
+$13.73" price GPU time only; the same PRD requires allowing "for setup, idle time, storage and egress"
+before each allocation.
+**Decision.** The guard estimates rate × (slot + 5 min setup per launch + 5 min idle margin) + $0.10
+storage/egress, rounded up to the cent: live slot **$2.65** (hard timeout 1500 s), rehearsal **$7.73**
+(4500 s). The allowances are assumptions, not PRD numbers. Worker resources are 4 CPU / 16 GiB each so
+the pair matches the priced 8 cores / 32 GiB. Mode stays `unavailable` until a rehearsal is recorded.
+Ledger lives outside the repo (`~/.labyrinth/ledger.json`); every launch marks it unreconciled.
+**Consequences.** Planned total with the guard: 8.10 + 2 × 7.73 + 2.65 = **$26.21** (PRD's GPU-only plan:
+$21.83). Still inside $40. Replace the assumptions with measured values after the first rehearsal.
