@@ -8,7 +8,7 @@ backend: backend-engineer (`main/labyrinth_main/features/forecast/`) · frontend
 ## Expected outcome
 - F1. Eight steps over [1500,1550) … [1850,1900) on the stella bean trace, initialised on [1450,1500).
 - F2. Persistence forecast (previous completed window mean) and frozen forecast (initialisation mean) with per-step absolute errors and MAE; `method` states the exact window-mean definition.
-- F3. Fixtures: claimed 0.0444 / 0.0423 vs computed. Orchestrator pre-check found the stated method gives ≈0.0447 / 0.0419 (sample mean, half-open) — **expected mismatch**; the artifact must show it (decision D-008).
+- F3. Fixtures: claimed 0.0444 / 0.0423 vs computed. Window means use the shared edge-interpolated definition (D-013) → ≈0.0440 / 0.0418; no tested definition reproduces both claims — **expected mismatch**; the artifact must show it (D-008).
 
 Frontend:
 - F4. Step-through replay: Predict → Reveal → Update, keyboard operable, with a reset; observed values are hidden until revealed.

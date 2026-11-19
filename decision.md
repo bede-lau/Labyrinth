@@ -58,7 +58,7 @@ claims 0.0444/0.0423. An expanding-mean forecaster happens to hit 0.0444 but its
 **Decision.** Implement the method the PRD *describes* (persistence). Display computed and claimed
 MAE side by side with a mismatch flag. Do not tune the method to hit the number.
 
-## D-009 · Archive 300–400 GENE mean is 2.67, PRD says 2.68
+## D-009 · Archive 300–400 GENE mean is 2.67, PRD says 2.68 — SUPERSEDED by D-013
 **Context.** Trapezoidal 300–400 mean of the GENE trace = 2.674 (sample mean 2.675); the PRD prints 2.68.
 stella 300–400 = 2.552 → "2.55" matches.
 **Decision.** Show computed values with a fixture mismatch flag on the 2.68 claim. Do not round up.
@@ -81,3 +81,15 @@ rehearsal run, so the fallback label says so and plays the archived stella/GENE 
 **Decision.** Every task's diff is reviewed by the `reviewer` agent before it is marked DONE. CI runs
 `verify.sh` on every push and PR. `.github/workflows/claude-review.yml` adds an automated Claude review
 on every PR once the repo owner adds an `ANTHROPIC_API_KEY` secret (not available to this session).
+
+## D-013 · Window means are edge-interpolated time integrals (supersedes D-009)
+**Context.** D-009 was based on the orchestrator's pre-check, which averaged with a trapezoid over only
+the samples inside [a, b] and divided by their span. The transport agent showed that the proper
+time-weighted mean, ∫_a^b Q dt / (b − a) with Q linearly interpolated at the window edges, gives
+GENE 300–400 = 2.675 → "2.68", and reproduces all four PRD archive means (2.242, 2.474, 2.55, 2.68).
+The PRD was right; the pre-check definition was wrong.
+**Decision.** One shared window-mean definition, edge-interpolated, for transport windows, fixtures,
+live comparison and forecast. The sample-span value is kept in the fixture note so the sensitivity
+(0.0008, ~25× below that window's stderr) stays visible.
+**Consequences.** The 2.68 fixture matches. The forecast MAE fixtures (D-008) still do not reproduce
+under any tested definition (edge-interpolated ≈ 0.0440 / 0.0418 vs claimed 0.0444 / 0.0423).

@@ -7,9 +7,9 @@ backend: backend-engineer (`main/labyrinth_main/features/transport/`) · fronten
 
 ## Expected outcome
 - T1. Traces read from `compared/test5/{stella,GENE}/{t,Q}` of the pinned benchmark h5, units `Q_i/Q_gB,i` vs `t v_th,i/a`; gradients (tgrad 3, ngrad 1) recorded in provenance.
-- T2. Time-weighted (trapezoidal, closed window) means reproduce fixtures **2.242** (stella 1500–1900) and **2.474** (GENE 1500–1893.765).
+- T2. Time-weighted means ∫_a^b Q dt/(b−a), Q linearly interpolated at the window edges (D-013), reproduce fixtures **2.242** (stella 1500–1900) and **2.474** (GENE 1500–1893.765).
 - T3. For each trace, windows 200–300, 300–400, 1500–1900 (and 1500–1893.765 for GENE): coverage, mean, autocorrelation-corrected stderr (batch means or integrated autocorrelation time — document which), stationarity test; `saturatedClaimAllowed` true only if covered ∧ stationary ∧ stderr finite.
-- T4. Reduced Modal stella run **5.79** on 300–400 shown against archive 300–400 means; fixtures for PRD's "2.55" and "2.68" vs computed (2.552 / 2.674 → the 2.68 fixture is expected to **mismatch**; record it, do not hide it).
+- T4. Reduced Modal stella run **5.79** on 300–400 shown against archive 300–400 means; fixtures for PRD's "2.55" and "2.68" vs computed (edge-interpolated means reproduce both, D-013; record the sample-span value 2.674 in the note).
 - T5. `gx_to_archive(t, Q)` returns (t·√2, Q/(2√2)); refuses (raises) unless the caller asserts identical dimensional references.
 - T6. `compare_window(new, archive, window)` returns agreement verdict + delta + combined uncertainty, and returns "no claim" when either side is uncovered or non-stationary.
 - T7. Triangular: published mean **2.22** over 1200–1500, `rawTraceStatus: unverified`, no triangular trace emitted.
