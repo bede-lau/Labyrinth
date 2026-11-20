@@ -1,5 +1,5 @@
 # Verify: 02-transport
-This file keeps every verifier run. Rounds 1–2 (backend outcomes T1–T7) come first. **Run 3 (whole task, T1–T12) is at the end and carries the current verdict.**
+This file keeps every verifier run. Rounds 1–2 (backend outcomes T1–T7) come first, then Run 3 and Run 4 (whole task, T1–T12). **The last run in the file carries the current verdict.**
 
 ## Round 2 — backend outcomes T1–T7 (2026-11-20, commit 4696675 + working tree)
 Verifier run: 2026-11-20 07:47–07:59 UTC, commit 4696675 + working tree. This is round 2, after the D-017 fix round.
@@ -696,3 +696,271 @@ probe copy removed
 **Why FAIL.** Both gates exit 0, T1–T8 and T10–T12 hold, and every one of the five frontend tests can fail. T9 does not hold as specified: four rows whose verdict is `null` display the word "stationary" as a test indication, against `interface.md:54` and round-2 N3, and the T9 test cannot tell a data-driven claim verdict from a hard-coded one. The fix is one line plus tests (B1, M1). M2–M5 should go in the same round.
 
 Verdict: FAIL — T9: four null-stationarity rows render "Undecidable (test indicates stationary; indicative only)" where interface.md §2 item 4 and round-2 N3 require "undecidable" only, and the T9 test cannot detect a hard-coded claim verdict; T1–T8 and T10–T12 pass
+
+---
+
+## Run 4 — whole task
+Verifier run: 2026-11-20, commit 3faed3a
+
+Scope: all twelve outcomes, T1–T12, after the fix round for run 3. At the owner's request this run is short:
+- `verify.sh all` was not rerun. The maintainer's run at 3faed3a is quoted below.
+- The task's own tests ran once each.
+- One read-only backend probe and one T6 probe.
+- Two probe tests against the real view.
+- Five mutations, aimed at run 3's blocker and at the mutants that survived run 3.
+
+Tree state:
+- At the start, `git status --short` showed only ` M status.md`. Nothing under the owned paths (`main/labyrinth_main/features/transport/`, `renderer/src/features/transport/`) had changed, and neither had `main/tests/test_transport.py` or `artifacts/transport.json`. The same was true at the end.
+- `git diff --stat 2b1607e HEAD` on the transport paths: the backend, `test_transport.py` and `artifacts/transport.json` are unchanged since run 3. The frontend changed in `TransportView.tsx`, `TransportView.test.tsx`, `model.ts` and `transport.css`, plus a new `lazyLoad.test.ts`. The shared files `lib/liveStatus.ts`, `FixtureCheck.tsx` and `ProvenanceBadge.tsx` also changed.
+
+Where each step ran:
+- Shared tree (read-only): the tests and the Python probes.
+- Isolated copy from `scripts/probe-copy.sh vt-02-transport`: the probe tests and the mutations. The copy was restored after each mutation and deleted at the end.
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| T1 | Traces from `compared/test5/{stella,GENE}/{t,Q}` of the pinned h5, units, tgrad 3 / ngrad 1 in provenance | `test_T1_traces_read_from_pinned_h5_with_units_and_gradients`, `test_T1_divergent_restart_is_refused_not_silently_dropped`: pass | My own h5py read and dedup give stella 1441 raw → 1433 and GENE 1106, equal to the artifact trace lengths. Artifact units are `Q_i/Q_gB,i` and `t v_th,i/a`. Both trace provenances carry "tgrad=3, ngrad=1" | PASS |
+| T2 | Edge-interpolated means reproduce 2.242 (stella 1500–1900) and 2.474 (GENE 1500–1893.765) | two `test_T2_*`: pass | My segment-clipping integrator gives 2.2421269 and 2.4738618. Over the six covered windows, the largest difference from the artifact is 4.7e-07 | PASS |
+| T3 | Coverage, mean, autocorrelation-corrected stderr, stationarity, claim gate per window | four `test_T3_*`: pass | The artifact has 7 rows. Every `stationary` is null and every `saturatedClaimAllowed` is false. GENE 1500–1900 is `covered: false`, and my integrator refuses it too. The Monte-Carlo calibration was not repeated: the backend is byte-identical to round 2 and run 3, where it was done | PASS |
+| T4 | Reduced Modal 5.79 on 300–400 against archive means; 2.55 / 2.68 fixtures; sample-span 2.674 note | `test_T4_reduced_modal_run_against_archive_and_fixtures`: pass | My means: 2.554537 → 2.55 and 2.675066 → 2.68. `reducedModalRun.archive` equals the window rows. 5.79 is `prd-reported` with computed null. Δ is +3.2355 against stella and +3.1149 against GENE | PASS |
+| T5 | `gx_to_archive` = (t·√2, Q/(2√2)); raises unless identical references are asserted | `test_T5_gx_to_archive_converts_and_refuses_without_identical_references`: pass | Exact on four inputs. It raises ValueError for False, None, 0, 1, 1.0, 'no', 'True' and np.True_ | PASS |
+| T6 | `compare_window` returns agreement, delta and combined uncertainty, and "no claim" when uncovered or non-stationary | three `test_T6_*`: pass | Archive: stella vs GENE on 1500–1893.765 gives no claim, Δ −0.2333, combined uncertainty 0.0263. GENE vs itself on 300–400 gives no claim. An uncovered side gives no claim with delta None. My own AR(1) pair gives agree at shift 0 and disagree at shift 0.6 (margin 0.25) | PASS |
+| T7 | Triangular 2.22 over 1200–1500, `rawTraceStatus: unverified`, no triangular trace | `test_T7_triangular_published_mean_only`: pass | The artifact has two traces, both `tube: bean`. `triangular` is 2.22, [1200, 1500], `unverified`. Its fixture has computed null | PASS |
+| T8 | Plotly overlay of stella and GENE bean traces, shared axes with units, bands 200–300 / 300–400 / 1500–1900 | two T8 tests in `TransportView.test.tsx` and two in `lazyLoad.test.ts`: pass | The test now asserts that the plotted x and y equal the artifact arrays, and my own h5 read reproduces those arrays. Bands are read from `windows[]`. Every `plotly.js-dist-min` import in `renderer/src` is a dynamic `import()` (my grep). V1 renders the real view on the committed artifact | PASS |
+| T9 | Window table: mean ± stderr, coverage, stationarity, explicit claim allowed / not allowed per row | three T9 tests plus FF-15 and FF-2: pass | V1: all seven Stationarity cells read "Undecidable" or "Not covered", and none contains "stationary" or "indicative". Every row reads "Claim not allowed". Mutation B1 (run 3's blocker put back) is red, and so is T9b (hard-coded "Claim not allowed", which survived run 3) | PASS (run-3 B1 and M1 resolved) |
+| T10 | Discrepancy card: 5.79 vs archive values with delta; fixture rows claimed vs computed with ✓/✗ | three T10 tests plus FF-3 and FB-3: pass | My Δ values (+3.2355, +3.1149) match the asserted +3.24 and +3.11. Mutation T10c (fixture outcome ignores the `matches` flag, which survived run 3) is now red | PASS |
+| T11 | Triangular card separate from the bean plot, labelled published mean, raw trace unverified | two T11 tests: pass | Mutation T11b (the triangular 2.22 drawn as a mean segment on the bean plot, which survived run 3) is now red in both T11 tests | PASS |
+| T12 | When the live API reports GX samples, they overlay in archive units with a LIVE label; otherwise no GX series | nine parametrised not-live cases plus two T12 tests: pass | V2 sends a live payload, and the GX series is drawn at the delivered x [141.42,150] and y [2.05,2.2], so there is no second conversion. When the API then hangs, the LIVE label and the GX series are gone after about 54 ms (run-3 M4 resolved). Mutation T12e (fallback drawn as live, which survived run 3) is now red. The live comparison is a documented gap (interface.md §10) and is outside T12's wording | PASS |
+
+### Real output
+ANSI colour codes are removed. Commands ran through `scripts/dev.sh` in WSL, or from small scripts in my scratch directory.
+
+#### Gate evidence: maintainer run, not repeated (owner asked for short checks)
+```
+verify.sh all at commit 3faed3a, this exact tree (maintainer): exit 0, 11/11 stages:
+boundary self-test 134 shapes, scripts 71 passed, ruff clean, main 331 passed,
+artifacts schema + fresh, tsc clean, vitest 1350 passed, vite build OK
+```
+
+#### Tree state
+```
+$ wsl.exe -e git status --short
+ M status.md
+$ wsl.exe -e git status --short -- main/labyrinth_main/features/transport main/tests/test_transport.py renderer/src/features/transport artifacts/transport.json renderer/src/lib/liveStatus.ts
+(empty)
+$ wsl.exe -e git diff --stat 2b1607e HEAD -- main/labyrinth_main/features/transport main/tests/test_transport.py renderer/src/features/transport artifacts/transport.json renderer/src/lib/liveStatus.ts renderer/src/design/components/FixtureCheck.tsx renderer/src/design/components/ProvenanceBadge.tsx
+ renderer/src/design/components/FixtureCheck.tsx    | 271 +++++++--
+ renderer/src/design/components/ProvenanceBadge.tsx |  47 +-
+ .../src/features/transport/TransportView.test.tsx  | 648 +++++++++++++++++++--
+ renderer/src/features/transport/TransportView.tsx  | 442 ++++++++++----
+ renderer/src/features/transport/lazyLoad.test.ts   |  69 +++
+ renderer/src/features/transport/model.ts           | 270 ++++++++-
+ renderer/src/features/transport/transport.css      | 113 +++-
+ renderer/src/lib/liveStatus.ts                     | 623 ++++++++++++++++++--
+ 8 files changed, 2151 insertions(+), 332 deletions(-)
+```
+
+#### Backend tests (shared tree)
+```
+$ wsl.exe -e bash scripts/dev.sh python3 -m pytest -v -p no:cacheprovider main/tests/test_transport.py
+main/tests/test_transport.py::test_T1_traces_read_from_pinned_h5_with_units_and_gradients PASSED [  7%]
+main/tests/test_transport.py::test_T1_divergent_restart_is_refused_not_silently_dropped PASSED [ 14%]
+main/tests/test_transport.py::test_T2_time_weighted_means_reproduce_fixtures PASSED [ 21%]
+main/tests/test_transport.py::test_T2_window_mean_equals_analytic_integral_for_piecewise_linear_Q PASSED [ 28%]
+main/tests/test_transport.py::test_T3_window_stats_coverage_stderr_stationarity_and_claim_gate PASSED [ 35%]
+main/tests/test_transport.py::test_T3_edge_hole_window_not_covered PASSED [ 42%]
+main/tests/test_transport.py::test_T3_claim_gate_and_stderr_calibration_monte_carlo PASSED [ 50%]
+main/tests/test_transport.py::test_T3_stationarity_false_rejection_rate_at_small_n PASSED [ 57%]
+main/tests/test_transport.py::test_T4_reduced_modal_run_against_archive_and_fixtures PASSED [ 64%]
+main/tests/test_transport.py::test_T5_gx_to_archive_converts_and_refuses_without_identical_references PASSED [ 71%]
+main/tests/test_transport.py::test_T6_compare_window_tost_verdicts_and_no_claim PASSED [ 78%]
+main/tests/test_transport.py::test_T6_compare_window_dedups_repeats_and_refuses_divergent PASSED [ 85%]
+main/tests/test_transport.py::test_T6_null_false_disagree_rate_near_nominal PASSED [ 92%]
+main/tests/test_transport.py::test_T7_triangular_published_mean_only PASSED [100%]
+============================== 14 passed in 5.09s ==============================
+exit=0
+```
+
+#### Frontend tests (shared tree)
+```
+$ wsl.exe -e bash scripts/dev.sh npm --prefix renderer run -s test -- src/features/transport --reporter=verbose
+ ✓ src/features/transport/lazyLoad.test.ts > T8 Plotly stays lazy-loaded: no static import of plotly.js-dist-min anywhere in renderer/src 1204ms
+ ✓ src/features/transport/lazyLoad.test.ts > T8 the lazy-load guard recognises every static import form and ignores type-only and dynamic ones 2ms
+ ✓ src/features/transport/TransportView.test.tsx > T8 overlays stella and GENE bean traces on shared, unit-labelled axes with the three window bands 206ms
+ ✓ src/features/transport/TransportView.test.tsx > T8 window bands, the chart name and the clipped flux axis are read from the artifact, not typed in 8ms
+ ✓ src/features/transport/TransportView.test.tsx > T9 window table shows mean, stderr (— / ≈), coverage, stationarity and an explicit claim verdict per row 148ms
+ ✓ src/features/transport/TransportView.test.tsx > T9 claim verdict and stationarity follow the artifact in both directions (synthetic allowed / true / false rows) 102ms
+ ✓ src/features/transport/TransportView.test.tsx > T9 an artifact flag that contradicts its own row is never shown as an allowed claim 65ms
+ ✓ src/features/transport/TransportView.test.tsx > FF-15 T9 a row that reports N_eff below 20 never shows "Claim allowed", whatever the artifact flag says 61ms
+ ✓ src/features/transport/TransportView.test.tsx > FF-2 the "not allowed" callout blames the autocorrelation time only when every covered window reports N_eff below 20 47ms
+ ✓ src/features/transport/TransportView.test.tsx > FF-3 the discrepancy callout weighs the gap against the reported stderr, from the numbers 124ms
+ ✓ src/features/transport/TransportView.test.tsx > FF-4 the late-window note says ± is approximate only when a late stderr is flagged approximate 107ms
+ ✓ src/features/transport/TransportView.test.tsx > T10 discrepancy card: PRD-reported 5.79 vs archive 300–400 means with deltas; fixture rows with ✓/✗ 42ms
+ ✓ src/features/transport/TransportView.test.tsx > T10 a fixture the artifact marks as not matching is shown as a mismatch, and the deltas follow the artifact 40ms
+ ✓ src/features/transport/TransportView.test.tsx > FB-3 what a fixture match is backed by comes from the fixture basis (D-023), data when absent 39ms
+ ✓ src/features/transport/TransportView.test.tsx > T10 the label on the 5.79 figure is the provenance kind in the artifact, and an artifact can never make it LIVE 46ms
+ ✓ src/features/transport/TransportView.test.tsx > T10 stella and GENE are stated as not shown to agree, with the sign convention and both windows 57ms
+ ✓ src/features/transport/TransportView.test.tsx > T11 triangular card is separate from the bean plot: published mean 2.22, PRD-reported, raw trace unverified 51ms
+ ✓ src/features/transport/TransportView.test.tsx > T11 a triangular trace present in the artifact is still never drawn or badged on the bean plot 46ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for mode unavailable 90ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for mode idle 97ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for mode launching 83ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for mode fallback 87ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for mode terminated 94ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for an unreachable API (HTTP 502) 82ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for an unreachable API (network error) 86ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for mode live with no bean samples 83ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for mode live with triangular samples only 77ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 GX samples overlay in archive units with a LIVE label only when the API reports live 36ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 a GX trace with live provenance inside the artifact produces no live indicator in replay 80ms
+ ✓ src/features/transport/TransportView.test.tsx > DS-3 the view opens with the verdict: late means, Δ, the PRD-reported 5.79 beside 2.55 / 2.68, and the claim gate 49ms
+ ✓ src/features/transport/TransportView.test.tsx > DS-6 every table cell carries its column label, so the narrow card layout stays readable without the header row 59ms
+ ✓ src/features/transport/TransportView.test.tsx > A3 transport: a missing or invalid artifact shows an error naming the file, never a blank view 14ms
+ Test Files  2 passed (2)
+      Tests  32 passed (32)
+exit=0
+```
+The test file reads the committed artifact from disk and serves it through a stubbed `fetch`. Only `plotly.js-dist-min` is mocked. The expectations are literals: exact Stationarity texts per row, "+3.24", "+3.11", the band list, the axis titles and the legend name `GX · LIVE (archive units)`.
+
+#### Backend probe (`backend_probe.py`: my own h5py read and integrator; read-only)
+```
+h5 /mnt/d/Labyrinth/data/raw/stella_benchmark_DOI_10_1017_S0022377822000393.h5
+artifact traces: [('stella-bean', 'stella', 'bean', 1433), ('gene-bean', 'GENE', 'bean', 1106)]
+artifact units: {'heatFlux': 'Q_i/Q_gB,i', 'time': 't v_th,i/a'}
+stella: raw n=1441 dedup n=1433 artifact n=1433 tend=2074.7
+GENE: raw n=1106 dedup n=1106 artifact n=1106 tend=1893.765478748425
+stella [200.0, 300.0]: mine=2.715518 artifact=2.715518 covered=True stationary=None claim=False stderr=None
+stella [300.0, 400.0]: mine=2.5545375 artifact=2.554537 covered=True stationary=None claim=False stderr=None
+stella [1500.0, 1900.0]: mine=2.2421269 artifact=2.242127 covered=True stationary=None claim=False stderr=0.01922
+GENE   [200.0, 300.0]: mine=2.9260284 artifact=2.926028 covered=True stationary=None claim=False stderr=0.0352
+GENE   [300.0, 400.0]: mine=2.6750657 artifact=2.675066 covered=True stationary=None claim=False stderr=0.02076
+GENE   [1500.0, 1900.0]: mine=None artifact=None covered=False stationary=None claim=False stderr=None
+GENE   [1500.0, 1893.765]: mine=2.4738618 artifact=2.473862 covered=True stationary=None claim=False stderr=0.01657
+max |mine - artifact| = 4.74e-07
+fixture stella-bean-1500-1900 claimed 2.242 computed 2.242127 matches True
+fixture gene-bean-1500-1893.765 claimed 2.474 computed 2.473862 matches True
+fixture stella-bean-300-400 claimed 2.55 computed 2.554537 matches True
+fixture gene-bean-300-400 claimed 2.68 computed 2.675066 matches True
+fixture reduced-modal-stella-300-400 claimed 5.79 computed None matches None
+fixture triangular-published-1200-1500 claimed 2.22 computed None matches None
+reducedModalRun 5.79 [300.0, 400.0] {'GENE': 2.675066, 'stella': 2.554537} prd-reported
+triangular 2.22 [1200.0, 1500.0] unverified
+5.79 - stella 300-400 = +3.2355; 5.79 - GENE 300-400 = +3.1149
+stella 1500-1900 - GENE 1500-1893.765 = -0.2317
+T5 t [0.0, 1.4142135623730951, 10.606601717798213, 141.4213562373095] expected [0.0, 1.4142135623730951, 10.606601717798213, 141.4213562373095]
+T5 Q [0.0, 0.35355339059327373, 1.0, 5.65685424949238] expected [0.0, 0.35355339059327373, 1.0, 5.65685424949238]
+T5 refusals [('False', 'ValueError'), ('None', 'ValueError'), ('0', 'ValueError'), ('1', 'ValueError'), ('1.0', 'ValueError'), ("'no'", 'ValueError'), ("'True'", 'ValueError'), ('np.True_', 'ValueError')]
+exit=0
+
+provenance (stella-bean, gene-bean): '{"coverage": {"description": "stella bean tube (compared/test5), tgrad=3, ngrad=1' ... ' gradients tgrad=3, ngrad=1 read from the same file'
+```
+
+#### T6 probe (`t6_probe.py`: archive traces plus my own AR(1) traces, seed 20261120)
+```
+stella vs GENE (1500, 1893.765): verdict=no claim delta=-0.2333 combinedStderr=0.026343331312566134 | new trace not shown stationary on 1500-1893.765; archive trace not shown stationary on 1500-1893.765
+GENE vs GENE (300, 400): verdict=no claim delta=0.0 combinedStderr=0.029364411562408765 | new trace not shown stationary on 300-400; archive trace not shown stationary on 300-400
+stella vs GENE (GENE uncovered) (1500, 1900): verdict=no claim delta=None combinedStderr=None | new trace not shown stationary on 1500-1900; archive trace does not cover 1500-1900
+synthetic AR1 shift 0.0: verdict=agree delta=-0.0040 combinedStderr=0.0085 margin=0.250
+synthetic AR1 shift 0.6: verdict=disagree delta=+0.6014 combinedStderr=0.0083 margin=0.250
+exit=0
+```
+
+#### Frontend probe tests (`zzverify.test.tsx`, real view and model, isolated copy)
+```
+$ npm --prefix renderer run -s test -- src/features/transport/zzverify.test.tsx --reporter=verbose
+PROBE window-row-stella-bean:200-300 | stat="Undecidable" | claim="Claim not allowed"
+PROBE window-row-stella-bean:300-400 | stat="Undecidable" | claim="Claim not allowed"
+PROBE window-row-stella-bean:1500-1900 | stat="Undecidable" | claim="Claim not allowed"
+PROBE window-row-gene-bean:200-300 | stat="Undecidable" | claim="Claim not allowed"
+PROBE window-row-gene-bean:300-400 | stat="Undecidable" | claim="Claim not allowed"
+PROBE window-row-gene-bean:1500-1900 | stat="Not covered" | claim="Claim not allowedwindow not covered"
+PROBE window-row-gene-bean:1500-1893.765 | stat="Undecidable" | claim="Claim not allowed"
+PROBE live GX x [141.42,150] y [2.05,2.2]
+ ✓ src/features/transport/zzverify.test.tsx > V1 committed artifact: stationarity and claim cells, no indicative word outside the collapsed detail 218ms
+PROBE after hang: LIVE gone after ~54 ms, status requests 3, GX series drawn: false
+ ✓ src/features/transport/zzverify.test.tsx > V2 live once, then the API hangs: LIVE and the GX series go away (old M4) 125ms
+      Tests  2 passed (2)
+exit=0
+```
+V1 also asserts that the page never says "stella and GENE agree" or "are equivalent". V2 polls every 40 ms: the first status request answers `mode: "live"` with bean samples, and every later request never answers.
+
+#### Mutations (`mutate.py`, isolated copy; whole transport test directory run after each; file restored from the shared tree after each)
+```
+=== B1_null_shows_indicative: exit=1 RED | Tests  1 failed | 31 passed (32)
+    red: T9 window table shows mean, stderr (— / ≈), coverage, stationarity and an explicit claim verdict per row
+    first error: AssertionError: expected { …(7) } to deeply equal { …(7) }
+=== T9b_claim_hardcoded_not_allowed: exit=1 RED | Tests  1 failed | 31 passed (32)
+    red: T9 claim verdict and stationarity follow the artifact in both directions (synthetic allowed / true / false row
+    first error: AssertionError: expected [ …(7) ] to deeply equal [ …(7) ]
+=== T12e_fallback_drawn_as_live: exit=1 RED | Tests  2 failed | 30 passed (32)
+    red: T12 GX samples overlay in archive units with a LIVE label only when the API reports live
+    red: T12 no GX series and no LIVE label for mode fallback
+    first error: AssertionError: expected [ 'GX · LIVE (archive units)' ] to deeply equal []
+=== T11b_triangular_mean_segment_on_bean_plot: exit=1 RED | Tests  2 failed | 30 passed (32)
+    red: T11 a triangular trace present in the artifact is still never drawn or badged on the bean plot
+    red: T11 triangular card is separate from the bean plot: published mean 2.22, PRD-reported, raw trace unverified
+    first error: AssertionError: expected true to be false // Object.is equality
+=== T10c_fixture_ignores_matches_flag: exit=1 RED | Tests  1 failed | 31 passed (32)
+    red: T10 a fixture the artifact marks as not matching is shown as a mismatch, and the deltas follow the artifact
+    first error: TestingLibraryElementError: Unable to find an accessible element with the role "group" and name `/^stella bean mean, 1500–1900: Mismatch\. Claimed 2\.242 Q gB,i, computed 2\.242 Q gB,i, difference 0\.
+### restored copy byte-identical to the shared tree: True
+```
+What each mutation changed:
+- B1: `model.ts:124`, a null verdict with an indicative detail returns "Undecidable (test indicates stationary; indicative only)". This is run 3's blocker, put back.
+- T9b: `model.ts:193-194` hard-codes `claimAllowed: false` and "Claim not allowed".
+- T12e: `model.ts:348` also accepts `mode === 'fallback'`.
+- T11b: `model.ts:435` pushes `meanSegment(triangular.window, 2.22)` onto the bean plot's shapes.
+- T10c: `renderer/src/design/components/FixtureCheck.tsx:74` becomes `if (agrees)`, ignoring `matches`.
+
+Four of the five (T9b, T12e, T11b, T10c) survived in run 3. All five are now red, and each fails on an assertion, not on a timeout.
+
+#### End state
+```
+probe copy removed
+3faed3a
+### git status --short (owned paths)
+(end)
+```
+
+### Findings
+**Honesty check.** The four archive PRD means reproduce at printed precision, both by my own integrator and in the artifact: 2.242, 2.474, 2.55 and 2.68. 5.79 and 2.22 are PRD-reported and shown as "Not recomputable". No PRD number in this task fails to reproduce, so there is no mismatch to hide. The T10 test shows that a `matches: false` fixture is displayed as "Mismatch".
+
+**Run-3 findings**
+- Confirmed resolved by a probe or a mutation in this run:
+  - B1 (V1 and mutation B1).
+  - M1 (mutation T9b).
+  - M2 (mutation T12e, and the nine-case `NOT_LIVE` list at `renderer/src/features/transport/TransportView.test.tsx:584-594`).
+  - M4 (V2: a hung API drops LIVE through the real view; `renderer/src/lib/liveStatus.ts:474-489` aborts each request).
+  - m5 (mutation T10c).
+  - m6 (mutation T11b).
+- Resolved by reading the tests, without a mutation:
+  - M3: `TransportView.test.tsx:424-427` checks the pill inside the 5.79 group.
+  - M5: `:511-521` checks the agreement callout and the sign convention.
+  - m1: `:104-107` checks the plotted x and y.
+  - m2: `:149-162` checks that the bands come from `windows[]`.
+  - m3: `lazyLoad.test.ts` guards the lazy Plotly import.
+  - m4: `:430` checks that stella 300–400 shows no "±".
+  - m7: `:29` compares the legend name with a literal.
+  - m8: `:249`, `:316` check the "≈"/"—" key.
+  - m9: `:144-146` checks the "approximate, lower bound" band names.
+  - m10: `:517` checks the sign convention.
+  - m11: `:645-664` checks the provenance badges.
+  - m12: `:320-333` checks a contradictory artifact flag.
+  - m13: `:552-559` checks that the source is shown as text, not a link.
+
+**Notes (non-blocking)**
+- **n1, open gap by design.** `interface.md:260-263`: nothing computes the PRD's live comparison for GX samples. T12 asks only for the overlay and the LIVE label, and both hold. The view's text for the GX series says only "overlaid in archive units" (`renderer/src/features/transport/model.ts:504`) and implies no comparison.
+- **n2.** The UI's late-window Δ "stella − GENE = −0.23" (`model.ts:268-277`) compares two different windows. My integrator gives −0.2317 on those windows and −0.2333 (via `compare_window`) on the common 1500–1893.765 window. Both print as −0.23, and the view states that the windows are not identical. No action needed.
+- **Carried from round 2, backend byte-identical since then:** N1 (bias correction not pinned by a test), N2 (the gate can open near a true N_eff of about 10; no archive window is affected), N4 ("disagree" semantics), F2 and F3. None blocks.
+
+**Not checked in this run (kept short at the owner's request)**
+- `verify.sh all` and `check_boundaries.py`; the maintainer's run at 3faed3a is quoted instead.
+- The Monte-Carlo calibrations, because the backend is unchanged since they were run.
+- A real-browser render, dark theme and narrow viewports.
+- `lib.test.tsx` on its own; V2 checks the same behaviour through the view.
+- A real GX run. No credentials and no network were used.
+
+**Why PASS.** The maintainer's gates exit 0 at 3faed3a. All 14 backend tests and 32 frontend transport tests pass. Each outcome has a test that can fail: five of five mutations went red, including four that survived run 3. My probes agree with the artifact and with the view.
+
+Verdict: PASS

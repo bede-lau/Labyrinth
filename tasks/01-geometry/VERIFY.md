@@ -645,3 +645,190 @@ No product defect was found: every outcome holds on the committed artifact and i
 **Basis of the verdict.** `verify.sh renderer` on the shared tree exits 0, and `verify.sh all` exits 0 on the verified bytes (A2, A5) and on c6244ec. Three other runs on the same bytes exited 2 with no failing geometry test: one under a load average near 30 (A1) and two that the verifier started with SIGINT ignored (A3, A4); see finding 10. Each of G1–G10 has a named test that asserts the outcome and goes red when the outcome is broken (47 of 63 mutations). The independent probes agree with every outcome. Findings 1–3 are gaps in what the tests cover, not failures of the outcomes.
 
 Verdict: PASS
+
+## Run 3 — whole task
+Verifier run: 2026-11-20, commit 3faed3a
+
+**Scope (short, as the owner asked).** `git status --short` showed no change under the owned paths (`main/labyrinth_main/features/geometry/`, `renderer/src/features/geometry/`), `main/tests/test_geometry.py`, `artifacts/geometry.json` or `contracts/geometry.schema.json`; only `status.md` and other tasks' VERIFY.md files were modified in the shared tree. The gate evidence is the maintainer's `verify.sh all` at 3faed3a on this tree: exit 0, 11 of 11 stages (boundary self-test 134 shapes, scripts 71 passed, ruff clean, main 331 passed, artifacts schema + fresh, tsc clean, vitest 1350 passed, vite build OK). This run did not repeat it. It re-ran this task's tests, made one independent probe per outcome group and spent five mutations on the five Run 2 gaps that matter for the outcomes (B15, B13, F15, F25, F43 survived in Run 2).
+
+**What changed since Run 2 (2b1607e).** The tracer code (`vmec.py`, `fieldline.py`, `tubes.py`) is unchanged. `artifact.py` and `stella_reference.py` gained the structured float64 check `validation.float64Reference` (D-023 §4). The contract fixes `acceptance129.outcome` at `const "blocked"` (`contracts/geometry.schema.json:130-134`, D-023 §3). `FluxScene.tsx` only exports `buildContent` and gained comments. The tests were extended for Run 2 findings 1–9. Run 2's 20 backend mutations of the tracer were not repeated: the tracer code is unchanged and the assertions that caught them are still in the tests.
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| G1 | VMEC reader: nfp 5, ns 99; R and Z on the full grid, bmag and lambda on the half grid, at any s | `main/tests/test_geometry.py:92` `test_vmec_reader_header`: header, a_ref, B_ref, 1/iota(0.49), stella radial weights including extrapolation, and R, Z, bmag at s 0.64 against an np.interp evaluation to 1e-12. Passed | Own netCDF reader: nfp 5, ns 99, 288 modes, B_ref 2.604314434 T, a 0.494417 m. Own iota(0.64) 0.9101565, the same as the artifact | PASS |
+| G2 | Newton solve of theta* = theta + lambda, tol 1e-12, returning samples | `:132` `test_sfl_root_solve_roundtrip` and `:149` `test_sfl_root_solve_falls_back_to_bracketing`. Passed. Code unchanged; Run 2 turned them red with B05 and B06 | Own vectorised bisection (no Newton) matches stella's float64 bmag to 2.94e-13 and all 258 artifact samples (G4 row) | PASS |
+| G3 | stella test_2 (rho 0.7, 25 samples): every zeta and bmag within half a unit in the last printed place | `:174` `test_reproduces_stella_saved_bmag_to_printed_precision`, `:198` `test_reproduces_stella_float64_bmag`, and the float64 tests `:233` to `:402` (tolerance 1e-10 checked on perturbed copies of out.nc, published bounds, a byte-identical rebuild under another BLAS kernel). All passed | Own evaluation: 0 of 25 outside the half-unit. The worst sample uses 0.9736 of the half-unit for bmag and 0.9227 for zeta. Max abs error 4.868e-4, the same as the artifact's 0.0004867958. Against float64 out.nc: 2.940e-13 abs and 2.998e-13 rel, below the published 4e-13 bounds | PASS (tight: 0.9736 of the half-unit) |
+| G4 | rho 0.8 tubes: bean at zeta_c 0, triangular at 36 deg, theta* in [-pi, pi], 129 samples, centred on the outboard midplane, with R, Z, x, y, z and bmag/B_ref | `:415` `test_artifact_tubes_129_samples_centered`: schema, iota, alpha = -iota zeta_c, ends at -pi and pi, uniform zeta, sample 64 at theta* 0 with Z 0 and the cross-section's max R, every 8th sample re-derived, RK4 along B. Passed | All 129 samples of both tubes against own solve: R 1.3e-6 m, Z 1.3e-6 m, bmag 7.1e-7, x/y/z 3.4e-6 m, alpha + iota zeta - theta* 8.8e-7. Sample 64: theta* 0, Z 0, R 6.132478 and 5.779406 m, each its cross-section's max. alpha 0 and -0.5718682, equal to -iota zeta_c | PASS |
+| G5 | Gray mesh at s 0.64; plasma-boundary (s 1) cross-sections at each zeta_c; bean outboard-midplane R in [6.05, 6.25] m with Z about 0 | `:483` `test_surface_and_bean_outboard_midplane`. It now checks every vertex and every boundary point against an independent evaluation, plus the seam steps and distinct vertices. Passed. M1 (mesh at s 0.5) and M2 (duplicated phi seam) turn it red | Every one of the 7200 vertices against own s 0.64: 5.0e-7 m. 7200 distinct vertices. Seam gaps 0.246 m (phi) and 0.033 m (theta). Boundaries against own s 1: 4.8e-7 m. Bean midplane R 6.13248 m, Z 0 | PASS |
+| G6 | `validation.acceptance129` = blocked, with the D-007 reason | `:551` `test_acceptance129_is_blocked_not_passed` and `:571` `test_acceptance129_schema_rejects_passed`. The schema refuses passed, failed, not-applicable, BLOCKED and null. Passed | Artifact: outcome blocked, and the details cite D-007, 129 and "not in this repo". Schema outcome is `const "blocked"`. Provenance outcome blocked. All three source sha256 equal their files | PASS |
+| G7 | Three.js scene: gray surface; selected tube coloured by bmag; other tube muted; start, centre and end markers | `GeometryView.test.tsx:56` tests the scene model. `FluxScene.test.tsx:57`, `:150` and `:197` use real three with only WebGLRenderer replaced. `lazyLoad.test.ts:32` and `:47` guard the lazy import. Passed. M3 (adapter paints the fill in a tube colour) turns `FluxScene.test.tsx:57` red | Real three `buildContent` on the real artifact, both selections: 10 children (fill, wireframe, 2 tubes, 6 markers). Fill eef2f4 and wireframe b8c6cc equal the surface tokens. 7200 vertices, 14400 triangles. The selected tube has vertex colours (135 and 149 distinct); the other tube has none and opacity 0.35. Markers sit exactly at samples 0, 64 and 128 | PASS |
+| G8 | Bean/triangular selector (keyboard accessible) switches the scene, the bmag(theta*) plot and the inset | `GeometryView.test.tsx:154`: focus, then ArrowRight and ArrowLeft; checks that the colour-bar ticks, both inset paths and the centre dot follow the switch. Passed. M4 (inset boundary stays the bean one) turns it red | Real artifact in jsdom, ArrowRight: the checked radio and focus move to Triangular. The scene model is triangular, the chart's y values equal the triangular bmag samples exactly, the inset heading shows 36 deg. Ticks change from 0.917, 1.090, 1.263 to 0.916, 1.099, 1.282 (the bmagRange) | PASS |
+| G9 | Cross-section inset (sampled surface, dashed plasma boundary) and bmag(theta*) Plotly chart with units | `GeometryView.test.tsx:207`, plus `PlotlyChart.test.tsx:19` and `:63` with Plotly mocked at the library level. Passed | Real artifact: both inset curves have 129 points. The boundary has dash "4 3" and the sampled curve is solid. Pixels per metre are equal in R and Z: 112.69 and 112.69 (bean), 177.71 and 177.72 (triangular). Axis titles: field-line angle in rad, and field strength in B_ref | PASS |
+| G10 | Validation panel: stella reference result (samples, max error, pass/fail); acceptance-129 shown as BLOCKED with its reason, never as passed | `GeometryView.test.tsx:273`, `:323`, `:345` and `:418`. Passed. M5 (tracer pill hard-coded to Verified) turns `:323` red | Real artifact: tracer pill "passed" reads Verified, with 25 samples. The float64 line gives bounds of 4.0e-13 and says every sample is within tolerance. The acceptance pill reads Blocked, with the D-007 reason and the unblock step, and no Verified or passed text. No live pill. The two summary pills at the top read "ρ 0.7 check verified" and "129-sample acceptance blocked" | PASS |
+
+### Real output
+```
+<scratch> = C:\Users\admin\AppData\Local\Temp\claude\cab28ef23558f274\9a7f397a-27eb-4e8c-9851-59a90e804ccb\scratchpad\vt-01-geometry
+Every command ran as  wsl.exe -e bash scripts/dev.sh <command>  from D:\Labyrinth. Lines starting with "#" are the verifier's notes.
+
+$ python3 --version
+Python 3.12.3
+$ git log --oneline -1
+3faed3a Review round: all six areas approved; 91 confirmed findings fixed
+$ git status --short -- main/labyrinth_main/features/geometry renderer/src/features/geometry main/tests/test_geometry.py artifacts/geometry.json contracts/geometry.schema.json
+(end)
+$ git diff --stat 2b1607e 3faed3a -- main/labyrinth_main/features/geometry main/tests/test_geometry.py renderer/src/features/geometry artifacts/geometry.json contracts/geometry.schema.json
+ artifacts/geometry.json                            |   2 +-
+ contracts/geometry.schema.json                     |  23 +-
+ main/labyrinth_main/features/geometry/artifact.py  |  43 ++-
+ .../features/geometry/stella_reference.py          |  41 ++-
+ main/tests/test_geometry.py                        | 290 ++++++++++++++++++++-
+ renderer/src/features/geometry/FluxScene.test.tsx  | 205 +++++++++++++++
+ renderer/src/features/geometry/FluxScene.tsx       |  11 +-
+ ...
+ 16 files changed, 1127 insertions(+), 89 deletions(-)
+
+# ---- task tests, shared tree, HEAD 3faed3a
+$ python3 -m pytest -p no:cacheprovider -v main/tests/test_geometry.py
+test_geometry.py::test_vmec_reader_header PASSED
+test_geometry.py::test_sfl_root_solve_roundtrip PASSED
+test_geometry.py::test_sfl_root_solve_falls_back_to_bracketing PASSED
+test_geometry.py::test_reproduces_stella_saved_bmag_to_printed_precision PASSED
+test_geometry.py::test_reproduces_stella_float64_bmag PASSED
+test_geometry.py::test_float64_comparison_flags_bmag_or_zed_outside_tolerance PASSED
+test_geometry.py::test_float64_max_rel_error_is_relative_to_stella_bmag PASSED
+test_geometry.py::test_float64_reference_exposed_in_artifact PASSED
+test_geometry.py::test_float64_failure_fails_the_tracer_validation PASSED
+test_geometry.py::test_float64_published_rel_bound_is_the_relative_error PASSED
+test_geometry.py::test_float64_failure_names_its_cause PASSED
+test_geometry.py::test_float64_noise_does_not_change_the_artifact PASSED
+test_geometry.py::test_float64_reference_identical_under_another_blas_kernel PASSED
+test_geometry.py::test_stella_reference_rejects_mismatched_input PASSED
+test_geometry.py::test_artifact_tubes_129_samples_centered PASSED
+test_geometry.py::test_surface_and_bean_outboard_midplane PASSED
+test_geometry.py::test_acceptance129_is_blocked_not_passed PASSED
+test_geometry.py::test_acceptance129_schema_rejects_passed PASSED
+============================== 18 passed in 6.77s ==============================
+$ npm --prefix renderer run -s test -- src/features/geometry --reporter=verbose
+ ✓ src/features/geometry/lazyLoad.test.ts > G7 three stays lazy-loaded: no static import of three anywhere in renderer/src 1572ms
+ ✓ src/features/geometry/lazyLoad.test.ts > G7 the lazy-load guard recognises every static import form and ignores type-only and dynamic ones 3ms
+ ✓ src/features/geometry/FluxScene.test.tsx > G7 buildContent turns the scene model into real Three.js objects: closed gray surface, |B|-coloured selected tube, muted other tube, six marker meshes 25ms
+ ✓ src/features/geometry/FluxScene.test.tsx > G7 FluxScene mounts the model through three, rebuilds it on selection, answers the keyboard and cleans up 189ms
+ ✓ src/features/geometry/FluxScene.test.tsx > G7 FluxScene says so when WebGL cannot start, and points at the text equivalents 15ms
+ ✓ src/features/geometry/PlotlyChart.test.tsx > G9 the |B|(θ*) spec reaches Plotly unchanged, on a labelled image, and is purged on unmount 226ms
+ ✓ src/features/geometry/PlotlyChart.test.tsx > G9 a chart that cannot be drawn says so instead of leaving an empty box 25ms
+ ✓ src/features/geometry/GeometryView.test.tsx > G7 scene: gray closed surface (seam wrapped), selected tube coloured by |B|, other muted, start/centre/end markers 200ms
+ ✓ src/features/geometry/GeometryView.test.tsx > G8 bean/triangular selector is keyboard accessible and switches the scene, the |B| plot and the inset 105ms
+ ✓ src/features/geometry/GeometryView.test.tsx > G9 cross-section inset (solid sampled surface, dashed boundary) and |B|(θ*) chart with units 43ms
+ ✓ src/features/geometry/GeometryView.test.tsx > G10 validation panel: stella reference result, and acceptance-129 shown as BLOCKED with its reason, never passed 68ms
+ ✓ src/features/geometry/GeometryView.test.tsx > G10 the tracer check follows the artifact: a failing stella reference is shown as Failed, never as Verified 40ms
+ ✓ src/features/geometry/GeometryView.test.tsx > G10 honesty labels: both checks named above the fold, provenance badge, replay eyebrow, kind from the artifact, no live pill 77ms
+ ✓ src/features/geometry/GeometryView.test.tsx > FF-6 the scene footer links the equilibrium source only when it is a web address; a repository path is named, not linked 41ms
+ ✓ src/features/geometry/GeometryView.test.tsx > FB-5 the float64 check is validation.float64Reference: its numbers, its verdict, its source; the prose is not read 21ms
+ ✓ src/features/geometry/GeometryView.test.tsx > DS-15 the cross-section inset is capped at its drawn size, so its labels keep their type size 6ms
+ Test Files  4 passed (4)
+      Tests  16 passed (16)
+VITEST_EXIT=0
+$ python3 scripts/check_boundaries.py
+boundary: OK (167 files scanned)
+EXIT=0
+
+# ---- backend probe: python3 -I <scratch>/probe_backend.py /mnt/d/Labyrinth (own netCDF read, own np.interp, own bisection; no labyrinth_main import)
+G1 own reader: nfp=5 ns=99 modes=288 B_ref=2.604314434 T a=0.494417 m
+G3 rows=25 own bmag vs printed: worst |d|/half-unit=0.9736 outside=0/25; zeta worst=0.9227 outside=0/25; max|d bmag|=4.8680e-04
+   own vs float64 out.nc: max|d bmag|=2.940e-13 max rel=2.998e-13 max|d zed|=6.7e-16
+   artifact stellaReference: n=25 maxAbs=0.0004867958 allWithin=True
+   artifact float64Reference: n=25 maxAbs<=4e-13 maxRel<=4e-13 tol=1e-10 allWithin=True; own error below the published bound: True
+G4 rho=0.8 s=0.64 artifact iota=0.9101565 own iota=0.9101565
+   bean       zc=0.0 n=129/129 th*[0]=-3.1415930 th*[-1]=3.1415930 alpha=0.0000000 own -iota*zc=-0.0000000
+      centre[64]: th*=0.0 zeta-zc=0.0e+00 Z=0.0 R=6.132478 max xsec R=6.132478
+      vs own: max|dR|=1.1e-06 |dZ|=6.8e-07 |d bmag|=7.1e-07 |dx|=2.9e-06 |dy|=2.7e-06 |dz|=6.8e-07 |alpha+iota*zeta-th*|=8.4e-07
+   triangular zc=36.0 n=129/129 th*[0]=-3.1415930 th*[-1]=3.1415930 alpha=-0.5718682 own -iota*zc=-0.5718682
+      centre[64]: th*=0.0 zeta-zc=-3.1e-08 Z=0.0 R=5.779406 max xsec R=5.779406
+      vs own: max|dR|=1.3e-06 |dZ|=1.3e-06 |d bmag|=6.3e-07 |dx|=3.0e-06 |dy|=3.4e-06 |dz|=1.3e-06 |alpha+iota*zeta-th*|=8.8e-07
+G5 mesh 150x48: max|d| vs own s=0.64 = 5.0e-07 m; distinct vertices 7200/7200; |row0-rowLast| min 0.246 m; |col0-colLast| min 0.033 m
+   boundary[bean] n=129 vs own s=1: max|d|=4.8e-07 m
+   boundary[triangular] n=129 vs own s=1: max|d|=4.7e-07 m
+   bean outboard midplane (phi 0, theta 0): R=6.13248 Z=0.0
+G6 acceptance129.outcome='blocked'; mentions D-007=True, 129=True
+   details: BLOCKED (decision D-007): the PRD acceptance test compares bean |B| with 129 saved stella samples at rho 0.8, but those samples are not in this repo o...
+   schema acceptance129.properties.outcome = {'const': 'blocked'}
+   provenance kind='derived' verification.outcome='blocked'
+   source data/raw/wout_w7x_kjm.nc: sha256 matches file = True
+   source data/raw/stella_test2_vmec_geometry.geometry: sha256 matches file = True
+   source data/raw/stella_test2_vmec_geometry.out.nc: sha256 matches file = True
+artifact sha256: 1df0e9d5bdfd752a18065caac43d0d037f5d42beb91e97aac75cd9f35517e992
+PROBE_EXIT=0
+# (a first run printed zeta worst=nan: the probe's half-unit used log10 of the printed 0.0000E+00; fixed to read the printed exponent, rerun above)
+
+# ---- frontend probe: <scratch>/zzverify.test.tsx copied into the probe copy (scripts/probe-copy.sh vt-01-geometry), run, removed
+# real artifact; real three for buildContent; real GeometryView with FluxScene and PlotlyChart recorded
+$ npm --prefix renderer run -s test -- src/features/geometry/zzverify.test.tsx
+ ✓ src/features/geometry/zzverify.test.tsx (1 test) 249ms
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+FE_PROBE_EXIT=0
+G7_bean: children Mesh:BufferGeometry, LineSegments:BufferGeometry, Mesh:TubeGeometry x2, Mesh:BoxGeometry x2, Mesh:SphereGeometry x2, Mesh:ConeGeometry x2
+         fillHex eef2f4 (token eef2f4) fillVertexColors false; wireHex b8c6cc (token b8c6cc); surfaceVertices 7200 triangles 14400
+         tubes: bean vertexColors true colorAttr true opacity 1; triangular vertexColors false colorAttr false a8482a opacity 0.35
+         selectedDistinctColours 135; markerMaxErr 0
+G7_triangular: same children and surface; bean vertexColors false 0b7f80 opacity 0.35; triangular vertexColors true opacity 1; distinct 149; markerMaxErr 0
+G8_initial:        checked ["Bean · ζ 0°:true","Triangular · ζ 36°:false"] scene bean; chart "Bean (ζ = 0°): |B| at 129 samples", y = artifact bmag: true
+                   inset "Cross-section at ζ = 0°"; ticks 0.917 1.090 1.263 (bmagRange 0.9170504, 1.263068)
+                   inset sampled n 129 sx 112.6896 sy 112.6862; boundary n 129 sx 112.6932 sy 112.6893; boundary dash "4 3", sampled dash null
+G8_afterArrowRight: checked ["Bean · ζ 0°:false","Triangular · ζ 36°:true"] scene triangular; chart "Triangular (ζ = 36°): |B| at 129 samples", y = artifact bmag: true
+                   inset "Cross-section at ζ = 36°"; ticks 0.916 1.099 1.282 (bmagRange 0.9159186, 1.282082)
+                   inset sampled n 129 sx 177.7119 sy 177.7205; boundary n 129 sx 177.7005 sy 177.7054; boundary dash "4 3", sampled dash null
+G8_focus: "Triangular · ζ 36°"
+chartX: ["Field-line angle θ* (rad)","Field strength |B| (B<sub>ref</sub>)"]
+G10: stellaPill passed:Verified
+     stellaText "All 25 saved samples agree to their printed 4 significant figures (within half a unit in the last printed place)."
+     float64 "Against stella’s float64 output (out.nc): max |Δ| in |B| ≤ 4.0 × 10−13 Bref, relative ≤ 4.0 × 10−13, over 25 samples. Tolerance 1.0 × 10−10 Bref: every sample is within it."
+     accPill blocked:Blocked; accSaysPassedOrVerified false; livePills 0
+     accText "PRD acceptance: bean |B| vs all 129 saved stella samples (ρ 0.8)BlockedBlocked: Not checked: the 129 saved samples are not availableBLOCKED (decision D-007): the PRD acceptance test compares bean |B| with 129 saved stella samples at rho 0.8, but those samples "
+     verdictPills ["passed:ρ 0.7 check verified","blocked:129-sample acceptance blocked"]
+# (the JSON dump is condensed here, values unchanged)
+
+# ---- mutations: python3 -I <scratch>/mutate.py <probe copy>; one at a time, target test file only, restored after each
+RED      M1 [G5] surface mesh built at s 0.5 instead of 0.64  rc=1 ['1 failed, 17 passed in 3.13s']
+           failed: test_surface_and_bean_outboard_midplane
+RED      M2 [G5] surface mesh duplicates the phi seam (linspace with the end point)  rc=1 ['1 failed, 17 passed in 3.14s']
+           failed: test_surface_and_bean_outboard_midplane
+RED      M3 [G7] Three.js adapter paints the surface fill in the first tube's colour  rc=1 ['Test Files  1 failed (1)', 'Tests  1 failed | 2 passed (3)']
+           failed: G7 buildContent turns the scene model into real Three.js objec
+RED      M4 [G8] inset plasma boundary stays the bean one after switching  rc=1 ['Test Files  1 failed (1)', 'Tests  1 failed | 8 passed (9)']
+           failed: G8 bean/triangular selector is keyboard accessible and switche
+RED      M5 [G10] tracer pill hard-coded to Verified  rc=1 ['Test Files  1 failed (1)', 'Tests  2 failed | 7 passed (9)']
+           failed: G10 the tracer check follows the artifact: a failing stella ref
+all five files restored to their original sha256: True
+MUTATE_EXIT=0
+# M5 turned two tests red. The harness names only tests whose title starts with "G<n>", so the second one is not named.
+# mutation sites: M1 main/labyrinth_main/features/geometry/artifact.py:116, M2 tubes.py:66, M3 renderer/src/features/geometry/FluxScene.tsx:46,
+#                 M4 GeometryView.tsx:152, M5 ValidationPanel.tsx:56
+$ rm -rf ~/.cache/labyrinth-probes/vt-01-geometry; ls ~/.cache/labyrinth-probes | grep -c vt-01-geometry
+0
+```
+
+### Findings
+No product defect found. All ten outcomes hold on the committed artifact, and each has a named test that asserts it. The five mutations aimed at Run 2's surviving gaps all turn the target test red.
+
+**Run 2 findings, status at 3faed3a**
+1. Adapters never run in a test: fixed. `renderer/src/features/geometry/FluxScene.test.tsx:17-35` runs the adapter against real three with only WebGLRenderer replaced (M3 turns it red). `PlotlyChart.test.tsx:9` mocks `plotly.js-dist-min` at the library level.
+2. The G5 test did not pin the mesh: fixed. `main/tests/test_geometry.py:492-535` checks every vertex and boundary point against an independent evaluation, plus the seam (M1 and M2 turn it red).
+3. No test of a failing tracer result or of the honesty labels: fixed. See `GeometryView.test.tsx:323` (M5 turns it red) and `:345`.
+4. Lazy loading: now guarded at the source level by `renderer/src/features/geometry/lazyLoad.test.ts:32-45`. It reads import sites rather than the built chunk. This run did not mutate it.
+5. Fill colour and colour-bar ticks: now asserted at `GeometryView.test.tsx:90` and `:149`.
+6. G8 and G9 curves and scale: fixed. `GeometryView.test.tsx:177-204` covers the switch (M4 turns it red) and `:225-241` the equal R and Z scale. The fixture tubes now have different bmag ranges (`:181`).
+7. The schema allowed `passed`: fixed by D-023 §3. See `contracts/geometry.schema.json:130-134`, `main/tests/test_geometry.py:571`, and the renderer refusal at `renderer/src/features/geometry/types.ts:87-88`, tested at `GeometryView.test.tsx:304-315`.
+8. Provenance marks: the chart and inset panels now carry the artifact's kind (`GeometryView.test.tsx:359-362`, `:379-380`).
+9. Float64 figure scraped from prose: fixed by the structured `validation.float64Reference` (D-023 §4), tested at `GeometryView.test.tsx:418` and `main/tests/test_geometry.py:269`.
+10. Gate runs: the maintainer's `verify.sh all` at 3faed3a exits 0. This run did not rerun it.
+
+**Minor**
+- G3 still passes by a narrow margin: one bmag sample sits at 0.9736 of the half-unit (`main/tests/test_geometry.py:183`). This is unchanged since Run 1. The float64 comparison (2.94e-13) shows the margin comes from stella's 4-figure printing, not from tracer error.
+- `tasks/01-geometry/TASK.md:37` still says frontend G7–G10 are "unverified/unreviewed". That status line is out of date after Run 2 and this run. It is bookkeeping for the maintainer, not an owned file.
+
+**Not checked in this run.** WebGL rendering in a browser and screenshots. Run 2 did both at 2b1607e; since then `FluxScene.tsx` changed only by exporting `buildContent` and adding comments. The G1–G4 and G6 mutation sets of Run 2 were not repeated, because the tracer code is unchanged. The 129 saved stella samples are not available (blocked by design, D-007).
+
+Verdict: PASS

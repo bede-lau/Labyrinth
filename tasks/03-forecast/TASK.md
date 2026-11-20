@@ -21,6 +21,6 @@ Frontend:
 | F4–F5 | `renderer/src/features/forecast/*.test.tsx` |
 
 ## Status
-IN-PROGRESS
+DONE
 
-Backend F1–F3: verifier PASS (round 2) + reviewer APPROVE. Frontend F4–F5: built with tests, unverified.
+Verified at commit 3faed3a: tasks/03-forecast/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).

@@ -32,6 +32,6 @@ Frontend:
 | G7–G10 | `renderer/src/features/geometry/*.test.tsx` (one `test()` per outcome, named `G7 …` … `G10 …`) |
 
 ## Status
-IN-PROGRESS
+DONE
 
-Backend G1–G6: verifier PASS + reviewer APPROVE. Frontend G7–G10: built with tests, unverified/unreviewed.
+Verified at commit 3faed3a: tasks/01-geometry/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).

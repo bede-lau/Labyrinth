@@ -26,6 +26,6 @@ Frontend:
 | L9–L10 | `renderer/src/features/live-gx/*.test.tsx` |
 
 ## Status
-IN-PROGRESS
+DONE
 
-Backend L1–L8: built, UNREHEARSED; reviewer round 4 CHANGES REQUESTED (rehearse CLI orphan-GPU test, startup_timeout test). Frontend L9–L10: built, unverified.
+Verified at commit 3faed3a: tasks/06-live-gx/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).

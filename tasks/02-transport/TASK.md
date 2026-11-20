@@ -28,6 +28,6 @@ Frontend:
 | T8–T12 | `renderer/src/features/transport/*.test.tsx`, one `test('T8 …')` per outcome |
 
 ## Status
-IN-PROGRESS
+DONE
 
-Backend T1–T7: verifier PASS (round 2) + reviewer APPROVE. Frontend T8–T12: built with tests, unverified.
+Verified at commit 3faed3a: tasks/02-transport/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).

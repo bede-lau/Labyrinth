@@ -626,3 +626,177 @@ Fix: cap the worker count or share the environment (`isolate: false`) for the pu
 - `verify.sh all` on the shared tree, by instruction.
 
 Verdict: FAIL — dark-theme keyboard focus on chart modebar buttons renders as a 1px #000 outline at 1.20:1 (Plotly default, not themed), against DESIGN.md Principle 5 and section 10, and no test covers it; the status "not colour alone" test and the colour-literal scan also let through the regressions they name (M15 passes the design tests; M15b, M11, M12a, M12b pass the whole suite).
+
+## Run 2 — whole task
+Verifier run: 2026-11-20, commit 3faed3a
+
+Before starting, `git status --short` showed only ` M status.md`, which this task does not own; `renderer/src/design/`
+had no change against 3faed3a. I did not write this code and changed nothing in the repo except this file.
+Mutations ran only in a copy from `scripts/probe-copy.sh vt-08-design-system` (deleted afterwards; after the last
+revert `diff -rq` of the copy's `renderer/src` against the shared tree was empty). Every colour number in the probe
+column comes from my own Python (WCAG 2.x, CIELAB, CIEDE2000, Machado 2009); no repo helper was imported.
+The owner asked for short, non-redundant checks: one targeted mutation per outcome (5 in total), no browser
+session, and no `verify.sh all` of my own.
+
+Gate evidence (quoted, not rerun by me): the maintainer ran `verify.sh all` at commit 3faed3a on this tree:
+exit 0, 11/11 stages (boundary self-test 134 shapes, scripts 71 passed, ruff clean, main 331 passed, artifacts
+schema + fresh, tsc clean, vitest 1350 passed, vite build OK).
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| D1 | `DESIGN.md` documents principles, tokens, type scale, spacing, status semantics, chart conventions, component inventory | `designDoc.test.ts` (102): required section headings; colour, scale, series, status and component tables compared row by row with the code in both directions; every quoted hex must be a token value. Can fail: M5 red (2 tests) | Own parser on the raw files: all required sections present; section 5 has a row for live / replay / prd-reported / unverified / failed / blocked; section 8 names all 7 primitives; 138 distinct hex values quoted, none outside the token values | PASS |
+| D2 | `tokens.css` light + dark via prefers-color-scheme and `[data-theme]`; all text/background pairs at WCAG AA | `tokens.test.ts` (11): byte equality with `renderTokensCss()`, dark values under both selectors, themed modebar focus rule ranked against the selector read from the installed Plotly bundle. `contrast.test.ts` (557): reference ratios, then every listed pair in both themes. Can fail: M1 red (7 pairs) | Own WCAG on values parsed from `tokens.css`: the media-query dark block equals the `[data-theme="dark"]` block; worst text on any surface 4.98 light / 5.64 dark; worst status fg on its bg 5.17 / 4.77; accent-fg on accent 4.81 / 7.11; series on plot paper 3.14 / 4.08; focus ring 4.12 / 6.99; modebar ring rule present (2px, focus token) | PASS |
+| D3 | Series palette stella / GENE / GX / bean / triangular is colour-blind safe (pairwise ΔE under deuteranopia / protanopia above threshold) | `palette.test.ts` (33): Machado 2009 and Viénot 1999, gates 12 (protan/deutan), 20 (normal), 8 (tritan), with its own red/green/orange negative control. Can fail: M2 red (6 conditions) | Own CIEDE2000 (reproduces Sharma-Wu-Dalal pairs 2.0425 and 27.1492) with own Machado 2009 severity 1.0: min ΔE00 light normal 30.33, protan 22.54, deutan 16.42; dark normal 27.41, protan 15.77, deutan 19.09. Negative control scores 4.61 under deuteranopia | PASS |
+| D4 | `plotTheme.ts` and `sceneTheme.ts` derive from tokens; no hard-coded hex outside tokens | `noHardcodedColors.test.ts` (124): walks all of `renderer/src` plus `index.html`, hex / functional / 0x / named colours, a runtime check of every colour the Plotly and Three themes emit, one exemption that is itself tested. Can fail: M3 red (literal in `features/transport`) | Own scan of 76 non-test `.ts/.tsx/.css` files: one hit, the `rgba()` template at `color.ts:181` (the test's single listed exemption). `plotTheme.ts` imports only `./color`, `./format`, `./tokens`; `sceneTheme.ts` only `./color`, `./tokens` | PASS |
+| D5 | Primitives with tests: Panel, Stat, ProvenanceBadge, StatusPill, FixtureCheck, SegmentedControl, Callout | `components/components.test.tsx` (147): testing-library on the real components, nothing under test mocked; roles and names, badge Escape and outside click, radiogroup arrow keys, null Stat, FixtureCheck flag that disagrees with the values, status label and icon pinned per kind and unique. Can fail: M4 red | M4 (null Stat printed as `0.00`) turns the null test red; the other six primitives were read, not mutated (the owner asked for short checks) | PASS |
+
+### Real output
+
+Commands ran from `D:\Labyrinth` in PowerShell; the two scripts live in my scratch directory
+`C:\Users\admin\AppData\Local\Temp\claude\cab28ef23558f274\9a7f397a-27eb-4e8c-9851-59a90e804ccb\scratchpad\vt-08-design-system`
+(`<scratch>` below; WSL path under `/mnt/c/...`). ANSI colour codes are stripped.
+
+```
+> wsl.exe -e bash scripts/dev.sh python3 --version; wsl.exe -e git status --short
+Python 3.12.3
+ M status.md
+> wsl.exe -e git rev-parse --short HEAD
+3faed3a
+```
+
+```
+> wsl.exe -e bash scripts/dev.sh npm --prefix renderer run -s test -- src/design
+ RUN  v5.1.1 /mnt/d/Labyrinth/renderer
+
+ ✓ src/design/tokens.test.ts (11 tests) 470ms
+ ✓ src/design/noHardcodedColors.test.ts (124 tests) 444ms
+ ✓ src/design/designDoc.test.ts (102 tests) 144ms
+ ✓ src/design/css.test.ts (39 tests) 92ms
+ ✓ src/design/contrast.test.ts (557 tests) 61ms
+ ✓ src/design/palette.test.ts (33 tests) 19ms
+ ✓ src/design/color.test.ts (14 tests) 8ms
+ ✓ src/design/Gallery.test.tsx (9 tests) 907ms
+   ✓ DS-21: the theme switch uses the app’s words — Auto / Light / Dark 383ms
+ ✓ src/design/themes.test.ts (49 tests) 413ms
+   ✓ plotTheme (27)
+     ✓ the installed Plotly layers shapes as DL-4 assumes (the control for the test above) 388ms
+ ✓ src/design/components/components.test.tsx (147 tests) 2261ms
+   ✓ FixtureCheck renders D-023 fixtures: ranges, missing claims and the basis from the data (50)
+     ✓ a sweep of values near bounds across magnitudes: never exponential; printed side, Δ sign and outcome follow the value 1220ms
+
+ Test Files  10 passed (10)
+      Tests  1085 passed (1085)
+   Start at  22:40:33
+   Duration  47.97s (environment 63%, setup 25%, import 5%, tests 3%, worker 2%, transform 1%)
+```
+
+```
+> wsl.exe -e bash scripts/dev.sh python3 -I <scratch>/probe.py /mnt/d/Labyrinth
+theme blocks: light vars 143 dark vars 97 media-dark == attr-dark: True
+[light] worst text/surface 4.98 (color-text-subtle on color-surface-hover); worst status fg/bg 5.17 (not-applicable, 13 kinds); accent-fg/accent 4.81; worst series/plot-paper 3.14 (gene); worst focus ring 4.12 (color-surface-hover)
+[dark] worst text/surface 5.64 (color-text-subtle on color-surface-hover); worst status fg/bg 4.77 (live, 13 kinds); accent-fg/accent 7.11; worst series/plot-paper 4.08 (stella); worst focus ring 6.99 (color-surface-hover)
+modebar focus rule: /* Chart modebar buttons. Plotly injects its own focus rule for them at runtime (a 1px black
+ * outline), after this sheet and more specific than the rule above; on the dark plot that ring
+ * is 1.2:1. This selector out-ranks Plotly's (tokens.test.ts compares the two), so chart buttons
+ * take the same themed ring as every other control. */
+.js-plotly-plot .plotly .modebar .modebar-btn:focus-visible -> outline: 2px solid var(--lab-color-focus); outline-offset: 1px; border-radius: var(--lab-radius-xs);
+CIEDE2000 self-check: 2.0425 27.1492
+negative control (#d62728/#2ca02c/#ff7f0e) deuteranopia min dE00: 4.61
+[light] series min pairwise dE00: normal 30.33 (stella/gx); protanopia 22.54 (gene/triangular); deuteranopia 16.42 (gene/triangular)
+[dark] series min pairwise dE00: normal 27.41 (gene/gx); protanopia 15.77 (gx/bean); deuteranopia 19.09 (stella/bean)
+colour-literal scan: 76 non-test files, 1 hits
+   renderer/src/design/color.ts:181: return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+plotTheme.ts imports: ['./color', './format', './tokens']
+sceneTheme.ts imports: ['./color', './tokens']
+D1: six statuses have a §5 row; primitives in §8: ['Panel', 'Stat', 'ProvenanceBadge', 'StatusPill', 'FixtureCheck', 'SegmentedControl', 'Callout']
+D1: 138 distinct hex values quoted in DESIGN.md; not a token value: []
+D1: sections present: Principles, Tokens, Type scale, Spacing, Status semantics, Chart conventions, Components
+```
+
+Mutations (`<scratch>/mutate.sh <copy>`: apply one textual change, run one test file with `npx vitest run`, restore).
+In the first pass my output filter showed only passing lines for M3, and for M5 my backup file
+`DESIGN.md.orig`, written next to the mutated file, added one unrelated failure (the section 2 file list).
+I moved the backup out of the tree and reran M3 and M5; M1, M2 and M4 below are from the first pass,
+M3 and M5 from the rerun.
+
+```
+> $copy = wsl.exe -e bash scripts/probe-copy.sh vt-08-design-system
+copy: /home/qqbot/.cache/labyrinth-probes/vt-08-design-system
+> wsl.exe -e bash scripts/dev.sh bash <scratch>/mutate.sh $copy
+=== M1: tokens.ts: 'textSubtle: '#91a3aa'' -> 'textSubtle: '#5a6b72'' (matches before: 1)
+     × textSubtle on bg 2ms
+     × textSubtle on surface 0ms
+     × textSubtle on surfaceSunken 0ms
+     × textSubtle on surfaceRaised 0ms
+     × textSubtle on surfaceHover 0ms
+     × textSubtle on accentSubtle 0ms
+     × textSubtle on plotPaper 0ms
+ FAIL  src/design/contrast.test.ts > WCAG AA contrast — dark theme > textSubtle on bg
+  exit=1
+=== M2: tokens.ts: 'bean: '#41b2b2'' -> 'bean: '#4a80c4'' (matches before: 1)
+     × pairwise ΔE00 under normal vision 3ms
+     × pairwise ΔE00 under protanopia (machado2009) 1ms
+     × pairwise ΔE00 under protanopia (vienot1999) 0ms
+     × pairwise ΔE00 under deuteranopia (machado2009) 1ms
+     × pairwise ΔE00 under deuteranopia (vienot1999) 0ms
+     × pairwise ΔE00 under tritanopia (machado2009) 1ms
+ FAIL  src/design/palette.test.ts > series palette — dark theme > pairwise ΔE00 under normal vision
+AssertionError: closest pair stella/bean: ΔE00 1.5 < 20: expected 1.5140738460362795 to be greater than or equal to 20
+  exit=1
+...
+=== M4: Stat.tsx: 'formatNumber(hasValue ? value : null, decimals)' -> 'formatNumber(hasValue ? value : 0, decimals)' (matches before: 1)
+     × null value says "not available" — never renders 0 11ms
+ FAIL  src/design/components/components.test.tsx > Stat > null value says "not available" — never renders 0
+ Test Files  1 failed (1)
+      Tests  1 failed | 146 passed (147)
+  exit=1
+...
+> wsl.exe -e env ONLY=M3,M5 bash scripts/dev.sh bash <scratch>/mutate.sh /home/qqbot/.cache/labyrinth-probes/vt-08-design-system
+=== M3: PlotlyChart.tsx: 'export type PlotTrace = Record<string, unknown>;' -> 'export type PlotTrace = Record<string, unknown>; export const probeColour = '#ff0000';' (matches before: 1)
+     × src/features/transport/PlotlyChart.tsx has no colour literals 4ms
+ FAIL  src/design/noHardcodedColors.test.ts > no hard-coded colours outside tokens > src/features/transport/PlotlyChart.tsx has no colour literals
+AssertionError: expected [ Array(1) ] to deeply equal []
+ Test Files  1 failed (1)
+      Tests  1 failed | 123 passed (124)
+  exit=1
+=== M5: DESIGN.md: '| `color.textSubtle` | `#56686f`' -> '| `color.textSubtle` | `#56686e`' (matches before: 1)
+     × color.textSubtle shows the current light and dark values 6ms
+     × every hex colour quoted anywhere is a current token value 3ms
+ FAIL  src/design/designDoc.test.ts > §3 colour table: one row per `color.*` token, both themes > color.textSubtle shows the current light and dark values
+AssertionError: light: expected '#56686e' to be '#56686f' // Object.is equality
+ FAIL  src/design/designDoc.test.ts > nothing in DESIGN.md names a value or a property that does not exist > every hex colour quoted anywhere is a current token value
+AssertionError: expected [ '#56686e' ] to deeply equal []
+ Test Files  1 failed (1)
+      Tests  2 failed | 100 passed (102)
+  exit=1
+=== copy restored? (diff against the shared tree)
+renderer/src identical
+> wsl.exe -e bash -c 'rm -rf -- /home/qqbot/.cache/labyrinth-probes/vt-08-design-system; ls /home/qqbot/.cache/labyrinth-probes/ | grep -c vt-08-design-system'
+0
+```
+
+### Findings
+
+No defect found in what this run checked. Status of the run-1 findings at 3faed3a:
+
+- Run-1 F1 (modebar focus ring): addressed. `renderer/src/design/tokens.css:392` (generated from
+  `renderer/src/design/tokens.ts:428`) themes the ring; `renderer/src/design/tokens.test.ts:62-104` ranks it against the
+  selector read from the installed Plotly bundle, and `contrast.test.ts:48` gates the ring on plot paper. I checked
+  this statically only; I did not render a chart in a browser this time.
+- Run-1 F2 (status not colour alone): addressed. `renderer/src/design/components/components.test.tsx:128-190` pins the
+  label and icon of every kind and asserts both are unique.
+- Run-1 F3 (literal guard scope): addressed. `renderer/src/design/noHardcodedColors.test.ts:149` walks all of
+  `renderer/src` plus `index.html` and knows named colours; M3 in `features/transport` is caught.
+- Run-1 F4 (doc test sampled one way): addressed. `designDoc.test.ts` compares every row in both directions; M5 is caught.
+- Run-1 F5, F6, F11 (non-text pairs): the pairs are now in the list at `renderer/src/design/contrast.test.ts:37-63` and pass.
+  I did not recompute those alpha composites myself.
+- Minor (doc): `tasks/08-design-system/TASK.md:21` still says "553 tests"; the design suite now runs 1085.
+
+### Not checked
+
+- Anything in a real browser: rendered focus rings (modebar included), reduced motion, layout items F6-F9 from run 1.
+- Real colour-deficient viewers (simulation only), screen-reader output.
+- `verify.sh all` on the shared tree, by instruction (maintainer's result quoted above).
+
+Verdict: PASS

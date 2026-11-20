@@ -604,3 +604,129 @@ nothing live may be launched; every mode was driven with stubs and a scripted se
 beyond the nav overflow measurement.
 
 Verdict: FAIL — A2: a TERMINATE FAILED / TERMINATION PENDING reason is not shown as danger by the global mode indicator and a partial live-status body blanks the app; A4: the legend omits the not-applicable outcome
+
+## Run 2 — whole task
+Verifier run: 2026-11-20, commit 3faed3a
+Scope kept short at the owner's request: the task's own tests, one independent probe per outcome and five
+mutations in total (one per outcome). `wsl.exe -e git status --short` showed no change under the owned paths
+`renderer/src/shell/` and `renderer/src/lib/` at the start and at the end (only `status.md` and other tasks'
+VERIFY.md files were modified by other agents); `git diff --stat 3faed3a -- renderer/src/shell renderer/src/lib`
+printed nothing. Gate evidence is the maintainer's `verify.sh all` at 3faed3a on this tree (quoted below, not
+re-run: nine other verifiers share the machine). Mutations and probe tests ran only in
+`scripts/probe-copy.sh vt-09-app-shell`, deleted at the end; the shared tree was never mutated.
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| A1 | Navigation across the six views, keyboard accessible, URL hash reflects the view | `renderer/src/shell/App.test.tsx` › "A1 navigation reaches all six views by keyboard and the URL hash names the view" (real Tab and Enter through userEvent, aria-current, main landmark name, title, hashchange, unknown hash) and "A1 a route change is announced and moves focus…". Views are replaced by markers; the shell itself is not mocked | Probe test in the copy with the real views: parseHash on 15 hashes (only the six exact routes accepted), history back/back/forward gives #/spatial, #/transport, #/spatial with the matching main landmark. Built bundle contains all six routes. Mutation M1 (drop the hashchange listener) turns both A1 tests red | PASS |
+| A2 | Global mode indicator: REPLAY ($0) vs LIVE, driven by `/api/live/status`; no backend means full replay | same file › "A2 global mode: REPLAY ($0) unless /api/live/status reports live…", 12 danger cases (6 modes × 2 markers, spread over the routes), 18 round-6 stop cases (3 states × 6 routes), "LIVE is not sticky", "idle backend that goes away", "a partial or malformed status body never blanks the page"; `renderer/src/lib/lib.test.tsx` A2 tests (bad payload, non-2xx with a live body, stale answer, hung backend) | Static build served from the copy on 127.0.0.1 with no API behind it: `/api/live/status` answers 404 while all six artifacts are served, and the bundle polls `/api/live/status`; the A2 test already drives the real App with a rejected fetch and asserts Replay · $0 with the view rendered. Mutation M2 (skip the contract check in `fetchLiveStatus`) turns 3 A2 tests red, including the partial-body App test that covers the earlier blank-page defect | PASS |
+| A3 | Typed artifact loader with loading / error / data states; a missing or invalid artifact shows an error panel naming the file, never a blank screen | `renderer/src/shell/ArtifactGate.test.tsx` › "A3 artifact loading/error/data states…" (real `useArtifact` + `ArtifactGate`, injected fetch), `lib.test.tsx` three A3 tests, `App.test.tsx` › "A3 a view that throws shows the named error panel inside the shell, and navigating away recovers" | Probe test with the real App and real views (no view mocks), no backend: 6 routes × 5 broken artifact answers (HTTP 404, HTML with 200, schemaVersion 2, schemaVersion 1 with no fields, null) = 30 of 30 show a panel or callout naming the route's file, none blank, nav intact. Mutation M3 (accept any schemaVersion) turns 2 A3 tests red | PASS |
+| A4 | Header states the user decision question and a global provenance legend | `App.test.tsx` › "A4 header states the user decision and a global provenance legend is shown" and "A4 the legend explains every provenance kind and verification outcome defined in contracts/common.schema.json" (reads both enums from the schema) | The question extracted from TASK.md is present verbatim in the built bundle. Mutation M4 (remove `not-applicable` from the legend, the earlier run's defect) turns the schema-driven A4 test red | PASS |
+| A5 | Static build (`npm run build`) contains `dist/artifacts/*.json` so replay works with no backend | `renderer/src/shell/build.test.ts` › "A5 static build copies artifacts/*.json into <outDir>/artifacts…" (real config plugin, its hooks run against a temp dir, byte comparison, missing source throws) | A real `npm run build` in the copy: 6 of 6 `dist/artifacts/*.json` have the same sha256 as `artifacts/*.json`; served by a plain static server they come back identical with schemaVersion 1. Mutation M5 (copy skips spatial.json) turns the A5 test red | PASS |
+
+### Real output
+Gate evidence (maintainer, not re-run here, as instructed): `verify.sh all` at commit 3faed3a on this exact tree,
+exit 0, 11/11 stages: boundary self-test 134 shapes, scripts 71 passed, ruff clean, main 331 passed, artifacts
+schema + fresh, tsc clean, vitest 1350 passed, vite build OK.
+
+```
+$ wsl.exe -e bash scripts/dev.sh python3 --version
+Python 3.12.3
+$ wsl.exe -e git status --short          (start)
+ M status.md
+$ npm --prefix renderer run -s test -- src/shell src/lib   (VITEST_MAX_WORKERS=2, shared tree, HEAD 3faed3a)
+ ✓ src/shell/App.test.tsx (43 tests)
+ ✓ src/lib/lib.test.tsx (9 tests)
+ ✓ src/shell/build.test.ts (6 tests)
+ ✓ src/lib/liveContract.test.ts (6 tests)
+ ✓ src/shell/advance.test.tsx (3 tests)
+ ✓ src/lib/contracts.test.ts (1 test)
+ ✓ src/shell/Boundary.test.tsx (4 tests)
+ ✓ src/lib/liveStatusStore.test.ts (30 tests)
+ ✓ src/shell/ArtifactGate.test.tsx (1 test)
+ ✓ src/shell/galleryMode.test.ts (2 tests)
+ Test Files  10 passed (10)
+      Tests  105 passed (105)
+EXIT=0
+```
+
+Probe tests (copy, real views). The first attempt asserted the shell's own heading wording ("Could not load …")
+and 18 cases on #/advance, #/budget, #/forecast, #/transport did not match it, because those views draw their own
+panel; the rerun checks that the panel text names the file instead. Output of the rerun (abridged to one line per
+view and kind of answer; all 30 lines have names-file=true):
+```
+VT-A1 parseHash [["#/locate","locate"],["#/advance/","advance"],["#/budget","budget"],["#/spatial","spatial"],["",null],["#",null],["#/",null],["#/LOCATE",null],["#locate",null],["#/locate/x",null],["#/budget?x=1",null],["#gallery",null],["#/constructor",null],["#/toString",null],["#//locate",null]]
+VT-A1 history ["#/spatial","#/transport","#/spatial"]
+VT-A3 locate http-404 -> headings ["Could not load artifacts/geometry.json"] callouts ["Warning: artifacts/geometry.json is missing or invalid"] names-file=true len=295
+VT-A3 spatial html-200 -> headings ["Could not load artifacts/spatial.json"] callouts ["Warning: artifacts/spatial.json is missing or invalid"] names-file=true len=330
+VT-A3 budget schema-2 -> headings ["Budget figures could not be loaded"] callouts ["Warning: artifacts/budget.json failed to load"] names-file=true len=146
+VT-A3 forecast shape-v1 -> headings ["Could not load artifacts/forecast.json"] callouts ["Warning: artifacts/forecast.json is missing or invalid"] names-file=true len=314
+VT-A3 transport null -> headings ["Transport evidence could not be loaded"] callouts ["Warning: artifacts/transport.json failed to load"] names-file=true len=165
+VT-A3 advance shape-v1 -> headings ["Nonlinear GX on two A100s: GPU 0 bean tube, GPU 1 triangular tube","Replay: archived stella and GENE bean traces"] callouts ["Warning: artifacts/transport.json has an unexpected shape — no archived evidence to replay"] names-file=true len=765
+      Tests  30 passed | 2 skipped (32)        (-t VT-A3; the two A1 probes passed in the first run)
+```
+
+Real build and static serve (copy, 127.0.0.1 only, no API):
+```
+✓ built in 2.63s
+budget.json src=b7d16911e7b4944d dist=b7d16911e7b4944d same
+forecast.json src=75c7039534843200 dist=75c7039534843200 same
+geometry.json src=1df0e9d5bdfd752a dist=1df0e9d5bdfd752a same
+manifest.json src=4c823491715bafe8 dist=4c823491715bafe8 same
+spatial.json src=6f2ed8add50c693c dist=6f2ed8add50c693c same
+transport.json src=ae594c701e542a5a dist=ae594c701e542a5a same
+dist/artifacts json count: 6, source count: 6
+GET / -> 200 481 bytes
+GET /artifacts/budget.json -> 200, identical to artifacts/budget.json: True, schemaVersion 1
+GET /artifacts/geometry.json -> 200, identical to artifacts/geometry.json: True, schemaVersion 1
+GET /artifacts/spatial.json -> 200, identical to artifacts/spatial.json: True, schemaVersion 1
+GET /api/live/status -> 404 (no backend behind the static build)
+A4 question from TASK.md: Is this W7-X heat-flux estimate accurate enough to justify a longer simulation?
+A4 question present verbatim in the built bundle: True
+A2 bundle requests /api/live/status: True ; A5 bundle requests /artifacts/: True
+A1 bundle has #/locate: True   (same for #/advance #/transport #/forecast #/spatial #/budget)
+```
+
+Mutations (copy; each runs only that outcome's tests with -t; every file restored and compared with the shared tree):
+```
+M1-A1 (renderer/src/shell/useHashRoute.ts) exit=1  Tests  2 failed | 41 skipped (43)
+   × A1 a route change is announced and moves focus to the view, unless the keyboard is in the nav (FE-12)
+   × A1 navigation reaches all six views by keyboard and the URL hash names the view
+M2-A2 (renderer/src/lib/liveStatus.ts) exit=1  Tests  3 failed | 38 passed | 11 skipped (52)
+   × A2 a partial or malformed status body never blanks the page: it is rejected and the app stays in replay
+   × A2 fetchLiveStatus rejects partial and wrong-typed bodies as "bad payload" (they must never reach a render)
+   × A2 live status: unreachable backend is not live; only mode=live is live
+M3-A3 (renderer/src/lib/artifacts.ts) exit=1  Tests  2 failed | 2 passed | 6 skipped (10)
+   × A3 artifact loading/error/data states: missing or invalid artifacts name the file, never blank
+   × A3 fetchArtifact rejects wrong schemaVersion and HTTP errors with the file name
+M4-A4 (renderer/src/shell/ProvenanceLegend.tsx) exit=1  Tests  1 failed | 1 passed | 41 skipped (43)
+   × A4 the legend explains every provenance kind and verification outcome defined in contracts/common.schema.json
+M5-A5 (renderer/vite.config.ts) exit=1  Tests  1 failed | 5 skipped (6)
+   × A5 static build copies artifacts/*.json into <outDir>/artifacts so replay needs no backend
+--- copy restored? (diff against the shared tree, expect nothing)
+probe copy deleted: /home/qqbot/.cache/labyrinth-probes/vt-09-app-shell
+```
+
+### Findings
+The previous run's blocking items are fixed and now tested: the header raises the billing-risk Alert for
+TERMINATE FAILED / TERMINATION PENDING in every mode on every route (`App.test.tsx:263-287`); a partial status body
+is rejected by the contract validator (`renderer/src/lib/liveStatus.ts:272-273`, tested at `App.test.tsx:389` and
+`lib.test.tsx:48`); the legend lists `not-applicable` (`renderer/src/shell/ProvenanceLegend.tsx:10`) and its test
+reads the enums from `contracts/common.schema.json` (`App.test.tsx:527`). Weak-test items 4 and 6 of that run are
+covered (`lib.test.tsx:64`, `lib.test.tsx:71`, `App.test.tsx:431`). Its minor items 10 to 12 were not re-checked
+in this shortened run.
+
+Minor (none blocks an outcome):
+1. `renderer/src/lib/liveStatus.ts:226`: `modePills` decides the LIVE pill with its own `s.data.mode === 'live'`
+   instead of calling `isLive` (`liveStatus.ts:57-59`), which interface.md §3 names the single source. Same
+   behaviour today; a later change to `isLive` would not reach the header pill. Fix: use `isLive(s)` there.
+2. Error panels are worded two ways. Locate and Spatial (and shape errors in Forecast and Transport) use the
+   shell's `ArtifactErrorPanel` ("Could not load <file>", `renderer/src/shell/ArtifactGate.tsx:20`); fetch errors
+   in Budget, Forecast and Transport draw their own panel ("… could not be loaded" with "<file> failed to load",
+   e.g. `renderer/src/features/budget/BudgetView.tsx:62-70`). Every one names the file, so A3 holds; this is for
+   the feature owners if one wording is wanted.
+
+Not checked in this run: a real browser (keyboard focus styles, screen readers), the dev server, the real
+`labyrinth_main.server` behind the app.
+
+Verdict: PASS
