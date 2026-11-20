@@ -10,8 +10,10 @@ import jsonschema
 import pytest
 from referencing import Registry, Resource
 
-from labyrinth_main.common.paths import CONTRACTS
+from labyrinth_main.common import io
+from labyrinth_main.common.paths import ARTIFACTS, CONTRACTS
 from labyrinth_main.features.budget import artifact as budget_artifact
+from labyrinth_main.features.geometry import artifact as geometry_artifact
 from labyrinth_main.features.live_gx import budget_guard as guard
 from labyrinth_main.features.live_gx import rehearse, service
 from labyrinth_main.features.live_gx.fake_backend import FakeBackend
@@ -79,6 +81,41 @@ def test_fixture_check_basis_is_data_or_arithmetic():
     assert not valid(v, {**POINT, "extra": 1})  # still closed
 
 
+def test_fixture_check_claim_source_is_prd_or_task():
+    """BE-DATA-3: claimSource names where `claimed` is printed (absent = PRD.md); a TASK.md value says "task"."""
+    v = fixture_check()
+    assert valid(v, {**POINT, "claimSource": "task"})
+    assert valid(v, {**POINT, "claimSource": "prd"})
+    assert valid(v, {**RANGE, "claimSource": "task"})
+    for bad in ("TASK.md", "PRD", "", None, 1):
+        assert not valid(v, {**POINT, "claimSource": bad}), bad
+    budget = budget_artifact.build()
+    assert valid(validator("budget.schema.json"), budget)
+    assert next(f for f in budget["fixtures"] if f["id"] == "remaining-usd")["claimSource"] == "task"
+
+
+def _claimed_ranges(node, out: list) -> list:
+    if isinstance(node, dict):
+        if "claimedRange" in node:
+            out.append(node["claimedRange"])
+        for val in node.values():
+            _claimed_ranges(val, out)
+    elif isinstance(node, list):
+        for val in node:
+            _claimed_ranges(val, out)
+    return out
+
+
+def test_every_committed_claimed_range_is_ordered():
+    """claimedRange is [lo, hi] with lo <= hi. JSON Schema cannot compare two items, so the producers enforce it
+    (range_fixture raises on lo > hi, test_common) and this checks every committed artifact."""
+    ranges = []
+    for p in sorted(ARTIFACTS.glob("*.json")):
+        _claimed_ranges(json.loads(p.read_text(encoding="utf-8")), ranges)
+    assert len(ranges) >= 4  # budget's four PRD ranges
+    assert all(lo <= hi for lo, hi in ranges), ranges
+
+
 # ---- D23-2 / D23-5: required new top-level fields -----------------------------------------------------------------
 def test_spatial_contract_requires_fixtures():
     v = validator("spatial.schema.json")
@@ -87,6 +124,54 @@ def test_spatial_contract_requires_fixtures():
     without = {k: val for k, val in art.items() if k != "fixtures"}
     assert not valid(v, without)
     assert not valid(v, {**art, "fixtures": [{**POINT, "claimed": None}]})
+
+
+def test_spatial_contract_requires_the_d023_speedup_and_runs_fixtures():
+    """BE-DATA-4 / D-023 §2: at least the 1.27x speedup (basis arithmetic) and the 4-of-4 controlled runs (matches
+    null: not recomputable here); an empty or partial list is invalid."""
+    v = validator("spatial.schema.json")
+    art = spatial_artifact.build()
+    fx = {f["id"]: f for f in art["fixtures"]}
+
+    def with_fixtures(fixtures):
+        return {**art, "fixtures": fixtures}
+
+    assert valid(v, with_fixtures([fx["speedup"], fx["controlled-runs-passed"]]))
+    assert not valid(v, with_fixtures([]))
+    assert not valid(v, with_fixtures([f for f in art["fixtures"] if f["id"] != "speedup"]))
+    assert not valid(v, with_fixtures([f for f in art["fixtures"] if f["id"] != "controlled-runs-passed"]))
+    speedup_no_basis = {k: val for k, val in fx["speedup"].items() if k != "basis"}
+    assert not valid(v, with_fixtures([speedup_no_basis, fx["controlled-runs-passed"]]))
+    assert not valid(v, with_fixtures([{**fx["speedup"], "basis": "data"}, fx["controlled-runs-passed"]]))
+    runs_recomputed = {**fx["controlled-runs-passed"], "computed": 4, "matches": True}
+    assert not valid(v, with_fixtures([fx["speedup"], runs_recomputed]))
+
+
+def test_closed_objects_and_non_negative_guard_plan():
+    """BE-DATA-4: spatial.fieldSolve and geometry surface.boundary items are closed; the guard plan's amounts and
+    timeouts cannot be negative (a timeout cut to 0 because nothing is left stays valid)."""
+    spatial = spatial_artifact.build()
+    v = validator("spatial.schema.json")
+    assert valid(v, spatial)
+    assert not valid(v, {**spatial, "fieldSolve": {"device": "CPU", "extra": "GPU"}})
+
+    geometry = json.loads(io.dumps(geometry_artifact.build()))
+    v = validator("geometry.schema.json")
+    assert valid(v, geometry)
+    for tube in ("bean", "triangular"):
+        bad = copy.deepcopy(geometry)
+        bad["surface"]["boundary"][tube]["extra"] = 1
+        assert not valid(v, bad), tube
+
+    budget = budget_artifact.build()
+    v = validator("budget.schema.json")
+    plan = budget["guardPlan"]
+    for key in ("slotEstimateUsd", "rehearsalEstimateUsd", "plannedTotalUsd"):
+        assert not valid(v, {**budget, "guardPlan": {**plan, key: -0.01}}), key
+        assert valid(v, {**budget, "guardPlan": {**plan, key: 0.0}}), key
+    for key in ("slotHardTimeoutS", "rehearsalHardTimeoutS"):
+        assert not valid(v, {**budget, "guardPlan": {**plan, key: -1}}), key
+        assert valid(v, {**budget, "guardPlan": {**plan, key: 0}}), key
 
 
 def test_budget_contract_requires_guard_plan():

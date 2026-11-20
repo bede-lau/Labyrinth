@@ -1,6 +1,8 @@
 /* Advance plasma (live GX) view. Tokens only. Prefix: lg-. */
 .lg-view { display: flex; flex-direction: column; gap: var(--lab-space-4); min-width: 0; }
 .lg-view .lab-callout { margin-top: var(--lab-space-3); }
+/* A section that failed to render, or a file with an unexpected shape: the message may be one long token. */
+.lg-broken__message { overflow-wrap: anywhere; }
 .lg-pills { display: flex; flex-wrap: wrap; gap: var(--lab-space-2); align-items: center; justify-content: flex-end; }
 .lg-note { margin-top: var(--lab-space-2); font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-subtle); }
 

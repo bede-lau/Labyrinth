@@ -4,19 +4,50 @@
 const MINUS = '−';
 const EN_DASH = '–';
 
-/** Fixed-decimal formatting with a true minus sign (U+2212). `null` -> em dash. */
+/**
+ * True when `abs` lies exactly halfway between two numbers of `decimals` places (0.125 at 2, 2.5 at 0).
+ * That is when abs × 10^d ends in exactly .5, i.e. abs is an odd multiple of 2^−(d+1): doubling it
+ * d + 1 times, and no fewer, gives an integer. Doubling a double is exact, so this is too.
+ */
+function isExactTie(abs: number, decimals: number): boolean {
+  let y = abs;
+  for (let k = 0; k <= decimals + 1; k++) {
+    if (Number.isInteger(y)) return k === decimals + 1;
+    y *= 2;
+  }
+  return false;
+}
+
+/**
+ * `abs` (≥ 0) to `decimals` places, an exact tie to the even neighbour: the rule of Python's round(),
+ * which sets the artifacts' `matches` flags, so a value printed here and the flag computed from it
+ * agree. toFixed() rounds the exact binary value too, so the two differ only on an exact tie, where
+ * toFixed() goes up: 0.125 → 0.12 here, 0.13 there. 2.675 is stored below its tie and goes down in both.
+ */
+function fixedHalfEven(abs: number, decimals: number): string {
+  const s = abs.toFixed(decimals);
+  if (!isExactTie(abs, decimals)) return s;
+  const last = s.charCodeAt(s.length - 1) - 48;
+  // toFixed() took the upper neighbour; on an odd last digit the even one is one unit below.
+  return last % 2 === 0 ? s : s.slice(0, -1) + String(last - 1);
+}
+
+/**
+ * Fixed-decimal formatting with a true minus sign (U+2212). `null` -> em dash. An exact tie rounds to
+ * even, as Python's round() does (0.125 → "0.12", 2.5 → "2").
+ */
 export function formatNumber(value: number | null | undefined, decimals: number): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';
-  const s = Math.abs(value).toFixed(decimals);
+  const s = fixedHalfEven(Math.abs(value), decimals);
   // Avoid "−0.00": a value that rounds to zero is printed unsigned.
   const isZero = Number(s) === 0;
   return value < 0 && !isZero ? MINUS + s : s;
 }
 
-/** Always-signed formatting for deltas: +0.01, −0.01, 0.00. */
+/** Always-signed formatting for deltas: +0.01, −0.01, 0.00 (same rounding as formatNumber). */
 export function formatSigned(value: number, decimals: number): string {
   const s = formatNumber(value, decimals);
-  if (Number(Math.abs(value).toFixed(decimals)) === 0) return s;
+  if (!Number.isFinite(value) || Number(fixedHalfEven(Math.abs(value), decimals)) === 0) return s;
   return value > 0 ? `+${s}` : s;
 }
 

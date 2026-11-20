@@ -1,22 +1,43 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { formatNumber } from '../../design';
+import { liveStatusStore, modePills, type LiveStatus, type LiveWorker } from '../../lib/liveStatus';
 import { ForecastView } from './ForecastView';
-import { INITIAL, advance, mismatchedScores, nextAction, parseSampleAndHold, runningMae, visibility, type ForecastArtifact, type Phase } from './model';
+import {
+  INITIAL,
+  advance,
+  mismatchedScores,
+  nextAction,
+  parseSampleAndHold,
+  runningMae,
+  sampleAndHoldMatchesPrd,
+  visibility,
+  type ForecastArtifact,
+  type Phase,
+} from './model';
 
 const ARTIFACT: ForecastArtifact = JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/forecast.json'), 'utf8'));
 const clone = (): ForecastArtifact => JSON.parse(JSON.stringify(ARTIFACT)) as ForecastArtifact;
 
-function serve(artifact: unknown = ARTIFACT, status = 200) {
+/** One /api/live/status answer: a snapshot, a 404 (null) or no answer ('reject'). A list is answered in turn, its last repeated. */
+type Api = LiveStatus | null | 'reject';
+function serve(artifact: unknown = ARTIFACT, status = 200, live: Api | Api[] = null) {
+  const answers = Array.isArray(live) ? live : [live];
+  let n = 0;
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (input: RequestInfo | URL) =>
-      String(input) === '/artifacts/forecast.json'
-        ? new Response(JSON.stringify(artifact), { status })
-        : new Response('nope', { status: 404 }),
-    ),
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/artifacts/forecast.json') return new Response(JSON.stringify(artifact), { status });
+      if (url === '/api/live/status') {
+        const next = answers[Math.min(n++, answers.length - 1)];
+        if (next === 'reject') throw new TypeError('network down');
+        if (next) return new Response(JSON.stringify(next));
+      }
+      return new Response('nope', { status: 404 });
+    }),
   );
 }
 beforeEach(() => serve());
@@ -331,6 +352,129 @@ test('A3 forecast: a missing or invalid artifact shows an error naming the file,
   serve({ ...ARTIFACT, schemaVersion: 3 });
   render(<ForecastView />);
   expect(await screen.findByRole('note', { name: /artifacts\/forecast\.json failed to load/ })).toHaveTextContent('unexpected schemaVersion');
+});
+
+test('FF-14 the mismatch count follows the rows: a flag that disagrees with the printed values counts as a mismatch', async () => {
+  const a = clone();
+  // mae-frozen says matches:true, but 0.0418 does not print as the PRD's 0.0423: its row is a Mismatch.
+  a.fixtures[1] = { ...a.fixtures[1]!, computed: 0.0418, matches: true };
+  expect(mismatchedScores(a).map((f) => f.id)).toEqual(['mae-persistence', 'mae-frozen']);
+  serve(a);
+  render(<ForecastView />);
+  const final = await screen.findByRole('region', { name: /Final scores: recomputed vs PRD claim/ });
+  const rows = [...within(final).getByTestId('final-scores').querySelectorAll('.lab-fixture')];
+  expect(rows.map((r) => r.getAttribute('data-outcome'))).toEqual(['mismatch', 'mismatch']);
+  expect(within(final).getByRole('note')).toHaveTextContent(/2 of 2 scores are shown as mismatches/);
+  expect(final).not.toHaveTextContent(/1 of 2 scores/);
+});
+
+test('FF-7 a score that cannot be recomputed (matches null) is not a mismatch: no callout, a "Not recomputable" row', async () => {
+  const a = clone();
+  a.fixtures[0] = { ...a.fixtures[0]!, computed: null, matches: null };
+  a.fixtures[1] = { ...a.fixtures[1]!, computed: 0.04232, matches: true };
+  expect(mismatchedScores(a)).toEqual([]);
+  serve(a);
+  render(<ForecastView />);
+  const final = await screen.findByRole('region', { name: /Final scores: recomputed vs PRD claim/ });
+  expect(within(final).getByRole('group', { name: /^stella MAE, persistence forecast: Not recomputable\./ })).toHaveAttribute('data-outcome', 'unknown');
+  expect(within(final).queryByRole('note')).toBeNull();
+  expect(within(final).queryByText('Mismatch')).toBeNull();
+  expect(final).not.toHaveTextContent(/shown as a mismatch|do not reproduce|different window-mean definition/);
+});
+
+test('FF-9 the sample-and-hold callout says "matching the PRD" only when its printed values are the PRD claims', async () => {
+  // Committed note: 0.0444 and 0.0423 are exactly the PRD's printed scores.
+  expect(sampleAndHoldMatchesPrd(parseSampleAndHold(ARTIFACT.fixtures[0]?.note)!, ARTIFACT)).toBe(true);
+  serve();
+  const first = render(<ForecastView />);
+  const final = await screen.findByRole('region', { name: /Final scores: recomputed vs PRD claim/ });
+  expect(within(final).getByRole('note', { name: /different window-mean definition/ })).toHaveTextContent(/matching the PRD/);
+  first.unmount();
+
+  // A note whose sample-and-hold frozen score prints 0.0421 against the PRD's 0.0423: no "matching the PRD".
+  const a = clone();
+  for (const f of a.fixtures) f.note = f.note!.replace('frozen 0.042332 → 0.0423', 'frozen 0.042132 → 0.0421');
+  const sah = parseSampleAndHold(a.fixtures[0]?.note)!;
+  expect(sah.frozen).toEqual(['0.042132', '0.0421']);
+  expect(sampleAndHoldMatchesPrd(sah, a)).toBe(false);
+  serve(a);
+  render(<ForecastView />);
+  const final2 = await screen.findByRole('region', { name: /Final scores: recomputed vs PRD claim/ });
+  const note = within(final2).getByRole('note', { name: /The PRD scores do not reproduce with the stated method/ });
+  expect(note).toHaveTextContent("0.042132 → 0.0421, which does not match the PRD's printed 0.0444 and 0.0423 either.");
+  expect(note).toHaveTextContent(/2 of 2 scores are shown as mismatches/);
+  expect(final2).not.toHaveTextContent(/matching the PRD|reproduce only under a different window-mean definition/);
+});
+
+/* ---- the replay pill never prints "$0" while the header withholds it (cross-RX-1, FF-1) ------------ */
+const LIVE_BASE: LiveStatus = {
+  schemaVersion: 1,
+  mode: 'idle',
+  reason: 'Qualified. Launch requires explicit confirmation of the slot cost.',
+  qualified: true,
+  budget: { ceilingUsd: 40, billedUsd: 8.1, pendingUsd: 0, slotEstimateUsd: 2.65, slotFits: true, hardTimeoutS: 1500 },
+  workers: [],
+  fallback: { active: false, label: '', savedRunId: null },
+};
+const worker = (gpuIndex: 0 | 1, state: LiveWorker['state'] = 'running'): LiveWorker => ({
+  gpuIndex,
+  deviceId: `GPU-${gpuIndex}aaaa`,
+  tube: gpuIndex === 0 ? 'bean' : 'triangular',
+  state,
+  simTime: 12,
+  samples: [],
+});
+const RUNNING = [worker(0), worker(1)];
+const snap = (mode: LiveStatus['mode'], reason: string, workers: LiveWorker[] = [], extra: Partial<LiveStatus> = {}): LiveStatus => ({
+  ...LIVE_BASE,
+  mode,
+  reason,
+  workers,
+  ...extra,
+});
+const FALLBACK = { active: true, label: 'Worker failed — GPU 0 (bean)', savedRunId: null };
+const replayPill = () =>
+  screen.getByRole('region', { name: /Predict the next 50-unit mean/ }).querySelector('.lab-panel__header .lab-pill[data-status="replay"]');
+
+test.each([
+  ['mode live with two running workers', [snap('live', 'Live: both workers running.', RUNNING)]],
+  ['a fallback with TERMINATE FAILED', [snap('fallback', 'TERMINATE FAILED — check Modal dashboard; GPUs may still be billing: GPU 0 (bean).', [worker(0, 'failed')], { fallback: FALLBACK })]],
+  ['a fallback with TERMINATION PENDING', [snap('fallback', 'TERMINATION PENDING — cancel queued, not yet confirmed; GPUs may still be billing.', [worker(1)], { fallback: FALLBACK })]],
+  ['a stop that is not confirmed', [snap('live', 'Stop requested; terminating workers — not confirmed yet', RUNNING)]],
+  ['mode idle with workers listed', [snap('idle', 'Session created; workers starting.', [worker(0, 'pending'), worker(1, 'pending')])]],
+  ['mode launching', [snap('launching', 'Launching both workers.', [worker(0, 'initializing')])]],
+  ['a connection lost after mode live', [snap('live', 'Live: both workers running.', RUNNING), 'reject']],
+] as [string, Api[]][])('FF-1 / cross-RX-1 the forecast replay pill withholds the zero-cost label for %s, as the header does', async (_name, api) => {
+  serve(ARTIFACT, 200, api);
+  render(<ForecastView livePollMs={api.length > 1 ? 60 : 60_000} />);
+  await screen.findByRole('button', { name: /^Predict/ });
+  const settled = api.length > 1 ? 'unreachable' : 'ready';
+  await waitFor(() => expect(liveStatusStore.getState().status).toBe(settled));
+  expect(modePills(liveStatusStore.getState()).map((p) => p.text)).not.toContain('Replay · $0');
+  expect(replayPill()).toHaveTextContent(/^Replay$/);
+  expect(document.body).not.toHaveTextContent('Replay · $0');
+});
+
+test('FF-1 the forecast replay pill keeps "$0" where the header does, and drops it once a launch from this page is accepted', async () => {
+  // Static replay build (no API answer) and an empty artifact: the empty-state panel follows the same rule.
+  serve({ ...clone(), steps: [] });
+  const first = render(<ForecastView livePollMs={60_000} />);
+  await screen.findByRole('note', { name: /No forecast windows/ });
+  await waitFor(() => expect(liveStatusStore.getState().status).toBe('unreachable'));
+  const empty = screen.getByRole('region', { name: /Predict the next local mean/ });
+  expect(empty.querySelector('.lab-panel__header .lab-pill[data-status="replay"]')).toHaveTextContent(/^Replay · \$0$/);
+  first.unmount();
+
+  serve(ARTIFACT, 200, LIVE_BASE);
+  render(<ForecastView livePollMs={60_000} />);
+  await screen.findByRole('button', { name: /^Predict/ });
+  await waitFor(() => expect(liveStatusStore.getState().status).toBe('ready'));
+  expect(replayPill()).toHaveTextContent(/^Replay · \$0$/);
+  act(() => {
+    liveStatusStore.lockLaunch();
+    liveStatusStore.launchAnswered('accepted');
+  });
+  expect(replayPill()).toHaveTextContent(/^Replay$/);
 });
 
 test('DS-2 the steps table keeps its visually hidden caption inside the scrolling well', () => {

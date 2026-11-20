@@ -254,6 +254,21 @@ describe('billing risk: the danger pill (DL-1)', () => {
   });
 });
 
+/**
+ * WAI-ARIA's politeness for a change at `node`: that of the nearest element, itself included, that sets
+ * aria-live, explicitly or through a live role (alert is assertive; status and log are polite).
+ */
+function politeness(node: Element): string {
+  for (let el: Element | null = node; el; el = el.parentElement) {
+    const live = el.getAttribute('aria-live');
+    if (live) return live;
+    const role = el.getAttribute('role');
+    if (role === 'alert') return 'assertive';
+    if (role === 'status' || role === 'log') return 'polite';
+  }
+  return 'off';
+}
+
 describe('Alert (DL-1)', () => {
   test.each(DANGER_STATES)('%s: role="alert", a spoken title, the backend reason verbatim and the action', async (_k, title, reason) => {
     const user = userEvent.setup();
@@ -287,6 +302,80 @@ describe('Alert (DL-1)', () => {
     expect(container.querySelector('.lab-alert__reason')).toBeNull();
     expect(container.querySelector('.lab-alert__body')).toBeNull();
     expect(container.querySelector('.lab-alert__action')).toBeNull();
+  });
+  // design-r1-R7: one danger is announced once. A second copy of it on the same page (the live panel
+  // under the header's) is drawn the same and keeps its name, but is not a second assertive live region.
+  test('announce={false}: the same Alert and the same name, but a group instead of a live region', () => {
+    const title = 'TERMINATE FAILED — GPUs may still be billing';
+    render(
+      <>
+        <Alert title={title} reason={TERMINATE_FAILED} />
+        <Alert title={title} reason={TERMINATE_FAILED} announce={false} action={<button type="button">Retry terminate</button>}>
+          Send Terminate again.
+        </Alert>
+      </>,
+    );
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    const copy = screen.getByRole('group', { name: `Danger: ${title}` });
+    expect(copy).toHaveClass('lab-alert');
+    expect(copy).toHaveAttribute('data-status', 'billing-risk');
+    expect(copy).not.toHaveAttribute('aria-live');
+    expect(copy.querySelector('.lab-alert__reason')?.textContent).toBe(TERMINATE_FAILED);
+    expect(copy.querySelector('svg[data-icon]')?.getAttribute('data-icon')).toBe('danger');
+    expect(copy).toHaveTextContent('Send Terminate again.');
+    expect(within(copy).getByRole('button', { name: 'Retry terminate' })).toBeInTheDocument();
+    expect(copy.closest('[role="alert"]')).toBeNull();
+    expect(politeness(within(copy).getByRole('button'))).toBe('off');
+  });
+  // design-r2-R5: while the alert is up its action and body change (Terminate → "Terminating… (send
+  // again)" → "Retry terminate", a terminate answer). Each change was a fresh assertive announcement,
+  // because role="alert" covered the whole box. Only the title and reason are announced now: the body and
+  // the action sit in aria-live="off" sub-regions, which WAI-ARIA's nearest-ancestor rule leaves silent.
+  // They stay inside the alert, so the alert still carries its own action and body.
+  test('only the title and reason are announced; later changes to the body and the action are not', () => {
+    const title = 'TERMINATION PENDING — GPUs may still be billing';
+    const view = (label: string, answer?: string) => (
+      <Alert title={title} reason={TERMINATE_FAILED} action={<button type="button">{label}</button>}>
+        Check the Modal dashboard until both workers are confirmed stopped.
+        {answer ? <p>{answer}</p> : null}
+      </Alert>
+    );
+    const { rerender } = render(view('Terminate'));
+    const alert = screen.getByRole('alert', { name: `Danger: ${title}` });
+    expect(politeness(within(alert).getByText(title))).toBe('assertive');
+    expect(politeness(within(alert).getByText(TERMINATE_FAILED))).toBe('assertive');
+    expect(politeness(within(alert).getByRole('button', { name: 'Terminate' }))).toBe('off');
+    for (const [label, answer] of [['Terminating… (send again)'], ['Retry terminate', 'Terminate not confirmed: no answer.']] as const) {
+      rerender(view(label, answer));
+      expect(screen.getAllByRole('alert')).toEqual([alert]);
+      expect(politeness(within(alert).getByRole('button', { name: label }))).toBe('off');
+      expect(politeness(within(alert).getByText(/^Check the Modal dashboard/))).toBe('off');
+      if (answer) expect(politeness(within(alert).getByText(answer))).toBe('off');
+      expect(politeness(within(alert).getByText(TERMINATE_FAILED))).toBe('assertive');
+    }
+  });
+  // SEED-design-1: at 390 px the header's Alert stood about 370 px tall. The compact variant keeps every
+  // part (role, title, the reason verbatim, body, action) in the same order; it only tightens the box.
+  test('compact: every part kept, in order, with the compact class and a 16 px icon', () => {
+    const [, title, reason] = DANGER_STATES[0] as (typeof DANGER_STATES)[number];
+    render(
+      <Alert compact title={title} reason={reason} action={<a href="#/advance">Open Advance plasma to send Terminate</a>}>
+        Check the Modal dashboard until both workers are confirmed stopped.
+      </Alert>,
+    );
+    const alert = screen.getByRole('alert', { name: `Danger: ${title}` });
+    expect(alert).toHaveClass('lab-alert', 'lab-alert--compact');
+    expect(alert.querySelector('.lab-alert__reason')?.textContent).toBe(reason);
+    const parts = ['.lab-alert__title', '.lab-alert__reason', '.lab-alert__body', '.lab-alert__action'].map((s) => alert.querySelector(s) as Element);
+    for (let i = 1; i < parts.length; i++) expect(parts[i - 1]?.compareDocumentPosition(parts[i] as Element) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(within(alert).getByRole('link', { name: 'Open Advance plasma to send Terminate' })).toBeInTheDocument();
+    expect(alert.querySelector('svg[data-icon="danger"]')?.getAttribute('width')).toBe('16');
+  });
+  test('the default Alert is not compact and keeps its 20 px icon', () => {
+    render(<Alert title="CONNECTION LOST — session state unknown" />);
+    const alert = screen.getByRole('alert');
+    expect(alert).not.toHaveClass('lab-alert--compact');
+    expect(alert.querySelector('svg[data-icon="danger"]')?.getAttribute('width')).toBe('20');
   });
 });
 
@@ -502,6 +591,28 @@ describe('FixtureCheck', () => {
     expect(fixtureOutcome(fx({ matches: true }))).toEqual({ outcome: 'mismatch', inconsistent: true });
     render(<FixtureCheck fixture={fx({ matches: true })} />);
     expect(screen.getByText(/flag disagrees/)).toBeInTheDocument();
+  });
+  // design-r1-R2: the producer sets `matches` with Python's round(), ties to even. The check and the
+  // printed values use the same rule, so an exact tie neither contradicts the flag nor shows two equal
+  // numbers labelled Mismatch. Δ is the difference of the printed values: 0 exactly when they match.
+  // `matches` below is python3's round(computed, d) == round(claimed, d).
+  test.each([
+    [0.12, 0.125, 2, true, 'Match', '0.12', '0.00'],
+    [0.13, 0.125, 2, false, 'Mismatch', '0.12', '−0.01'],
+    [2, 2.5, 0, true, 'Match', '2', '0'],
+    [3, 2.5, 0, false, 'Mismatch', '2', '−1'],
+    [14.2, 14.25, 1, true, 'Match', '14.2', '0.0'],
+    [14.3, 14.25, 1, false, 'Mismatch', '14.2', '−0.1'],
+    // not a tie: printed 1.0 vs 1.1 differ, while the raw difference (0.02) rounds to 0.0
+    [1.04, 1.06, 1, false, 'Mismatch', '1.1', '+0.1'],
+  ] as const)('claimed %s, computed %s at %s decimals (matches: %s): %s, computed %s, Δ %s', (claimed, computed, d, matches, word, shown, delta) => {
+    const f = fx({ label: 'tie', claimed, computed, printedDecimals: d, matches });
+    expect(fixtureOutcome(f)).toEqual({ outcome: matches ? 'match' : 'mismatch', inconsistent: false });
+    render(<FixtureCheck fixture={f} />);
+    const g = screen.getByRole('group', { name: new RegExp(`^tie: ${word}\\.`) });
+    expect(within(g).getByTestId('computed').textContent).toBe(shown);
+    expect(g.querySelector('.lab-fixture__delta')?.textContent).toBe(delta);
+    expect(within(g).queryByText(/flag disagrees/)).toBeNull();
   });
 });
 
@@ -740,6 +851,57 @@ describe('FixtureCheck renders D-023 fixtures: ranges, missing claims and the ba
     expect(shown('t 13.9999')).toBe('13.9999');
     expect(shown('t 14.999999')).toBe('15.00'); // inside, and "15.00" is inside too: two extra decimals are enough
   });
+  // design-r1-R1: within an ulp of a bound no fixed number of extra decimals separates the value from
+  // the bound. The value then prints in its shortest round-trip form, which is always on its own side,
+  // and Δ gains decimals until it is not an unsigned zero.
+  test.each([
+    [[1, 2], 0, 0.9999999999999999, '0.9999999999999999', '−0.0000000000000001'],
+    [[1, 2], 0, 2.0000000000000004, '2.0000000000000004', '+0.0000000000000004'],
+    [[0.1, 0.3], 1, 0.1 + 0.2, '0.30000000000000004', '+0.00000000000000006'],
+  ] as const)('range %j at %s decimals, computed %s: printed %s, Δ %s', (range, d, computed, shown, delta) => {
+    const f: FixtureCheckData = { id: 'u', label: 'ulp', claimed: null, claimedRange: range, computed, printedDecimals: d, matches: false };
+    render(<FixtureCheck fixture={f} />);
+    const g = screen.getByRole('group', { name: /^ulp: Outside PRD range\./ });
+    expect(within(g).getByTestId('computed').textContent).toBe(shown);
+    expect(g.querySelector('.lab-fixture__delta')?.textContent).toBe(delta);
+  });
+  test('one to three ulps either side of a bound: the printed value is on the same side as the value, and Δ has its sign', () => {
+    const ulps = (x: number, n: number) => {
+      const f = new Float64Array([x]);
+      const bits = new BigInt64Array(f.buffer);
+      bits[0] = (bits[0] as bigint) + BigInt(n);
+      return f[0] as number;
+    };
+    const ranges: [number, number, number][] = [[1, 2, 0], [0.1, 0.3, 1], [14, 15, 0], [3100, 3200, 0], [0.001, 0.002, 3], [2.55, 2.68, 2]];
+    const cases = ranges.flatMap(([lo, hi, d]) =>
+      [lo, hi].flatMap((b) => [-3, -2, -1, 1, 2, 3].map((n) => ({ lo, hi, d, v: ulps(b, n) }))),
+    );
+    const parse = (s: string) => Number(s.replace('−', '-'));
+    const side = (x: number, lo: number, hi: number) => (x < lo ? -1 : x > hi ? 1 : 0);
+    const signOf = (s: string) => (s.startsWith('+') ? 1 : s.startsWith('−') ? -1 : 0);
+    render(
+      <>
+        {cases.map((c, i) => (
+          <FixtureCheck
+            key={i}
+            fixture={{ id: `p${i}`, label: `p${i}`, claimed: null, claimedRange: [c.lo, c.hi], computed: c.v, printedDecimals: c.d, matches: side(c.v, c.lo, c.hi) === 0 }}
+          />
+        ))}
+      </>,
+    );
+    const seen = cases.map((c, i) => {
+      const g = screen.getByRole('group', { name: new RegExp(`^p${i}: `) });
+      const printed = parse(within(g).getByTestId('computed').textContent ?? '');
+      const delta = g.querySelector('.lab-fixture__delta')?.textContent ?? '';
+      return { v: c.v, printedSide: side(printed, c.lo, c.hi), deltaSign: signOf(delta), outcome: g.getAttribute('data-outcome') };
+    });
+    expect(seen).toEqual(
+      cases.map((c) => {
+        const truth = side(c.v, c.lo, c.hi);
+        return { v: c.v, printedSide: truth, deltaSign: truth, outcome: truth === 0 ? 'match' : 'mismatch' };
+      }),
+    );
+  });
   test('a range that cannot be recomputed: em dashes, no unit after them, no distance', () => {
     const f: FixtureCheckData = { id: 'x', label: 'Cost', claimed: null, claimedRange: [3100, 3200], computed: null, printedDecimals: 0, matches: null };
     render(<FixtureCheck fixture={f} unit="USD" />);
@@ -753,23 +915,153 @@ describe('FixtureCheck renders D-023 fixtures: ranges, missing claims and the ba
     expect(within(g).getByTestId('claimed').textContent).toBe('—');
     expect(g.querySelector('.lab-fixture__delta')?.textContent).toBe('—');
   });
-  test('the basis comes from the fixture; the prop overrides it; absent means data', () => {
+  // design-r1-R3: D-023 takes the basis from the artifact. A call site may make a check more cautious
+  // (data -> arithmetic), never less: an arithmetic-only fixture never becomes a green ✓ "Match".
+  test('the basis comes from the fixture; the prop can only downgrade it; absent means data', () => {
     const match = fx({ computed: 2.68, matches: true });
     render(
       <>
         <FixtureCheck fixture={{ ...match, id: 'a', label: 'from data', basis: 'arithmetic' }} />
-        <FixtureCheck fixture={{ ...match, id: 'b', label: 'overridden', basis: 'arithmetic' }} basis="data" />
+        <FixtureCheck fixture={{ ...match, id: 'b', label: 'upgrade refused', basis: 'arithmetic' }} basis="data" />
+        <FixtureCheck fixture={{ ...match, id: 'd', label: 'downgraded', basis: 'data' }} basis="arithmetic" />
         <FixtureCheck fixture={{ ...match, id: 'c', label: 'absent' }} />
       </>,
     );
     expect(screen.getByRole('group', { name: /^from data: Arithmetic consistent\./ })).toHaveAttribute('data-basis', 'arithmetic');
-    expect(screen.getByRole('group', { name: /^overridden: Match\./ })).toHaveAttribute('data-basis', 'data');
+    const refused = screen.getByRole('group', { name: /^upgrade refused: Arithmetic consistent\./ });
+    expect(refused).toHaveAttribute('data-basis', 'arithmetic');
+    expect(refused.querySelector('[data-icon="check"]')).toBeNull();
+    expect(screen.getByRole('group', { name: /^downgraded: Arithmetic consistent\./ })).toHaveAttribute('data-basis', 'arithmetic');
     expect(screen.getByRole('group', { name: /^absent: Match\./ })).toHaveAttribute('data-basis', 'data');
   });
   test('an explicit claimedLabel still wins over "PRD range"', () => {
     const f: FixtureCheckData = { id: 'x', label: 'Cost', claimed: null, claimedRange: [3100, 3200], computed: 3150.5, printedDecimals: 0, matches: true };
     render(<FixtureCheck fixture={f} unit="USD" claimedLabel="Range (TASK.md)" />);
     expect(within(screen.getByRole('group')).getByTestId('claimed').previousElementSibling?.textContent).toBe('Range (TASK.md)');
+  });
+  // design-r2-R2: contract `claimSource` "task" = only tasks/<NN>/TASK.md prints the claim, and consumers
+  // label it as a TASK.md figure, never a PRD one. The words come from the fixture, not from a call site.
+  describe('claimSource "task": every word that names the claim’s source says TASK.md', () => {
+    const task = (part: Partial<FixtureCheckData>): FixtureCheckData => ({
+      id: 't',
+      label: 'Remaining',
+      claimed: null,
+      computed: null,
+      printedDecimals: 0,
+      matches: null,
+      claimSource: 'task',
+      ...part,
+    });
+    test.each([
+      ['a value', task({ claimed: 18.17, computed: 18.17, printedDecimals: 2, matches: true, basis: 'arithmetic' }), 'Claimed (TASK.md)', 'Arithmetic consistent', 'Claimed 18.17 USD, computed 18.17 USD'],
+      ['a range, arithmetic, inside', task({ claimedRange: [14, 15], computed: 14.4, matches: true, basis: 'arithmetic' }), 'TASK.md range', 'Arithmetic in TASK.md range', 'TASK.md range 14 to 15 USD, computed 14.40 USD'],
+      ['a range, data, inside', task({ claimedRange: [14, 15], computed: 14.4, matches: true }), 'TASK.md range', 'Inside TASK.md range', 'TASK.md range 14 to 15 USD'],
+      ['a range, outside', task({ claimedRange: [14, 15], computed: 16.2, matches: false }), 'TASK.md range', 'Outside TASK.md range', 'TASK.md range 14 to 15 USD, computed 16.20 USD, distance to the range plus 1.20'],
+      ['no value', task({ computed: 3, matches: true }), 'Claimed (TASK.md)', 'No TASK.md value', 'Claimed value not available, computed 3 USD'],
+    ] as const)('%s', (_name, fixture, key, outcome, spoken) => {
+      render(<FixtureCheck fixture={fixture} unit="USD" />);
+      const g = screen.getByRole('group', { name: new RegExp(`^Remaining: ${outcome}\\. `) });
+      expect(within(g).getByTestId('claimed').previousElementSibling?.textContent).toBe(key);
+      expect(g.querySelector('.lab-fixture__outcome-text')?.textContent).toBe(outcome);
+      expect(g.getAttribute('aria-label')).toContain(`Remaining: ${outcome}. ${spoken}`);
+      expect(`${g.textContent} ${g.getAttribute('aria-label')}`).not.toMatch(/PRD/);
+    });
+    test('"prd", or no claimSource, keeps the PRD words; an explicit claimedLabel still wins', () => {
+      const range: FixtureCheckData = { id: 'r', label: 'Days', claimed: null, claimedRange: [14, 15], computed: 16.2, printedDecimals: 0, matches: false };
+      render(
+        <>
+          <FixtureCheck fixture={{ ...range, claimSource: 'prd' }} />
+          <FixtureCheck fixture={{ ...range, id: 'a', label: 'Absent' }} />
+          <FixtureCheck fixture={{ ...range, id: 'l', label: 'Labelled', claimSource: 'task' }} claimedLabel="Range (task 04)" />
+        </>,
+      );
+      const prd = screen.getByRole('group', { name: 'Days: Outside PRD range. PRD range 14 to 15, computed 16.20, distance to the range plus 1.20' });
+      expect(within(prd).getByTestId('claimed').previousElementSibling?.textContent).toBe('PRD range');
+      expect(screen.getByRole('group', { name: /^Absent: Outside PRD range\. PRD range 14 to 15/ })).toBeInTheDocument();
+      const labelled = screen.getByRole('group', { name: /^Labelled: Outside TASK\.md range\. TASK\.md range 14 to 15/ });
+      expect(within(labelled).getByTestId('claimed').previousElementSibling?.textContent).toBe('Range (task 04)');
+    });
+  });
+  // design-r2-R6: no number of decimals up to the printed + 15 the loop used to try separates a value a
+  // few 1e-16 from a bound of 0, and the fallback printed "−3.4907937049865723e-16". It is fixed
+  // notation now, with as many places as it takes (toFixed() prints at most 100; beyond that, every
+  // digit of the shortest round-trip form). printedDecimals above 100 used to throw from toFixed().
+  test('a value a few 1e-16 off a bound of 0 is printed in fixed notation, on its own side, with a signed Δ', () => {
+    const f: FixtureCheckData = { id: 'z', label: 'z', claimed: null, claimedRange: [0, 1], computed: -3.4907937049865723e-16, printedDecimals: 0, matches: false };
+    render(<FixtureCheck fixture={f} />);
+    const g = screen.getByRole('group', { name: /^z: Outside PRD range\./ });
+    expect(within(g).getByTestId('computed').textContent).toBe('−0.0000000000000003');
+    expect(g.querySelector('.lab-fixture__delta')?.textContent).toBe('−0.0000000000000003');
+  });
+  test('closer to a bound than 100 decimals can tell: every digit, still in fixed notation', () => {
+    const below: FixtureCheckData = { id: 'b', label: 'below', claimed: null, claimedRange: [0, 1], computed: -1.5e-200, printedDecimals: 0, matches: false };
+    const above: FixtureCheckData = { ...below, id: 'a', label: 'above', claimedRange: [-1, 0], computed: 5e-324 };
+    render(
+      <>
+        <FixtureCheck fixture={below} />
+        <FixtureCheck fixture={above} />
+      </>,
+    );
+    const b = screen.getByRole('group', { name: /^below: Outside PRD range\./ });
+    expect(within(b).getByTestId('computed').textContent).toBe(`−0.${'0'.repeat(199)}15`);
+    expect(b.querySelector('.lab-fixture__delta')?.textContent).toBe(`−0.${'0'.repeat(199)}15`);
+    const a = screen.getByRole('group', { name: /^above: Outside PRD range\./ });
+    expect(within(a).getByTestId('computed').textContent).toBe(`0.${'0'.repeat(323)}5`);
+    expect(a.querySelector('.lab-fixture__delta')?.textContent).toBe(`+0.${'0'.repeat(323)}5`);
+  });
+  test('a sweep of values near bounds across magnitudes: never exponential; printed side, Δ sign and outcome follow the value', () => {
+    // A fixed linear congruential generator: the same cases on every run.
+    let seed = 20261120;
+    const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+    const side = (x: number, lo: number, hi: number) => (x < lo ? -1 : x > hi ? 1 : 0);
+    const cases = [1e-9, 1e-3, 1, 1e3, 1e9].flatMap((m) =>
+      [[0, m], [m, 2 * m], [-m, 0]].flatMap(([lo, hi]) =>
+        Array.from({ length: 16 }, () => {
+          const bound = rnd() < 0.5 ? (lo as number) : (hi as number);
+          const offset = (rnd() < 0.5 ? -1 : 1) * 10 ** -Math.floor(rnd() * 22) * (1 + rnd()) * Math.max(Math.abs(bound), 1e-16);
+          const v = bound + offset;
+          return { lo: lo as number, hi: hi as number, v, d: Math.floor(rnd() * 5) };
+        }),
+      ),
+    );
+    render(
+      <>
+        {cases.map((c, i) => (
+          <FixtureCheck key={i} fixture={{ id: `s${i}`, label: `s${i}`, claimed: null, claimedRange: [c.lo, c.hi], computed: c.v, printedDecimals: c.d, matches: side(c.v, c.lo, c.hi) === 0 }} />
+        ))}
+      </>,
+    );
+    const parse = (s: string) => Number(s.replace('−', '-'));
+    const signOf = (s: string) => (s.startsWith('+') ? 1 : s.startsWith('−') ? -1 : 0);
+    const seen = cases.map((c, i) => {
+      const g = screen.getByRole('group', { name: new RegExp(`^s${i}: `) });
+      const printed = within(g).getByTestId('computed').textContent ?? '';
+      const delta = g.querySelector('.lab-fixture__delta')?.textContent ?? '';
+      return { i, exponent: /e/i.test(printed + delta), side: side(parse(printed), c.lo, c.hi), sign: signOf(delta), outcome: g.getAttribute('data-outcome') };
+    });
+    expect(cases.filter((c) => side(c.v, c.lo, c.hi) !== 0).length, 'the sweep has values outside').toBeGreaterThan(40);
+    expect(seen).toEqual(
+      cases.map((c, i) => {
+        const truth = side(c.v, c.lo, c.hi);
+        return { i, exponent: false, side: truth, sign: truth, outcome: truth === 0 ? 'match' : 'mismatch' };
+      }),
+    );
+  });
+  test.each([99, 100, 150])('printedDecimals %s (the contract allows any integer ≥ 0) renders instead of throwing; above 100 it prints 100', (d) => {
+    const range: FixtureCheckData = { id: 'r', label: 'range', claimed: null, claimedRange: [1, 2], computed: 1.5, printedDecimals: d, matches: true };
+    const value: FixtureCheckData = { id: 'v', label: 'value', claimed: 1.5, computed: 1.5, printedDecimals: d, matches: true };
+    render(
+      <>
+        <FixtureCheck fixture={range} />
+        <FixtureCheck fixture={value} />
+      </>,
+    );
+    const places = Math.min(d, 100);
+    const r = screen.getByRole('group', { name: /^range: Inside PRD range\./ });
+    expect(within(r).getByTestId('computed').textContent).toBe(`1.${'5'.padEnd(Math.min(places + 2, 100), '0')}`);
+    const v = screen.getByRole('group', { name: /^value: Match\./ });
+    expect(within(v).getByTestId('claimed').textContent).toBe(`1.${'5'.padEnd(places, '0')}`);
+    expect(fixtureOutcome(value)).toEqual({ outcome: 'match', inconsistent: false });
   });
   test('fixtureOutcome() applies the range rule to the unrounded value', () => {
     const r = (computed: number | null, matches: boolean | null): FixtureCheckData => ({ id: 'r', label: 'r', claimed: null, claimedRange: [14, 15], computed, printedDecimals: 0, matches });

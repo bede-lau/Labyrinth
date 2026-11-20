@@ -70,6 +70,17 @@ def test_fixture_basis_is_explicit_and_checked():
         range_fixture("x", "x", (1, 2), None, 0, basis="arithmetic")
 
 
+def test_fixture_claim_source_marks_a_task_md_claim():
+    """BE-DATA-3: `claimSource` says where the claim is printed; absent means PRD.md, "task" the feature's TASK.md."""
+    assert "claimSource" not in fixture("x", "x", 1.53, 1.53, 2)
+    assert fixture("x", "x", 18.17, 18.17, 2, claim_source="task")["claimSource"] == "task"
+    assert fixture("x", "x", 1.53, 1.53, 2, claim_source="prd")["claimSource"] == "prd"
+    assert range_fixture("x", "x", (1, 2), 1.5, 0, claim_source="task")["claimSource"] == "task"
+    for bad in ("TASK.md", "PRD", ""):
+        with pytest.raises(ValueError, match="claim source"):
+            fixture("x", "x", 1.0, 1.0, 2, claim_source=bad)
+
+
 def test_hash_helper_matches_hashlib(tmp_path):
     p = tmp_path / "f"
     p.write_bytes(b"abc")

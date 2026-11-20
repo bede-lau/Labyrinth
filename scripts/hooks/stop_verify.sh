@@ -18,15 +18,24 @@
 #
 # Exit codes: 0 or 2, nothing else (decision D-003).
 #
-# Env: LABYRINTH_MAX_STOP_BLOCKS (default 6); LABYRINTH_VERIFY_CMD (default
-# "bash scripts/verify.sh all", overridable for tests).
+# Env: LABYRINTH_MAX_STOP_BLOCKS (default 6); LABYRINTH_VERIFY_CMD (a shell command, for tests only).
+# Without LABYRINTH_VERIFY_CMD the gate is `bash "$ROOT/scripts/verify.sh" all`, run directly from the
+# repository root - never eval'd, so a checkout path with spaces works (review finding RV-G14).
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || { echo "stop_verify: cannot resolve the repository root" >&2; exit 2; }
 STATE_DIR="${LABYRINTH_STATE_DIR:-$ROOT/.claude/state}"
 MAX="${LABYRINTH_MAX_STOP_BLOCKS:-6}"
 [[ "$MAX" =~ ^[0-9]+$ ]] || MAX=6
-VERIFY_CMD="${LABYRINTH_VERIFY_CMD:-bash $ROOT/scripts/verify.sh all}"
 mkdir -p "$STATE_DIR" 2>/dev/null
+
+run_verify() {
+  cd "$ROOT" || return 2
+  if [[ -n "${LABYRINTH_VERIFY_CMD:-}" ]]; then
+    eval "$LABYRINTH_VERIFY_CMD"
+  else
+    bash "$ROOT/scripts/verify.sh" all
+  fi
+}
 
 PAYLOAD="$(cat)"
 SESSION="$(printf '%s' "$PAYLOAD" | python3 -c 'import json,sys,re
@@ -50,7 +59,7 @@ if [[ -n "$BEFORE" && "$BEFORE" == *" clean" && "${BEFORE%% *}" == "$(cat "$LAST
   echo 0 >"$COUNTER"; exit 0
 fi
 
-OUT="$(cd "$ROOT" && eval "$VERIFY_CMD" 2>&1)"
+OUT="$(run_verify 2>&1)"
 CODE=$?
 if [[ $CODE -eq 0 ]]; then
   echo 0 >"$COUNTER"

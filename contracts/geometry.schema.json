@@ -40,6 +40,7 @@
           "additionalProperties": {
             "type": "object",
             "required": ["R", "Z"],
+            "additionalProperties": false,
             "properties": { "R": { "type": "array", "items": { "type": "number" } }, "Z": { "type": "array", "items": { "type": "number" } } }
           }
         }
@@ -113,7 +114,7 @@
           }
         },
         "float64Reference": {
-          "description": "Our tracer's bmag vs stella's float64 bmag(zed, alpha) in EXPECTED_OUTPUT.vmec_geometry.out.nc (same rho=0.7 run, 25 samples). tolerance is absolute on bmag = |B|/B_ref; allWithinTolerance is true only when every sample's bmag error, and the zed grid offset, are within it. maxAbsError/maxRelError are rounded UP to 2 significant figures (errors this small differ in later digits between CPUs).",
+          "description": "Our tracer's bmag vs stella's float64 bmag(zed, alpha) in EXPECTED_OUTPUT.vmec_geometry.out.nc (same rho=0.7 run, 25 samples). tolerance is absolute on bmag = |B|/B_ref; allWithinTolerance is true only when every sample's bmag error, and the zed grid offset, are within it (decided on the unrounded errors). maxAbsError/maxRelError are upper bounds: the computed error x 1.2, rounded UP to 1 significant figure (errors this small differ in their later digits between CPUs and BLAS kernels, and the artifact must rebuild byte-identically). A float64 failure fails the tracer validation: provenance.verification.outcome is then 'failed'.",
           "type": "object",
           "required": ["samplesCompared", "tolerance", "maxAbsError", "maxRelError", "allWithinTolerance", "source"],
           "additionalProperties": false,

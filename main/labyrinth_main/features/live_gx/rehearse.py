@@ -18,8 +18,10 @@ has no effect beyond that stop request: the handler stays installed, so a late s
 termination short nor turn the exit code into "killed by a signal". A phase whose termination is not confirmed
 is announced at once ("termination not confirmed yet — check the Modal dashboard now"), BEFORE anything is
 waited for, and the process then waits only while a cancel is queued (a late spawn), at most CONFIRM_WAIT_S;
-a cancel that failed hard is not slept on. Each phase finally prints "workers terminated" (or "nothing was
-launched") or "NOT confirmed terminated — check Modal dashboard" with its reason, and the exit code is 2
+a cancel that failed hard is not slept on. Each phase finally prints what it stopped, worded from its worker
+records ("workers terminated" only when both GPUs were launched and cancelled, else "GPU 0 (bean) terminated; GPU 1
+(triangular) never launched" or "nothing was launched"), or "NOT confirmed terminated — check Modal dashboard",
+with its reason; the last line says the same over all phases. The exit code is 2
 whenever the rehearsal did not pass or anything is unsettled. "Terminated" means a cancel of the spawned call
 succeeded (modal_backend): a spawn that failed client-side reads "kill switch raised, stop not confirmed" and
 ends in exit 2, like a spawn RPC that never returns — the operator must check the Modal dashboard and stop the
@@ -39,8 +41,17 @@ from pathlib import Path
 
 from ..budget.pricing import REHEARSAL_H
 from . import budget_guard as guard
-from .orchestrator import Orchestrator, WorkerBackend
-from .service import WORST_CASE_STOP_S, LedgerLocked, LedgerStore, atomic_write, cost_matches, default_state_dir, say
+from .orchestrator import COMPARISON_NOT_COMPUTED, Orchestrator, WorkerBackend, stopped_wording
+from .service import (
+    POLL_INTERVAL_S,
+    WORST_CASE_STOP_S,
+    LedgerLocked,
+    LedgerStore,
+    atomic_write,
+    cost_matches,
+    default_state_dir,
+    say,
+)
 
 CONFIRM_WAIT_S = WORST_CASE_STOP_S + 10.0
 STOP_SIGNALS = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "SIGHUP") if hasattr(signal, name))
@@ -70,7 +81,7 @@ def _overlap(p: Orchestrator) -> bool:
 
 
 def run_rehearsal(backend_factory: Callable[[str, int], WorkerBackend], *, state_dir: Path, confirm_cost_usd,
-                  poll_interval_s: float = 2.0, phase_timeout_s: float | None = None,
+                  poll_interval_s: float = POLL_INTERVAL_S, phase_timeout_s: float | None = None,
                   started: list[Orchestrator] | None = None, stop: StopRequest | None = None) -> tuple[bool, dict]:
     """`phase_timeout_s` may only SHORTEN the guard's per-phase hard timeout (tests run on a scaled clock).
     Every phase orchestrator is appended to `started` BEFORE it runs, so the caller can terminate it
@@ -144,7 +155,8 @@ def run_rehearsal(backend_factory: Callable[[str, int], WorkerBackend], *, state
         snap["provenance"]["verification"] = {
             "outcome": "passed" if ok else "failed",
             "details": (f"Qualification rehearsal {run_id}, {name}: " +
-                        ", ".join(f"{k} {'ok' if v else 'FAILED'}" for k, v in record["checks"].items()) + "."),
+                        ", ".join(f"{k} {'ok' if v else 'FAILED'}" for k, v in record["checks"].items()) + ". "
+                        + COMPARISON_NOT_COMPUTED),
         }
     atomic_write(state_dir / "runs" / f"{run_id}.json", json.dumps(record, indent=2) + "\n")
     if ok:
@@ -163,23 +175,24 @@ def terminate_phases(started: list[Orchestrator], confirm_wait_s: float) -> bool
 
     A phase that ran has already had its terminate round (Orchestrator.run), which is not repeated here: only
     a worker no round has tried yet is terminated now. If a phase is then unconfirmed, that is said BEFORE any
-    waiting, and the wait lasts only while a cancel is queued; a queued cancel that settled as failed gets one
-    more round (there is a call to cancel now)."""
+    waiting, and the wait lasts only while a cancel is queued; a queued cancel that settled gets one more round
+    (as failed: there is a call to cancel now) — also one that settled as failed before the wait began.
+    A confirmed phase says what it stopped, from its worker records (`Orchestrator.stopped`)."""
     confirmed_all = True
     for i, p in enumerate(started, 1):
         p.request_stop()
         p.terminate_all(retry=False)
         ok = p.confirm_stop()
-        if not ok and p.termination_pending:
+        waited = not ok and p.termination_pending
+        if waited:
             for to_stderr in (False, True):
                 _say(f"phase {i}: termination not confirmed yet — check the Modal dashboard now; waiting up to "
                      f"{confirm_wait_s:.0f} s for the queued cancel. {p.reason}", to_stderr=to_stderr)
             p.wait_terminated(confirm_wait_s)
-            if not p.termination_pending:
-                ok = p.stop_and_terminate()
+        if not ok and (p.queued_cancel_failed or (waited and not p.termination_pending)):
+            ok = p.stop_and_terminate()
         confirmed_all &= ok
-        verdict = ("workers terminated" if p.launched_any else "nothing was launched") if ok else \
-            "NOT confirmed terminated — check Modal dashboard"
+        verdict = p.stopped if ok else "NOT confirmed terminated — check Modal dashboard"
         line = f"phase {i}: {verdict}. {p.reason}"
         _say(line)
         if not ok:
@@ -188,7 +201,7 @@ def terminate_phases(started: list[Orchestrator], confirm_wait_s: float) -> bool
 
 
 def main(argv: list[str] | None = None, *, availability_check: Callable[[], tuple[bool, str]] | None = None,
-         backend_factory: Callable[[str, int], WorkerBackend] | None = None, poll_interval_s: float = 2.0,
+         backend_factory: Callable[[str, int], WorkerBackend] | None = None, poll_interval_s: float = POLL_INTERVAL_S,
          restore_signals: bool = True) -> int:
     """The keyword hooks are for tests only; the command line cannot set them. The command line passes
     `restore_signals=False`: its stop handlers then stay installed until the process has exited, so that a
@@ -241,7 +254,8 @@ def main(argv: list[str] | None = None, *, availability_check: Callable[[], tupl
         if stop.is_set() and not passed:
             _say("Rehearsal interrupted; nothing qualified.")
         qualified = passed and confirmed and crash is None
-        stopped = "workers terminated." if any(p.launched_any for p in started) else "nothing was launched."
+        # from the worker records of every phase: "workers terminated." only when both GPUs were launched
+        stopped = stopped_wording(set().union(*(p.launched_gpus for p in started))) + "."
         _say("Rehearsal " + ("PASSED" if qualified else "did NOT pass")
              + (f"; {stopped}" if confirmed else "; workers NOT confirmed terminated — check Modal dashboard."))
         return 0 if qualified else 2

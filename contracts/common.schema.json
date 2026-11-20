@@ -51,13 +51,14 @@
       }
     },
     "window": {
+      "description": "[lo, hi] with lo <= hi. JSON Schema cannot compare the two items, so producers enforce the order.",
       "type": "array",
       "prefixItems": [{ "type": "number" }, { "type": "number" }],
       "minItems": 2,
       "maxItems": 2
     },
     "fixtureCheck": {
-      "description": "A number (or range) claimed in PRD.md compared against the value this repo recomputes (decision D-023).",
+      "description": "A number (or range) claimed in PRD.md (or, with claimSource \"task\", in the feature's tasks/<NN>/TASK.md) compared against the value this repo recomputes (decision D-023).",
       "type": "object",
       "required": ["id", "label", "claimed", "computed", "printedDecimals", "matches"],
       "additionalProperties": false,
@@ -66,11 +67,15 @@
         "label": { "type": "string" },
         "claimed": {
           "type": ["number", "null"],
-          "description": "The single value the PRD prints. null exactly when the PRD prints a range instead (see claimedRange); never a value the PRD did not print."
+          "description": "The single value the claim's source prints (PRD.md unless claimSource says otherwise). null exactly when that source prints a range instead (see claimedRange); never a value the source did not print."
+        },
+        "claimSource": {
+          "enum": ["prd", "task"],
+          "description": "Where claimed / claimedRange is printed. Absent means \"prd\" (PRD.md). \"task\" = only the feature's tasks/<NN>/TASK.md prints it (the PRD implies it at most): consumers label it as a TASK.md figure, never as a PRD figure."
         },
         "claimedRange": {
           "$ref": "#/$defs/window",
-          "description": "[lo, hi] when the PRD prints a range. Then claimed is null and matches means lo <= computed <= hi (no rounding)."
+          "description": "[lo, hi] with lo <= hi when the source prints a range (producers enforce the order: JSON Schema cannot compare items). Then claimed is null and matches means lo <= computed <= hi (no rounding)."
         },
         "computed": { "type": ["number", "null"] },
         "printedDecimals": { "type": "integer", "minimum": 0 },

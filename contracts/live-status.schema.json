@@ -60,7 +60,7 @@
       "properties": {
         "active": { "type": "boolean" },
         "label": { "type": "string" },
-        "savedRunId": { "type": ["string", "null"], "description": "null when no qualified rehearsal recording exists." }
+        "savedRunId": { "type": ["string", "null"], "pattern": "^(rehearsal|live)-[0-9a-f]{12}$", "description": "null when no qualified rehearsal recording exists; otherwise the id the server serves at /api/live/runs/<id> (D-023 follow-up)." }
       }
     },
     "provenance": { "$ref": "common.schema.json#/$defs/provenance" }

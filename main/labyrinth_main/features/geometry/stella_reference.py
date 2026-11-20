@@ -24,6 +24,7 @@ STELLA_DEFAULTS = {"alpha0": 0.0, "zeta_center": 0.0}  # namelist_geometry.f90 d
 _NAMELIST = re.compile(r"^\s*&(\w+)\s*$(.*?)^\s*/\s*$", re.M | re.S)
 PRINTED_SIG_FIGS = 4
 FLOAT64_TOLERANCE = 1e-10  # absolute, on bmag = |B|/B_ref, vs stella's float64 out.nc
+FLOAT64_BOUND_HEADROOM = 1.2  # published float64 errors: computed error x 1.2, rounded UP to 1 significant figure
 _NUM = re.compile(r"^-?\d\.(\d+)E([+-]\d+)$")
 
 GEOMETRY_COLUMNS = ["alpha", "zed", "zeta", "bmag", "bdot_grad_z", "gds2", "gds21", "gds22", "gds23",
@@ -87,11 +88,24 @@ def ceil_sig(x: float, sig: int) -> float:
     return float(d.quantize(Decimal(1).scaleb(d.adjusted() - sig + 1), rounding=ROUND_CEILING))
 
 
+def publish_bound(err: float) -> float:
+    """A float64 comparison error as geometry.json publishes it: an upper bound, ``err`` x FLOAT64_BOUND_HEADROOM
+    rounded UP to one significant figure (2.94e-13 -> 4e-13).
+
+    Errors at the 1e-13 level move in their 3rd digit with last-bit differences between CPUs and BLAS kernels
+    (OpenBLAS's Prescott kernel gives maxRelError 3.0011e-13 where its AVX2 kernels give 2.9954e-13), and the artifact
+    must rebuild byte-identically everywhere (D-006). Rounding the raw error itself puts a rounding boundary wherever
+    the error happens to sit (2.9954e-13 was 0.15 % below the 3.0e-13 one); the headroom and the single significant
+    figure leave today's errors more than 10 % inside the band that publishes the same bound (test_geometry checks)."""
+    return ceil_sig(err * FLOAT64_BOUND_HEADROOM, 1)
+
+
 def compare_out_nc(eq: VmecEquilibrium, input_path: Path, out_nc_path: Path) -> dict:
     """Max |bmag error| against stella's float64 ``bmag(zed, alpha)`` from the same run's out.nc.
 
     ``allWithinTolerance``: every sample's bmag within FLOAT64_TOLERANCE (absolute, bmag = |B|/B_ref) on a zed
-    grid that agrees with stella's to the same tolerance."""
+    grid that agrees with stella's to the same tolerance. ``bmagWithinTolerance`` and ``zedWithinTolerance`` are its
+    two terms, so a failure can name its cause (BE-DATA-9)."""
     import netCDF4
 
     params = run_parameters(input_path)
@@ -103,10 +117,12 @@ def compare_out_nc(eq: VmecEquilibrium, input_path: Path, out_nc_path: Path) -> 
     bmag = fl.B / eq.b_ref
     err = np.abs(bmag - bmag_ref)
     err_zed = float(np.max(np.abs(zed_ours - zed)))
+    bmag_ok = bool(np.all(err <= FLOAT64_TOLERANCE))
+    zed_ok = bool(err_zed <= FLOAT64_TOLERANCE)
     return {"samplesCompared": len(zed), "tolerance": FLOAT64_TOLERANCE,
             "maxAbsErrorBmag": float(np.max(err)), "maxRelErrorBmag": float(np.max(err / np.abs(bmag_ref))),
-            "maxAbsErrorZed": err_zed,
-            "allWithinTolerance": bool(np.all(err <= FLOAT64_TOLERANCE) and err_zed <= FLOAT64_TOLERANCE)}
+            "maxAbsErrorZed": err_zed, "bmagWithinTolerance": bmag_ok, "zedWithinTolerance": zed_ok,
+            "allWithinTolerance": bmag_ok and zed_ok}
 
 
 def read_geometry_file(path: Path) -> dict:

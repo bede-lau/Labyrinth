@@ -7,10 +7,25 @@
 import { compositeOver, contrastRatio, withAlpha } from './color';
 import { unsampledShapes, windowShape } from './plotTheme';
 import { STATUS_META } from './status';
-import { CALLOUT_TONES, STATUS_KINDS, themes, type ThemeName } from './tokens';
+import { CALLOUT_TONES, STATUS_KINDS, themeCssVars, themes, type ThemeName } from './tokens';
 
 export const TEXT_MIN = 4.5;
 export const NON_TEXT_MIN = 3;
+
+/**
+ * Every surface a component can be drawn on, as custom properties (the keys name the pairs below).
+ * css.test.ts pairs each colour of a primitive with no background of its own (Stat, ProvenanceBadge)
+ * with every one of them.
+ */
+export const SURFACE_PROPERTIES = {
+  bg: '--lab-color-bg',
+  surface: '--lab-color-surface',
+  surfaceSunken: '--lab-color-surface-sunken',
+  surfaceRaised: '--lab-color-surface-raised',
+  surfaceHover: '--lab-color-surface-hover',
+  accentSubtle: '--lab-color-accent-subtle',
+  plotPaper: '--lab-plot-paper',
+} as const;
 
 export interface ContrastPair {
   name: string;
@@ -24,18 +39,11 @@ export function contrastPairs(theme: ThemeName): ContrastPair[] {
   const c = t.color;
   const TEXT = TEXT_MIN;
   const NON_TEXT = NON_TEXT_MIN;
-  const surfaces = {
-    bg: c.bg,
-    surface: c.surface,
-    surfaceSunken: c.surfaceSunken,
-    surfaceRaised: c.surfaceRaised,
-    surfaceHover: c.surfaceHover,
-    accentSubtle: c.accentSubtle,
-    plotPaper: t.plot.paper,
-  };
+  const vars = themeCssVars(theme);
+  const surfaces = Object.fromEntries(Object.entries(SURFACE_PROPERTIES).map(([k, p]) => [k, vars[p] as string]));
   const out: ContrastPair[] = [];
-  // Every text token on every surface.
-  for (const fgName of ['text', 'textMuted', 'textSubtle', 'accentText'] as const)
+  // Every text token on every surface (accentHover: a hovered link).
+  for (const fgName of ['text', 'textMuted', 'textSubtle', 'accentText', 'accentHover'] as const)
     for (const [sName, s] of Object.entries(surfaces)) out.push({ name: `${fgName} on ${sName}`, fg: c[fgName], bg: s, min: TEXT });
   // Selected segment / primary button.
   out.push({ name: 'accentFg on accent', fg: c.accentFg, bg: c.accent, min: TEXT });
@@ -66,8 +74,20 @@ export function contrastPairs(theme: ThemeName): ContrastPair[] {
     for (const [sName, sv] of Object.entries(surfaces))
       out.push({ name: `${how} ${k} border vs ${sName}`, fg: s.border, bg: sv, min: NON_TEXT });
   }
-  // An Alert's action may be a link ("Open Advance plasma to send Terminate").
-  out.push({ name: 'accentText on status billing-risk bg', fg: c.accentText, bg: t.status['billing-risk'].bg, min: TEXT });
+  // Tints that hold controls: an Alert's action slot (a link such as "Open Advance plasma to send
+  // Terminate", or a button) and a mismatch row's "Show full note". Links and hovered links are text;
+  // the focus ring is drawn on the tint around the control. css.test.ts derives these from components.css.
+  for (const k of ['billing-risk', 'mismatch'] as const) {
+    const bg = t.status[k].bg;
+    out.push({ name: `accentText on status ${k} bg`, fg: c.accentText, bg, min: TEXT });
+    out.push({ name: `accentHover on status ${k} bg`, fg: c.accentHover, bg, min: TEXT });
+  }
+  // The focus ring on every tint, also those that hold no control today: a tinted row or pill may
+  // become interactive, and the ring must already read there.
+  for (const k of STATUS_KINDS) {
+    if (k === 'live') continue; // a solid fill, never a tint behind a control
+    out.push({ name: `focus ring on status ${k} bg`, fg: c.focus, bg: t.status[k].bg, min: NON_TEXT });
+  }
   // Alpha fills on charts, composited the way the browser paints them.
   const shade = compositeOver(t.plot.plot, t.plot.windowShade);
   const unsampledFill = withAlpha(t.plot.unsampled, t.plot.unsampledAlpha);
@@ -93,6 +113,8 @@ export function contrastPairs(theme: ThemeName): ContrastPair[] {
     out.push({ name: `text on callout ${tone}`, fg: c.text, bg: s.bg, min: TEXT });
     out.push({ name: `textMuted on callout ${tone}`, fg: c.textMuted, bg: s.bg, min: TEXT });
     out.push({ name: `accentText on callout ${tone}`, fg: c.accentText, bg: s.bg, min: TEXT });
+    out.push({ name: `accentHover on callout ${tone}`, fg: c.accentHover, bg: s.bg, min: TEXT });
+    out.push({ name: `focus ring on callout ${tone}`, fg: c.focus, bg: s.bg, min: NON_TEXT });
   }
   // Non-text UI.
   for (const [sName, s] of Object.entries(surfaces)) {

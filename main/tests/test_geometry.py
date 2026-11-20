@@ -1,6 +1,11 @@
 """Task 01 geometry, backend outcomes G1-G6 (tasks/01-geometry/TASK.md)."""
+import hashlib
 import json
 import math
+import os
+import shutil
+import subprocess
+import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -210,6 +215,57 @@ def test_reproduces_stella_float64_bmag():
     assert stella_reference.ceil_sig(0.0, 2) == 0.0
 
 
+def _perturbed_out_nc(tmp_path: Path, var: str, index: tuple, delta: float) -> Path:
+    """A copy of stella's float64 out.nc with one value of `var` ("bmag" at (zed, alpha) or "zed" at (zed,)) moved
+    by `delta`: a real input for compare_out_nc, so its own verdict logic is exercised (no monkeypatched result)."""
+    p = tmp_path / f"{var}-{'-'.join(map(str, index))}-{delta:g}.out.nc"
+    shutil.copyfile(paths.STELLA_TEST2_OUT_NC, p)
+    with netCDF4.Dataset(p, "r+") as d:
+        v = d.variables[var]
+        v[index] = float(v[index]) + delta
+    return p
+
+
+def _compare_with(out_nc: Path) -> dict:
+    return stella_reference.compare_out_nc(eq(), paths.STELLA_TEST2_INPUT, out_nc)
+
+
+def test_float64_comparison_flags_bmag_or_zed_outside_tolerance(tmp_path):
+    """BE-DATA-2: allWithinTolerance is the comparison's own verdict on every bmag sample AND the zed grid, at
+    FLOAT64_TOLERANCE (1e-10). One sample moved in stella's file decides it."""
+    # half the tolerance on one bmag sample: still within, and that offset is now the max error
+    half = _compare_with(_perturbed_out_nc(tmp_path, "bmag", (12, 0), 5e-11))
+    assert half["allWithinTolerance"] is True
+    assert half["maxAbsErrorBmag"] == pytest.approx(5e-11, rel=1e-2)
+    # twice the tolerance on one bmag sample: outside (a tolerance loosened to e.g. 1e-6 would still say true)
+    bmag_off = _compare_with(_perturbed_out_nc(tmp_path, "bmag", (12, 0), 2e-10))
+    assert bmag_off["allWithinTolerance"] is False
+    assert bmag_off["maxAbsErrorBmag"] == pytest.approx(2e-10, rel=1e-2)
+    # the zed grid 2e-10 off at one sample, bmag untouched: the grid is part of the verdict too
+    zed_off = _compare_with(_perturbed_out_nc(tmp_path, "zed", (12,), 2e-10))
+    assert zed_off["maxAbsErrorBmag"] < 1e-12
+    assert zed_off["maxAbsErrorZed"] == pytest.approx(2e-10, rel=1e-2)
+    assert zed_off["allWithinTolerance"] is False
+
+
+def test_float64_max_rel_error_is_relative_to_stella_bmag(tmp_path):
+    """BE-DATA-2: maxRelErrorBmag = max(|ours - stella| / |stella|), not the absolute error."""
+    params = stella_reference.run_parameters(paths.STELLA_TEST2_INPUT)
+    _, fl = stella_reference.trace_run(eq(), params)
+    ours = fl.B / eq().b_ref
+    with netCDF4.Dataset(paths.STELLA_TEST2_OUT_NC) as d:
+        ref = np.array(d.variables["bmag"][...], dtype=float)[:, 0]
+    res = _compare_with(paths.STELLA_TEST2_OUT_NC)
+    assert res["maxRelErrorBmag"] == float(np.max(np.abs(ours - ref) / np.abs(ref)))
+    assert res["maxAbsErrorBmag"] == float(np.max(np.abs(ours - ref)))
+    # a known error at the smallest |bmag| (0.923, sample 2): relative = 2e-10 / 0.923, 8 % above the absolute one
+    i = int(np.argmin(np.abs(ref)))
+    assert i == 2 and abs(ref[i]) < 0.93
+    off = _compare_with(_perturbed_out_nc(tmp_path, "bmag", (i, 0), 2e-10))
+    assert off["maxRelErrorBmag"] == pytest.approx(2e-10 / abs(ref[i]), rel=1e-2)
+    assert off["maxAbsErrorBmag"] == pytest.approx(2e-10, rel=1e-2)
+
+
 def test_float64_reference_exposed_in_artifact():
     """D-023 §4: the float64 out.nc comparison is a structured field, not prose the UI has to scrape."""
     res = stella_reference.compare_out_nc(eq(), paths.STELLA_TEST2_INPUT, paths.STELLA_TEST2_OUT_NC)
@@ -217,12 +273,16 @@ def test_float64_reference_exposed_in_artifact():
     assert set(f64) == {"samplesCompared", "tolerance", "maxAbsError", "maxRelError", "allWithinTolerance", "source"}
     assert f64["samplesCompared"] == res["samplesCompared"] == 25
     assert f64["tolerance"] == stella_reference.FLOAT64_TOLERANCE
-    # the values the backend computed, rounded UP to 2 significant figures: errors at the 1e-13 level move in their
-    # 3rd digit with last-bit differences between CPUs/BLAS builds, and the artifact must rebuild byte-identically
+    # published as upper bounds (BE-DATA-1): the computed error x FLOAT64_BOUND_HEADROOM, rounded UP to one
+    # significant figure, so the bound can never read below the error the backend computed
+    assert stella_reference.FLOAT64_BOUND_HEADROOM == 1.2
     for key, raw in (("maxAbsError", res["maxAbsErrorBmag"]), ("maxRelError", res["maxRelErrorBmag"])):
-        assert f64[key] == stella_reference.ceil_sig(raw, 2), key
-        assert raw <= f64[key] <= raw * 1.1, key
-        assert f64[key] == float(f"{f64[key]:.1e}"), key
+        assert f64[key] == stella_reference.publish_bound(raw), key
+        assert raw * 1.2 <= f64[key] < raw * 2.4, key
+        assert f64[key] == float(f"{f64[key]:.0e}"), key
+    assert (f64["maxAbsError"], f64["maxRelError"]) == (4e-13, 4e-13)
+    assert stella_reference.publish_bound(2.9e-13) == 4e-13 and stella_reference.publish_bound(3e-9) == 4e-9
+    assert stella_reference.publish_bound(8.4e-13) == 2e-12 and stella_reference.publish_bound(0.0) == 0.0
     assert f64["maxAbsError"] < f64["tolerance"] and f64["allWithinTolerance"] is True
     assert f64["source"]["path"] == "data/raw/stella_test2_vmec_geometry.out.nc"
     assert f64["source"]["sha256"] == io.sha256_file(paths.STELLA_TEST2_OUT_NC)
@@ -237,17 +297,109 @@ def test_float64_reference_exposed_in_artifact():
     assert not v.is_valid(a)
 
 
-def test_float64_reference_reports_a_failure(monkeypatch):
-    """allWithinTolerance follows the comparison: a tracer off by more than the tolerance reads false."""
+def test_float64_failure_fails_the_tracer_validation(tmp_path, monkeypatch):
+    """BE-DATA-5: a real float64 failure (stella's float64 bmag 2e-10 off at one sample, while the 4-significant-figure
+    check still passes) reads as a failure everywhere: the structured field, the provenance outcome and its prose."""
+    bad = _perturbed_out_nc(tmp_path, "bmag", (12, 0), 2e-10)
+    real = stella_reference.compare_out_nc
+    monkeypatch.setattr(stella_reference, "compare_out_nc", lambda e, input_path, _out_nc: real(e, input_path, bad))
+    a = artifact.build()
+    v = a["validation"]
+    assert v["stellaReference"]["allWithinPrintedPrecision"] is True
+    f64 = v["float64Reference"]
+    assert f64["allWithinTolerance"] is False
+    assert f64["maxAbsError"] == stella_reference.publish_bound(real(eq(), paths.STELLA_TEST2_INPUT, bad)["maxAbsErrorBmag"])
+    assert f64["maxAbsError"] == 3e-10
+    prov = a["provenance"]["verification"]
+    assert prov["outcome"] == "failed"
+    assert "Tracer validated vs stella rho 0.7: FAILED" in prov["details"] and "passed" not in prov["details"]
+    assert "every zeta and bmag within half a unit in the last printed place" in prov["details"]
+    assert f"max |error| <= {f64['maxAbsError']:g}, max rel <= {f64['maxRelError']:g}, OUTSIDE tolerance 1e-10" \
+        in prov["details"]
+    assert a["validation"]["acceptance129"]["outcome"] == "blocked"
+
+
+_REAL_COMPARE_OUT_NC = stella_reference.compare_out_nc
+
+
+def _build_with_out_nc(monkeypatch, out_nc: Path) -> dict:
+    """artifact.build() with stella's out.nc replaced by `out_nc` (safe to call more than once per test)."""
+    monkeypatch.setattr(stella_reference, "compare_out_nc",
+                        lambda e, input_path, _out_nc: _REAL_COMPARE_OUT_NC(e, input_path, out_nc))
+    return artifact.build()
+
+
+def test_float64_published_rel_bound_is_the_relative_error(tmp_path, monkeypatch):
+    """BE-DATA-6: at the smallest |bmag| (0.923, sample 2) a 2.4e-10 offset gives different absolute and relative
+    bounds (3e-10 vs 4e-10), so the published maxRelError and the prose's "max rel <=" can only come from the
+    relative error."""
+    bad = _perturbed_out_nc(tmp_path, "bmag", (2, 0), 2.4e-10)
+    raw = _compare_with(bad)
+    a = _build_with_out_nc(monkeypatch, bad)
+    f64 = a["validation"]["float64Reference"]
+    assert f64["maxAbsError"] == stella_reference.publish_bound(raw["maxAbsErrorBmag"]) == 3e-10
+    assert f64["maxRelError"] == stella_reference.publish_bound(raw["maxRelErrorBmag"]) == 4e-10
+    assert "max |error| <= 3e-10, max rel <= 4e-10, OUTSIDE tolerance 1e-10" in a["provenance"]["verification"]["details"]
+
+
+def test_float64_failure_names_its_cause(tmp_path, monkeypatch):
+    """BE-DATA-9: allWithinTolerance covers bmag AND the zed grid, so the prose names which one is outside the
+    tolerance. A zed-grid-only failure must not print bmag bounds 250x below the tolerance as "OUTSIDE tolerance"."""
+    zed = _build_with_out_nc(monkeypatch, _perturbed_out_nc(tmp_path, "zed", (12,), 2e-10))
+    assert zed["validation"]["float64Reference"]["allWithinTolerance"] is False
+    assert zed["provenance"]["verification"]["outcome"] == "failed"
+    details = zed["provenance"]["verification"]["details"]
+    assert "max rel <= 4e-13, every bmag sample within tolerance 1e-10 but the zed grid OUTSIDE it " \
+        "(max zed offset <= 3e-10))." in details
+    assert "max rel <= 4e-13, OUTSIDE" not in details
+    bmag = _build_with_out_nc(monkeypatch, _perturbed_out_nc(tmp_path, "bmag", (12, 0), 2e-10))
+    assert "OUTSIDE tolerance 1e-10 on bmag (the zed grid within it))." in bmag["provenance"]["verification"]["details"]
+    both = _perturbed_out_nc(tmp_path, "zed", (12,), 2e-10)
+    with netCDF4.Dataset(both, "r+") as d:
+        d.variables["bmag"][12, 0] = float(d.variables["bmag"][12, 0]) + 2e-10
+    details = _build_with_out_nc(monkeypatch, both)["provenance"]["verification"]["details"]
+    assert "OUTSIDE tolerance 1e-10 on bmag and on the zed grid (max zed offset <= 3e-10))." in details
+
+
+def _scaled_float64_errors(monkeypatch, factor: float) -> None:
     real = stella_reference.compare_out_nc
 
-    def worse(*a, **kw):
+    def scaled(*a, **kw):
         out = real(*a, **kw)
-        return {**out, "maxAbsErrorBmag": 3e-9, "allWithinTolerance": False}
+        return {**out, "maxAbsErrorBmag": out["maxAbsErrorBmag"] * factor,
+                "maxRelErrorBmag": out["maxRelErrorBmag"] * factor}
 
-    monkeypatch.setattr(stella_reference, "compare_out_nc", worse)
-    f64 = artifact.build()["validation"]["float64Reference"]
-    assert f64["maxAbsError"] == 3e-9 and f64["allWithinTolerance"] is False
+    monkeypatch.setattr(stella_reference, "compare_out_nc", scaled)
+
+
+def test_float64_noise_does_not_change_the_artifact(monkeypatch):
+    """BE-DATA-1: geometry.json must rebuild byte-identically on every CPU / BLAS kernel (artifacts:fresh, D-006). The raw
+    float64 errors (~3e-13) move in their 3rd digit between kernels (maxRelError 2.9954e-13 with OpenBLAS's AVX2
+    kernels, 3.0011e-13 with its Prescott kernel). The artifact (numbers and prose) must not move when they are 10 %
+    lower or higher: ~50x the kernel-to-kernel difference seen."""
+    base = io.dumps(artifact.build())
+    for factor in (0.9, 1.1):
+        _scaled_float64_errors(monkeypatch, factor)
+        assert io.dumps(artifact.build()) == base, factor
+
+
+def test_float64_reference_identical_under_another_blas_kernel():
+    """BE-DATA-1, as observed: rebuilt under OpenBLAS's generic Prescott kernel (what it picks on older x86 CPUs),
+    geometry.json is byte-identical to the default build."""
+    code = ("import hashlib, json; from labyrinth_main.common import io; "
+            "from labyrinth_main.features.geometry import artifact; a = artifact.build(); "
+            "print(json.dumps({'sha256': hashlib.sha256(io.dumps(a)).hexdigest(), "
+            "'float64Reference': a['validation']['float64Reference'], "
+            "'details': a['provenance']['verification']['details']}))")
+    env = {**os.environ, "OPENBLAS_CORETYPE": "Prescott", "PYTHONDONTWRITEBYTECODE": "1"}
+    proc = subprocess.run([sys.executable, "-c", code], cwd=paths.REPO_ROOT / "main", env=env, capture_output=True,
+                          text=True, timeout=300, check=False)
+    assert proc.returncode == 0, proc.stderr
+    other = json.loads(proc.stdout.strip().splitlines()[-1])
+    a = artifact.build()
+    assert other["float64Reference"] == json.loads(json.dumps(a["validation"]["float64Reference"]))
+    assert other["details"] == a["provenance"]["verification"]["details"]
+    assert other["sha256"] == hashlib.sha256(io.dumps(a)).hexdigest()
 
 
 def test_stella_reference_rejects_mismatched_input(tmp_path):
@@ -407,7 +559,13 @@ def test_acceptance129_is_blocked_not_passed():
     # the overall badge must never read "passed" while the PRD acceptance is blocked
     assert prov["verification"]["outcome"] != "passed"
     assert prov["verification"]["outcome"] == "blocked"
-    assert "Tracer validated vs stella rho 0.7: passed" in prov["verification"]["details"]
+    details = prov["verification"]["details"]
+    assert "Tracer validated vs stella rho 0.7: passed" in details
+    # BE-DATA-1/5: the prose states the float64 verdict and prints the same published bounds as float64Reference
+    f64 = a["validation"]["float64Reference"]
+    assert f"vs stella's float64 out.nc bmag over 25 samples: max |error| <= {f64['maxAbsError']:g}, max rel <= " \
+        f"{f64['maxRelError']:g}, every sample and the zed grid within tolerance 1e-10)." in details
+    assert "OUTSIDE" not in details and "FAILED" not in details
 
 
 def test_acceptance129_schema_rejects_passed():

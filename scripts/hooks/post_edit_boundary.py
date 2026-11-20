@@ -41,7 +41,12 @@ def main() -> int:
     rel = cb.rel_of(path, root)
     if rel is None:
         rel = cb.rel_of(os.path.abspath(path), root)
-    if not rel or rel.split("/", 1)[0] not in cb.SIDES:
+    side = rel.split("/", 1)[0] if rel else ""
+    if side not in cb.SIDES:
+        if side.lower() in cb.SIDES:
+            # 'Renderer\\src\\bad.ts': on a case-insensitive disk (Windows, DrvFs) that IS renderer/ - scan
+            # everything rather than guess the on-disk spelling (review finding RV-G4)
+            return cb.run(None, cb.ROOT)
         return 0  # outside main/ and renderer/: nothing to check
     target = os.path.join(root, *rel.split("/"))
     if not os.path.lexists(target):

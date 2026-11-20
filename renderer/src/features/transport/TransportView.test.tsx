@@ -2,7 +2,17 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { LiveState, LiveStatus } from '../../lib/liveStatus';
-import { buildTransportFigure, claimSummary, lateComparison, liveGxSamples, parseWindowDetail, plotWindows, windowRows } from './model';
+import {
+  buildTransportFigure,
+  claimSummary,
+  discrepancy,
+  gapSentence,
+  lateComparison,
+  liveGxSamples,
+  parseWindowDetail,
+  plotWindows,
+  windowRows,
+} from './model';
 import { TransportView } from './TransportView';
 import type { TransportArtifact, TransportWindow } from './types';
 
@@ -322,10 +332,94 @@ test('T9 an artifact flag that contradicts its own row is never shown as an allo
   expect(screen.getByRole('note', { name: /not allowed for any archive window/ })).toBeInTheDocument();
 });
 
+test('FF-15 T9 a row that reports N_eff below 20 never shows "Claim allowed", whatever the artifact flag says', async () => {
+  const a = clone();
+  // stella 1500–1900: covered, stationary and a finite stderr, but its own detail reports N_eff~12.3 (< 20, D-017).
+  Object.assign(win(a, 'stella-bean', 1500, 1900), { stationary: true, saturatedClaimAllowed: true });
+  expect(parseWindowDetail(win(a, 'stella-bean', 1500, 1900).stationarityDetail).nEff).toBe(12.3);
+  serve(null, a);
+  render(<TransportView livePollMs={60_000} />);
+  await screen.findByRole('table');
+  const r = row('stella-bean:1500-1900');
+  expect(within(r).getByText('Claim not allowed')).toBeInTheDocument();
+  expect(r).toHaveTextContent(/artifact flag says allowed, but the row does not meet the gate \(N\s*eff below 20\)/);
+  expect(claimSummary(a).allowed).toBe(0);
+  const verdict = screen.getByRole('region', { name: /^Verdict/ });
+  expect(verdict.querySelector('.lab-pill[data-status="blocked"]')).toHaveTextContent('Saturated claim: not allowed');
+  expect(verdict).not.toHaveTextContent(/1 of 7 windows meet the claim gate/);
+});
+
+test('FF-2 the "not allowed" callout blames the autocorrelation time only when every covered window reports N_eff below 20', async () => {
+  // Committed artifact: every covered row is short of effective samples (by its N_eff or its own reason).
+  expect(claimSummary(ARTIFACT).nEffLimited).toBe(true);
+  // GENE 200–300 tested and found not stationary at N_eff 45: its reason is non-stationarity, not N_eff.
+  const a = clone();
+  Object.assign(win(a, 'gene-bean', 200, 300), { stationary: false, stderr: 0.012, stationarityDetail: NOT_STATIONARY_DETAIL });
+  expect(claimSummary(a)).toMatchObject({ allowed: 0, nEffLimited: false });
+  serve(null, a);
+  render(<TransportView livePollMs={60_000} />);
+  await screen.findByRole('table');
+  const callout = screen.getByRole('note', { name: /Saturated agreement claim: not allowed for any archive window/ });
+  expect(callout).not.toHaveTextContent(/autocorrelation time|leaves every/);
+  const items = [...within(callout).getByTestId('claim-reasons').querySelectorAll('li')].map((li) => li.textContent ?? '');
+  expect(items).toHaveLength(3);
+  expect(items[0]).toMatch(/^N\s*eff \(at the tau upper bound\) below 20, not shown stationary \(5 of 7 windows\)$/);
+  expect(items.slice(1)).toEqual(['not stationary (1 of 7 windows)', 'window not covered (1 of 7 windows)']);
+});
+
+test('FF-3 the discrepancy callout weighs the gap against the reported stderr, from the numbers', async () => {
+  serve(null);
+  const first = render(<TransportView livePollMs={60_000} />);
+  const card = await screen.findByRole('region', { name: /Reduced Modal stella run vs archives, 300–400/ });
+  expect(within(card).getByTestId('gap-sentence')).toHaveTextContent(
+    'The gap is far larger than the reported archive sampling uncertainty: |Δ| to GENE is 3.11, 150× its reported ±0.021 ' +
+      '(a lower bound, so the true ratio may be smaller); stella 300–400 reports no finite sampling uncertainty.',
+  );
+  first.unmount();
+
+  // A reduced-run value next to the archive means: the gap is not called large.
+  const near = clone();
+  near.reducedModalRun.value = 2.68;
+  serve(null, near);
+  render(<TransportView livePollMs={60_000} />);
+  const card2 = await screen.findByRole('region', { name: /Reduced Modal stella run vs archives, 300–400/ });
+  expect(within(card2).getByTestId('gap-sentence')).toHaveTextContent(
+    'The gap is not clearly larger than the reported archive sampling uncertainty: |Δ| to GENE is 0.00, 0.2× its reported ±0.021',
+  );
+  expect(card2).not.toHaveTextContent(/far larger/);
+
+  // No finite stderr on either window: said so, never weighed.
+  const none = clone();
+  win(none, 'gene-bean', 300, 400).stderr = null;
+  expect(gapSentence(discrepancy(none))).toBe(
+    'The gap cannot be weighed against a sampling uncertainty: stella 300–400 reports no finite sampling uncertainty; GENE 300–400 reports no finite sampling uncertainty.',
+  );
+});
+
+test('FF-4 the late-window note says ± is approximate only when a late stderr is flagged approximate', async () => {
+  const lateGroup = () => screen.getByRole('group', { name: /^Late-window means/ });
+  serve(null);
+  const first = render(<TransportView livePollMs={60_000} />);
+  await screen.findByRole('region', { name: /^Verdict/ });
+  expect(lateGroup()).toHaveTextContent('Recomputed from the archive. ± is approximate (a lower bound).');
+  first.unmount();
+
+  const a = clone();
+  win(a, 'stella-bean', 1500, 1900).stationarityDetail = ALLOWED_DETAIL;
+  win(a, 'gene-bean', 1500, 1893.765).stationarityDetail = ALLOWED_DETAIL;
+  serve(null, a);
+  render(<TransportView livePollMs={60_000} />);
+  await screen.findByRole('region', { name: /^Verdict/ });
+  expect(lateGroup()).toHaveTextContent('Recomputed from the archive. The two windows are not identical.');
+  expect(lateGroup()).not.toHaveTextContent(/approximate/);
+});
+
 test('T10 discrepancy card: PRD-reported 5.79 vs archive 300–400 means with deltas; fixture rows with ✓/✗', async () => {
   serve(null);
   render(<TransportView livePollMs={60_000} />);
   const card = await screen.findByRole('region', { name: /Reduced Modal stella run vs archives, 300–400/ });
+  // FF-12: the subtitle names the figure's kind from the artifact, as the pill does.
+  expect(card).toHaveTextContent('PRD-reported figure beside recomputed archive means.');
   // The PRD-reported label sits on the 5.79 figure itself, and that figure is never called derived.
   const reduced = within(card).getByRole('group', { name: 'Reduced Modal stella run: 5.79 Q gB,i, window t 300 to 400 a/v th,i' });
   expect(reduced.querySelector('.lab-pill[data-status="prd-reported"]')).toHaveTextContent('PRD-reported');
@@ -407,6 +501,9 @@ test('T10 the label on the 5.79 figure is the provenance kind in the artifact, a
     expect(pill).toHaveTextContent('Recorded run');
   }
   expect(verdict).toHaveTextContent('The reduced run is Recorded run: no trace or uncertainty in this repo.');
+  // FF-12: the card's subtitle follows the same kind, never a fixed "PRD-reported".
+  expect(card).toHaveTextContent('Recorded run figure beside recomputed archive means.');
+  expect(card).not.toHaveTextContent(/PRD-reported figure|A PRD-reported number/);
   expect(document.querySelector('.lab-pill[data-status="live"]')).toBeNull();
   expect(screen.queryByText(/LIVE/)).toBeNull();
 });

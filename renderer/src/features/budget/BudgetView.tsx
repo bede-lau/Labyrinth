@@ -11,9 +11,11 @@ import {
   StatusPill,
   provenanceStatus,
   type FixtureCheckData,
+  type ProvenanceKind,
 } from '../../design';
 import { useArtifact } from '../../lib/artifacts';
-import { useLiveStatus } from '../../lib/liveStatus';
+import { launchMayBeRunning, liveDanger, sessionMayBeBilling, useLiveStatus, type LiveState } from '../../lib/liveStatus';
+import { hrefFor } from '../../shell/routes';
 import {
   checkBudget,
   claimUsd,
@@ -21,9 +23,13 @@ import {
   fixtureUnit,
   fixturesFor,
   guardPlanStale,
+  guardRefusal,
+  guardSegments,
   guardView,
+  ledgerKind,
   ledgerSegments,
   planChecks,
+  replayPillText,
   unassignedFixtures,
   usd,
   type BudgetArtifact,
@@ -32,6 +38,8 @@ import {
   type PlanCheck,
 } from './model';
 import './budget.css';
+
+const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour12: false });
 
 /** Where the guard's planned figures come from when the live guard does not supply them. */
 export const GUARD_PLAN_SOURCE = 'guard plan · budget.json';
@@ -64,8 +72,8 @@ export function BudgetView({ livePollMs = 5000 }: BudgetViewProps = {}) {
   const guard = guardView(live);
   return (
     <div className="bg-view">
-      <Ledger a={state.data} />
-      <GuardPanel a={state.data} guard={guard} unreachable={live.status === 'unreachable' ? live.message : null} />
+      <Ledger a={state.data} replay={replayPillText(live)} />
+      <GuardPanel a={state.data} guard={guard} live={live} />
       <div className="bg-grid">
         {state.data.scenarios.map((s) => (
           <ScenarioCard key={s.id} s={s} a={state.data} />
@@ -84,8 +92,23 @@ export function BudgetView({ livePollMs = 5000 }: BudgetViewProps = {}) {
   );
 }
 
-function Ledger({ a }: { a: BudgetArtifact }) {
+/**
+ * A ledger figure's provenance pill, from the artifact's scenario kind (never a kind typed in here); nothing when
+ * the artifact does not say. Kind "live" is a recorded run, as on the scenario cards: never the LIVE pill.
+ */
+function KindPill({ kind }: { kind: ProvenanceKind | null }) {
+  if (!kind) return null;
+  const p = provenanceStatus(kind);
+  return (
+    <StatusPill status={p.status} className="bg-kind">
+      {p.label}
+    </StatusPill>
+  );
+}
+
+function Ledger({ a, replay }: { a: BudgetArtifact; replay: string }) {
   const segs = ledgerSegments(a);
+  const kind = ledgerKind(a);
   const spoken =
     `Modal ledger against the ${usd(a.ceilingUsd)} ceiling: ` +
     segs.map((s) => `${s.label} ${usd(s.usd)}`).join(', ') +
@@ -97,8 +120,9 @@ function Ledger({ a }: { a: BudgetArtifact }) {
       subtitle="PRD plan, recomputed: the earlier posted spend, the rehearsals and one live slot. GPU time only."
       status={
         <div className="bg-badges">
-          <StatusPill status="derived" />
-          <StatusPill status="replay">Replay · $0</StatusPill>
+          <KindPill kind={kind} />
+          {/* "Replay · $0" only while the header shows it: never "$0" beside a bill that may be running. */}
+          <StatusPill status="replay">{replay}</StatusPill>
         </div>
       }
     >
@@ -120,7 +144,7 @@ function Ledger({ a }: { a: BudgetArtifact }) {
             </dt>
             <dd className="lab-num">{usd(s.usd)}</dd>
             <dd className="bg-legend__kind">
-              <StatusPill status={s.id === 'posted' ? 'prd-reported' : 'derived'} />
+              <KindPill kind={s.kind} />
             </dd>
           </div>
         ))}
@@ -128,7 +152,7 @@ function Ledger({ a }: { a: BudgetArtifact }) {
           <dt>Planned total (posted + plan)</dt>
           <dd className="lab-num">{usd(a.plannedUsd)}</dd>
           <dd className="bg-legend__kind">
-            <StatusPill status="derived" />
+            <KindPill kind={kind} />
           </dd>
         </div>
       </dl>
@@ -175,42 +199,147 @@ function PlansVsCeiling({ plans, ceilingUsd }: { plans: PlanCheck[]; ceilingUsd:
   );
 }
 
-function GuardPanel({ a, guard, unreachable }: { a: BudgetArtifact; guard: GuardView | null; unreachable: string | null }) {
+/**
+ * The guard's verdict on the next slot, worded from the numbers (cross-RX-6). `slotFits` is the guard's whole
+ * decision: it is also false for a ledger that is not reconciled or cannot be read, so "does NOT fit under the
+ * ceiling" is said only when billed + pending + slot really exceeds it. A hard timeout of 0 allows no slot and
+ * is not shown as a timeout.
+ */
+function GuardFits({ guard, reason }: { guard: GuardView; reason: string | null }) {
+  const timeout =
+    guard.hardTimeoutS !== null && guard.hardTimeoutS > 0 ? <span className="lab-num"> · hard timeout {guard.hardTimeoutS} s</span> : null;
+  if (guard.slotFits) {
+    return (
+      <p className="bg-fits" data-fits="true" data-testid="guard-fits">
+        <Icon name="check" size={14} />
+        Next slot fits under the ceiling
+        {timeout}
+      </p>
+    );
+  }
+  const over = guard.afterSlotUsd > guard.ceilingUsd + 1e-9;
+  const refusal = guardRefusal(reason);
+  return (
+    <>
+      <p className="bg-fits" data-fits="false" data-testid="guard-fits">
+        <Icon name="blocked" size={14} />
+        {over ? 'Next slot does NOT fit under the ceiling — replay only' : 'Next slot refused by the budget guard, not by the ceiling — replay only'}
+        {timeout}
+      </p>
+      {!over && (
+        <p className="bg-note lab-num" data-testid="guard-why">
+          Billed + pending + next slot = {usd(guard.afterSlotUsd)} is within the {usd(guard.ceilingUsd)} ceiling. The guard
+          also refuses a slot when the ledger is not reconciled or cannot be read; the billed and pending figures above are
+          then not verified (an unreadable ledger is reported as $0.00).
+        </p>
+      )}
+      {refusal && (
+        <p className="bg-note" data-testid="guard-reason">
+          The guard’s reason: “{refusal}”
+        </p>
+      )}
+    </>
+  );
+}
+
+function GuardBar({ guard }: { guard: GuardView }) {
+  const { segments, overUsd } = guardSegments(guard);
+  const spoken =
+    `Live budget guard: billed ${usd(guard.billedUsd)}, pending ${usd(guard.pendingUsd)}, next slot estimate ${usd(guard.slotEstimateUsd)}, ` +
+    `of the ${usd(guard.ceilingUsd)} ceiling` +
+    (overUsd > 0 ? `; ${usd(overUsd)} over the ceiling` : '');
+  return (
+    <>
+      <div className={overUsd > 0 ? 'bg-bar bg-bar--over' : 'bg-bar'} role="img" aria-label={spoken} data-testid="guard-bar" data-over={overUsd > 0}>
+        {segments.map((s) => (
+          <div key={s.id} className="bg-bar__seg" data-seg={s.id} style={{ width: `${s.pct}%` }} />
+        ))}
+      </div>
+      {overUsd > 0 && (
+        <p className="bg-over lab-num" data-testid="guard-over">
+          Over the ceiling by {usd(overUsd)}: billed + pending + next slot = {usd(guard.afterSlotUsd)}. The bar stops at the{' '}
+          {usd(guard.ceilingUsd)} ceiling.
+        </p>
+      )}
+    </>
+  );
+}
+
+/**
+ * No current guard answer. Never the "static replay build" wording once a status has been seen: when the API
+ * stops answering after a snapshot of a session that may be billing, say so, show its last-known figures with
+ * their time, and point to Terminate (FF-8).
+ */
+function GuardUnreachable({ live }: { live: LiveState }) {
+  const last = live.status === 'unreachable' ? (live.lastKnown ?? null) : null;
+  if (live.status !== 'unreachable' || !last) {
+    return (
+      <Callout tone="info" title="Live budget guard not reachable — no guard estimate shown">
+        {live.status === 'unreachable' ? `${live.message}. ` : 'Connecting to /api/live/status… '}
+        This is the static replay build; the guard's live billed, pending and slot figures appear only when the main
+        process answers.
+      </Callout>
+    );
+  }
+  const danger = liveDanger(live);
+  const mayBill = sessionMayBeBilling(last.data) || launchMayBeRunning(live);
+  const b = last.data.budget;
+  return (
+    <Callout
+      tone={mayBill ? 'warn' : 'info'}
+      title={
+        mayBill
+          ? (danger?.title ?? 'NO FRESH STATUS — a session may be billing')
+          : 'Live budget guard not answering — no current guard estimate'
+      }
+      action={mayBill ? <a href={hrefFor('advance')}>Open Advance plasma to send Terminate</a> : undefined}
+    >
+      <span data-testid="guard-last-known">
+        The live API stopped answering ({live.message}). Its last status, received at {clock(last.receivedAt)}, reported mode
+        “{last.data.mode}”: billed <span className="lab-num">{usd(b.billedUsd)}</span>, pending{' '}
+        <span className="lab-num">{usd(b.pendingUsd)}</span>, next slot estimate <span className="lab-num">{usd(b.slotEstimateUsd)}</span>{' '}
+        of the <span className="lab-num">{usd(b.ceilingUsd)}</span> ceiling. These figures are not current.
+        {mayBill
+          ? ' The connection to a session that may be billing was lost: GPUs may still be billing. Use Terminate in Advance plasma.'
+          : ' The guard’s current figures appear again when the main process answers.'}
+      </span>
+    </Callout>
+  );
+}
+
+function GuardPanel({ a, guard, live }: { a: BudgetArtifact; guard: GuardView | null; live: LiveState }) {
   const g = a.guardPlan;
   const stale = guardPlanStale(guard, g);
   const staleNote = stale && <SourceTag stale>may be out of date</SourceTag>;
+  const danger = liveDanger(live);
   return (
     <Panel
       eyebrow="Budget"
       title="Live budget guard: setup, idle and storage included"
       subtitle="The guard prices more than GPU time before every allocation, so its figures are higher than the PRD's GPU-only plan."
-      status={guard ? <StatusPill status="derived">Guard · /api/live/status</StatusPill> : <StatusPill status="not-applicable">Guard not reachable</StatusPill>}
+      status={
+        guard ? (
+          <StatusPill status="derived">Guard · /api/live/status</StatusPill>
+        ) : danger?.kind === 'connection-lost' ? (
+          <StatusPill status="billing-risk">{danger.pill}</StatusPill>
+        ) : (
+          <StatusPill status="not-applicable">Guard not reachable</StatusPill>
+        )
+      }
     >
       {guard ? (
         <div className="bg-guard" data-testid="guard-live">
-          <div className="bg-bar" role="img" aria-label={`Live budget guard: billed ${usd(guard.billedUsd)}, pending ${usd(guard.pendingUsd)}, next slot estimate ${usd(guard.slotEstimateUsd)}, of the ${usd(guard.ceilingUsd)} ceiling`}>
-            <div className="bg-bar__seg" data-seg="posted" style={{ width: `${(guard.billedUsd / guard.ceilingUsd) * 100}%` }} />
-            <div className="bg-bar__seg" data-seg="pending" style={{ width: `${(guard.pendingUsd / guard.ceilingUsd) * 100}%` }} />
-            <div className="bg-bar__seg" data-seg="slot" style={{ width: `${(Math.max(0, guard.slotEstimateUsd) / guard.ceilingUsd) * 100}%` }} />
-          </div>
+          <GuardBar guard={guard} />
           <dl className="bg-legend">
             <div className="bg-legend__item"><dt><span className="bg-legend__swatch" data-seg="posted" aria-hidden="true" />Billed (ledger)</dt><dd className="lab-num">{usd(guard.billedUsd)}</dd></div>
             <div className="bg-legend__item"><dt><span className="bg-legend__swatch" data-seg="pending" aria-hidden="true" />Pending</dt><dd className="lab-num">{usd(guard.pendingUsd)}</dd></div>
             <div className="bg-legend__item"><dt><span className="bg-legend__swatch" data-seg="slot" aria-hidden="true" />Next live slot (guard estimate)</dt><dd className="lab-num">{usd(guard.slotEstimateUsd)}</dd></div>
             <div className="bg-legend__item bg-legend__item--total"><dt>Remaining after that slot</dt><dd className="lab-num">{usd(guard.remainingAfterSlotUsd)}</dd></div>
           </dl>
-          <p className="bg-fits" data-fits={guard.slotFits}>
-            <Icon name={guard.slotFits ? 'check' : 'blocked'} size={14} />
-            {guard.slotFits ? 'Next slot fits under the ceiling' : 'Next slot does NOT fit — replay only'}
-            {guard.hardTimeoutS !== null && <span className="lab-num"> · hard timeout {guard.hardTimeoutS} s</span>}
-          </p>
+          <GuardFits guard={guard} reason={live.status === 'ready' ? live.data.reason : null} />
         </div>
       ) : (
-        <Callout tone="info" title="Live budget guard not reachable — no guard estimate shown">
-          {unreachable ? `${unreachable}. ` : 'Connecting to /api/live/status… '}
-          This is the static replay build; the guard's live billed, pending and slot figures appear only when the main
-          process answers.
-        </Callout>
+        <GuardUnreachable live={live} />
       )}
       <div className="bg-compare" role="table" aria-label="Guard pricing compared with the PRD's GPU-only figures">
         <div role="rowgroup">
@@ -230,8 +359,8 @@ function GuardPanel({ a, guard, unreachable }: { a: BudgetArtifact; guard: Guard
             </span>
           </div>
           <div role="row" className="bg-compare__row">
-            <span role="rowheader">One-hour rehearsal</span>
-            <span role="cell" className="lab-num">{rehearsalGpuOnly(a)}</span>
+            <span role="rowheader">{rehearsalLabel(a)}</span>
+            <span role="cell" className="lab-num" data-testid="prd-rehearsal">{rehearsalGpuOnly(a)}</span>
             <span role="cell" className="lab-num" data-testid="guard-rehearsal">
               {usd(g.rehearsalEstimateUsd)}
               <SourceTag>{GUARD_PLAN_SOURCE}</SourceTag>
@@ -268,12 +397,22 @@ function GuardPanel({ a, guard, unreachable }: { a: BudgetArtifact; guard: Guard
   );
 }
 
+const liveDemoInput = (a: BudgetArtifact, key: string): number => {
+  const v = a.scenarios.find((s) => s.id === 'live-demo')?.inputs[key];
+  return v === undefined || v === '' ? Number.NaN : Number(v);
+};
+
 /** PRD GPU-only price of one rehearsal, recomputed from the live-demo scenario inputs (rate × hours). */
 function rehearsalGpuOnly(a: BudgetArtifact): string {
-  const inputs = a.scenarios.find((s) => s.id === 'live-demo')?.inputs;
-  const rate = Number(inputs?.rateUsdPerH);
-  const hours = Number(inputs?.rehearsalH);
+  const rate = liveDemoInput(a, 'rateUsdPerH');
+  const hours = liveDemoInput(a, 'rehearsalH');
   return Number.isFinite(rate) && Number.isFinite(hours) ? usd(rate * hours) : '—';
+}
+
+/** The row names the rehearsal length the price is for ("One-hour rehearsal" for the PRD's 1 h). */
+function rehearsalLabel(a: BudgetArtifact): string {
+  const hours = liveDemoInput(a, 'rehearsalH');
+  return !Number.isFinite(hours) || hours === 1 ? 'One-hour rehearsal' : `One rehearsal, ${hours} h`;
 }
 
 function ScenarioCard({ s, a }: { s: BudgetScenario; a: BudgetArtifact }) {

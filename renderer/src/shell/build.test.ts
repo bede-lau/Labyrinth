@@ -1,12 +1,16 @@
 // @vitest-environment node
+import { execFile } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import type { Plugin, PluginOption } from 'vite';
 import config, { DEFAULT_MAX_TEST_WORKERS, copyArtifacts, resolveArtifactRequest, serveArtifacts, testMaxWorkers } from '../../vite.config';
+import isolationConfig, { PROBE_FILES } from './isolation/isolation.config';
+import { LOG_ENV } from './isolation/isolationProbe';
 
 const ARTIFACTS = resolve(__dirname, '../../../artifacts');
+const RENDERER = resolve(__dirname, '../..');
 
 type Hook = (this: unknown, ...args: unknown[]) => unknown;
 const call = (h: unknown, ...args: unknown[]) => (typeof h === 'function' ? (h as Hook) : (h as { handler: Hook }).handler).call({}, ...args);
@@ -141,13 +145,48 @@ test('F13 FA-5 test workers: VITEST_MAX_WORKERS wins, otherwise at most 4 and on
   expect(test?.vmMemoryLimit).toBe('1024MB');
 });
 
-test('F13 FA-5 per-file isolation holds under the pool: a global left by another test file is not visible here', () => {
-  // galleryMode.test.ts runs the same probe. Whichever file runs second in a worker would see the first one's
-  // global if files shared a context (with one worker — the mutation check — they always share one).
-  const g = globalThis as Record<string, unknown>;
-  expect(g.__labyrinthIsolationProbe).toBeUndefined();
-  g.__labyrinthIsolationProbe = 'build.test.ts';
-});
+/** Run vitest in a child process (async: this worker keeps answering its own runner meanwhile). */
+function childVitest(args: string[], env: Record<string, string>): Promise<{ code: number; out: string }> {
+  return new Promise((done) => {
+    execFile(
+      process.execPath,
+      [join(RENDERER, 'node_modules', 'vitest', 'vitest.mjs'), ...args],
+      { cwd: RENDERER, env, timeout: 150_000, maxBuffer: 16 * 1024 * 1024 },
+      (error, stdout, stderr) => done({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, out: `${stdout}\n${stderr}` }),
+    );
+  });
+}
+
+test('F13 FA-5 FE2-7 per-file isolation under the pool, deterministically: two probe files in ONE worker see nothing of each other', async () => {
+  // In the main run two files may land in different workers, which would prove nothing, so the probe pair is
+  // not part of it (*.probe.ts). Here it runs alone, in one worker, with the main config's pool and environment
+  // (isolation.config.ts): the second file runs in the worker where the first left everything behind.
+  expect(isolationConfig.test?.pool).toBe(config.test?.pool);
+  expect(isolationConfig.test?.environment).toBe(config.test?.environment);
+  expect(isolationConfig.test?.include).toEqual(PROBE_FILES);
+  const dir = mkdtempSync(join(tmpdir(), 'lab-iso-'));
+  try {
+    const log = join(dir, 'workers.jsonl');
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith('VITEST')) env[k] = v;
+    const run = await childVitest(['run', '--config', 'src/shell/isolation/isolation.config.ts'], {
+      ...env,
+      VITEST_MAX_WORKERS: '1',
+      NO_COLOR: '1',
+      [LOG_ENV]: log,
+    });
+    expect(run.code, run.out).toBe(0);
+    expect(run.out.replace(/\u001b\[[0-9;]*m/g, '')).toMatch(/Test Files\s+2 passed \(2\)/);
+    const rows = readFileSync(log, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { file: string; pid: number; threadId: number });
+    expect(rows.map((r) => r.file).sort()).toEqual(['isolationA', 'isolationB']);
+    expect(new Set(rows.map((r) => `${r.pid}/${r.threadId}`)).size, JSON.stringify(rows)).toBe(1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 180_000);
 
 test('FE-10 a read error after the checks is handed to next(err) instead of crashing the dev server', async () => {
   const base = mkdtempSync(join(tmpdir(), 'lab-serve-'));

@@ -19,7 +19,8 @@ Your only write access is `tasks/<NN-feature>/VERIFY.md`.
    b. Run that test on its own and capture the real output.
    c. Independently probe the outcome another way (a quick Python/Node one-liner against the artifact
       or the raw data, a mutation — change an input and confirm the test fails, a screenshot for UI).
-      Revert any mutation you make; leave the tree exactly as you found it (`git status` before/after).
+      Mutate only inside a copy from `bash scripts/probe-copy.sh <name>`, never the shared working tree
+      (other agents run tests in it at the same time); delete the copy when done.
 4. Check the boundary rule held: `python3 scripts/check_boundaries.py`.
 5. Check honesty: any PRD number that did not reproduce must be visible as a mismatch, not hidden.
 
@@ -47,6 +48,12 @@ Rules the gate checks before a task may be DONE:
   `FAIL` or `NOT CHECKED`. Only a row starting with `PASS` counts; a missing row counts as not verified.
 - **The verdict is the last non-blank line of the file**, exactly `Verdict: PASS`, or `Verdict: FAIL — <reason>`.
   Nothing after it. Do not write any other line that starts with "Verdict".
+- Three things that block a genuine PASS (the gate reads them literally):
+  - A PASS Result cell may not contain the words FAIL, FAILED, FAILS, PARTIAL or PARTIALLY, not even in a note
+    about an earlier run (`PASS (was FAIL in run 1)` counts as not passing). Put history in Findings.
+  - Only the run header may start with "Verifier run": the last such line starts the final run, so a Findings line
+    beginning "Verifier run ..." would cut the outcome table off. Reword it ("In the previous verifier run, ...").
+  - Never write `|` inside a table cell, escaped or not (`\|` still splits the cell): write "or" or `/` instead.
 Verdict is PASS only if the gates exit 0 AND every outcome has a meaningful test AND your independent
 probes agree. Otherwise FAIL with the exact reason. Report the verdict and findings back to the caller.
 

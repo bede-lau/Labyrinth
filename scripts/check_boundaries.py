@@ -18,6 +18,11 @@ renderer/  Every text file under renderer/ is scanned, whatever its extension. O
                is provably file-relative: a module specifier, new URL(x, import.meta.url), or an
                argument of a call anchored on __dirname / import.meta.dirname / import.meta.url;
              * '/x' the way vite reads it (renderer/x) and as an absolute filesystem path.
+           A working directory (`cwd: x`, process.chdir(x)) is read from renderer/ as well, even a bare
+           '..'. The string arguments of a call are joined and judged as one path (join('..', 'main')).
+           A '..' that pops a segment whose value is unknown - ${x}, $X, $(cmd), %X%, or the alias or
+           package root of a module specifier ('@art/../main') - is a violation (fail closed). The body
+           of every ${...} (and, outside JS, $(...)) is scanned as code; ${NAME:-word} as `word`.
            Every reading must land inside renderer/, on artifacts/ or artifacts/<name>.json, or on
            contracts/ or contracts/<name>.json. Everything else is a violation: main/, scripts/,
            data/, the repository root, anything above it, and a wildcard or ${...} that can match
@@ -30,7 +35,8 @@ renderer/  Every text file under renderer/ is scanned, whatever its extension. O
 main/      Python is parsed with ast: imports of `renderer`, importlib / __import__ of it, and every
            non-docstring string that names the renderer directory as a path or a command target
            ("renderer", "../renderer", "npm --prefix ../renderer run build", "cd renderer && ...",
-           a glob that can match it). Every other text file under main/ gets the same path rules.
+           a glob that can match it, in any letter case: 'Renderer', '*/src/**/*.tsx'). Every other text
+           file under main/ gets the same path rules, interpolations included.
            Top-level caches (main/.venv, .pytest_cache, .ruff_cache, .mypy_cache, __pycache__) are
            skipped; the same names deeper in the package are scanned.
 
@@ -77,7 +83,12 @@ BINARY_EXT = frozenset({".pyc", ".pyo", ".png", ".jpg", ".jpeg", ".gif", ".webp"
                         ".pdf", ".zip", ".gz", ".nc", ".h5", ".npy", ".npz", ".wasm", ".mp3", ".mp4", ".webm"})
 
 INTERP = re.compile(r"\$\{[^}\n]*\}")
-TOKEN = re.compile(r"[^\s'\"`<>(),;|&=]+")
+CMD_SUB = re.compile(r"\$\([^()\n]*\)")  # shell command substitution $(...)
+# ${NAME:-word} ${NAME-word} ${NAME:=word} ${NAME:+word} ${NAME:?word}: `word` is what the shell may use
+SHELL_DEFAULT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*:?[-=+?]")
+# A path segment whose value is not known lexically: an interpolation, a variable or a command substitution.
+DYNAMIC = re.compile(r"\$\{|\$\(|\$[A-Za-z_]|%[A-Za-z_][A-Za-z0-9_]*%")
+TOKEN =re.compile(r"[^\s'\"`<>(),;|&=]+")
 STRING = re.compile(r"""'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`""")
 STRING_ARG = re.compile(r"\s*(" + STRING.pattern + r")\s*(?:,|$)")
 WILD = re.compile(r"[*?\[\]{}$]")
@@ -104,6 +115,12 @@ INERT_METHODS = frozenset({"startsWith", "endsWith", "includes", "indexOf", "las
                            "toBe", "toEqual", "toStrictEqual", "toContain", "toMatch"})
 CMP_BEFORE = re.compile(r"(?:[=!]==?|\bcase)\s*$")
 CMP_AFTER = re.compile(r"\s*[=!]==?")
+# A working directory: `{ cwd: '..' }`, process.chdir('..'). Node reads it from the process cwd (renderer/ for
+# vitest and npm scripts), so a bare '..' there is the repository root (review finding RV-G18).
+CWD_KEY = re.compile(r"\bcwd\s*:\s*$")
+CHDIR = frozenset({"process.chdir", "chdir"})
+NOT_CALLS = frozenset({"if", "for", "while", "switch", "catch", "return", "typeof", "await", "function", "with", "of", "in",
+                       "new", "void", "do", "else", "case", "throw", "yield", "delete"})
 
 # --- naming or running the other side ------------------------------------------------------------
 _CD = r"(?:\bcd|\bpushd|--prefix|--cwd|--dir|--root|-C)(?:=|\s+)[\"']?(?:\.{1,2}[/\\])*"
@@ -114,7 +131,7 @@ BACKEND_WORD = re.compile(r"\blabyrinth_main\b")
 BARE_BACKEND = re.compile(r"^@?main/[\w.*$\{@-]")  # 'main/x', '@main/x'; the bare label 'main/' is not a path
 BARE_BACKEND_TOKEN = re.compile(r"^@?main/[\w*$\{]")
 RENDERER_SEG = re.compile(r"[/\\]renderer(?![\w.-])|^renderer[/\\]", re.I)
-RENDERER_MODULE = re.compile(r"^renderer(?:\.\w+)*$")
+RENDERER_MODULE = re.compile(r"^renderer(?:\.\w+)*$", re.I)
 MODULE_LOADERS = frozenset({"import_module", "__import__", "run_module", "find_spec", "resolve_name", "walk_packages", "get_data"})
 
 
@@ -164,6 +181,58 @@ def _resolve(base: list[str], segs: list[str]) -> list[str] | None:
             continue
         out.append(s)
     return out
+
+
+def _pops_unknown(segs: list[str], alias_root: bool) -> str | None:
+    """The segment that a '..' in `segs` pops although where that leads is not known lexically, or None.
+
+    Unknown: an interpolation or variable (${x}, $X, $(cmd), %X%) - `${__dirname}/../main` is not
+    'renderer/main' (review finding RV-G1) - and, with alias_root (a bare module specifier such as
+    '@art/../main/x'), the alias or package root the specifier starts from (RV-G12).
+    """
+    stack: list[tuple[int, str]] = []
+    for i, s in enumerate(segs):
+        if s in ("", "."):
+            continue
+        if s == "..":
+            if stack:
+                j, top = stack.pop()
+                if DYNAMIC.search(top) or (alias_root and j == 0):
+                    return top
+            continue
+        stack.append((i, s))
+    return None
+
+
+def _expand(text: str, js: bool) -> str | None:
+    """The code inside every ${...} (and, outside JS, every $(...)), at its own offsets (review finding RV-G16).
+
+    js=True: only the interpolation bodies, everything else blanked - `${(await import('../x')).default}`
+    is code. Elsewhere (shell, JSON, YAML, .env, ...) the text is kept and each ${...} / $(...) is replaced
+    in place by its body, and a default value `${NAME:-word}` by `word`, so `cd ${DIR:-../main}` reads
+    `cd ../main`. Line numbers are unchanged. None when there is nothing to expand.
+    """
+    spans = sorted([m.span() for m in INTERP.finditer(text)] + ([] if js else [m.span() for m in CMD_SUB.finditer(text)]))
+    if not spans:
+        return None
+    out, pos = [], 0
+    for s, e in spans:
+        if s < pos:
+            continue  # nested in a span already expanded
+        out.append("".join(c if c == "\n" else " " for c in text[pos:s]) if js else text[pos:s])
+        body = text[s + 2:e - 1]
+        d = None if js else SHELL_DEFAULT.match(body)
+        out.append((body[d.end():] if d else body).rjust(e - s))
+        pos = e
+    out.append("".join(c if c == "\n" else " " for c in text[pos:]) if js else text[pos:])
+    return "".join(out)
+
+
+def _mask(text: str, shell: bool) -> str:
+    """Every ${...} (and in shell-like text every $(...)) as '${___}' of the same length: a path head whose value is unknown."""
+    sub = lambda m: "${" + "_" * (len(m.group()) - 3) + "}"  # noqa: E731
+    masked = INTERP.sub(sub, text)
+    return CMD_SUB.sub(sub, masked) if shell else masked
 
 
 def _renderer_ok(p: list[str] | None, importing: bool) -> str | None:
@@ -241,6 +310,10 @@ def _renderer_piece(piece: str, ctx: str, file_dir: list[str], aliases: tuple[st
     segs = piece.split("/")
     climbs = ".." in segs
     importing = ctx == "spec"
+    if climbs:
+        unknown = _pops_unknown(segs, importing and segs[0] not in ("", ".", ".."))
+        if unknown:
+            return f"climbs out of '{unknown}' with '..': where that leads is not known lexically (fail closed)"
     if piece.startswith("/"):
         norm = posixpath.normpath(piece)
         nl = norm.lower()
@@ -259,10 +332,11 @@ def _renderer_piece(piece: str, ctx: str, file_dir: list[str], aliases: tuple[st
         return None
     if not climbs:
         return None
-    bare_up = all(s in ("", ".", "..") for s in segs)  # '..', '../..': names nothing by itself
+    bare_up = all(s in ("", ".", "..") for s in segs)  # '..', '../..': names nothing by itself ...
     if ctx == "cmp" and bare_up:
         return None
-    bases = [file_dir] if bare_up or ctx in ("spec", "file", "anchored", "loose") else [file_dir, ["renderer"]]
+    # ... except as a working directory, where it is read from the process cwd (renderer/) too (RV-G18)
+    bases = [file_dir] if (bare_up and ctx != "cwd") or ctx in ("spec", "file", "anchored", "loose") else [file_dir, ["renderer"]]
     for base in bases:
         why = _renderer_ok(_resolve(base, segs), importing)
         if why:
@@ -277,16 +351,19 @@ def _js_context(text: str, q: int, end: int) -> tuple[str, int]:
     spec      module specifier: resolved from the file's directory
     file      new URL(x, import.meta.url)
     anchored  argument of a call whose earlier arguments contain __dirname / import.meta.dirname / .url
+    cwd       a working directory (`cwd: x`, process.chdir(x)): read from the process cwd as well, even a bare '..'
     cmp       compared or searched for, not opened (only a bare '..' is exempted)
     plain     anything else: must be valid from the file's directory AND from renderer/
-    Returns (context, absolute index of the enclosing '(' for anchored calls or -1).
+    Returns (context, absolute index of the enclosing '(' for anchored and plain call arguments, or -1).
     """
     start = max(0, q - 240)
     pre = text[start:q]
     after = text[end + 1:end + 60] if text[end:end + 1] == text[q] else ""
     if SPEC_KEYWORD.search(pre):
         return "spec", -1
-    depth, open_at = 0, -1
+    if CWD_KEY.search(pre):
+        return "cwd", -1
+    depth, open_at, callee = 0, -1, ""
     for i in range(len(pre) - 1, -1, -1):
         c = pre[i]
         if c == ")":
@@ -315,17 +392,24 @@ def _js_context(text: str, q: int, end: int) -> tuple[str, int]:
             return "spec", -1
         if callee == "URL" and first and NEW_URL.search(head) and META_URL_NEXT.match(after):
             return "file", -1
+        if callee in CHDIR and first:
+            return "cwd", -1
         if ANCHOR.search(args):
             return "anchored", start + open_at
         if first and "." in callee and callee.rsplit(".", 1)[1] in INERT_METHODS:
             return "cmp", -1
     if CMP_BEFORE.search(pre) or CMP_AFTER.match(after):
         return "cmp", -1
-    return "plain", -1
+    return "plain", (start + open_at if open_at >= 0 and callee and callee not in NOT_CALLS else -1)
 
 
-def _anchored_join(text: str, open_at: int) -> str | None:
-    """join(__dirname, '..', '..', 'main') -> '../../main': the string arguments after the first one."""
+def _call_join(text: str, open_at: int, skip_first: bool) -> str | None:
+    """The leading string arguments of the call opening at text[open_at], joined with '/' (review finding RV-G2).
+
+    skip_first: the first argument is a base, not a string - join(__dirname, '..', '..', 'main') and
+    resolve(process.cwd(), '..', 'main') give '../../main' and '../main'; join('..', 'data', 'raw') gives
+    '../data/raw'. None unless at least two string arguments are joined.
+    """
     depth, close = 0, -1
     for i in range(open_at, min(len(text), open_at + 600)):
         c = text[i]
@@ -341,10 +425,13 @@ def _anchored_join(text: str, open_at: int) -> str | None:
     body, prev = text[open_at + 1:close], None
     while prev != body:
         prev, body = body, re.sub(r"\([^()]*\)", "", body)
-    _, comma, rest = body.partition(",")
+    if skip_first:
+        _, comma, body = body.partition(",")
+        if not comma:
+            return None
     parts, pos = [], 0
-    while comma:
-        m = STRING_ARG.match(rest, pos)
+    while True:
+        m = STRING_ARG.match(body, pos)
         if not m:
             break
         parts.append(m.group(1)[1:-1])
@@ -352,14 +439,15 @@ def _anchored_join(text: str, open_at: int) -> str | None:
     return "/".join(parts) if len(parts) > 1 else None
 
 
-def scan_renderer(rel: str, text: str, aliases: tuple[str, ...]) -> dict[int, str]:
+def scan_renderer(rel: str, text: str, aliases: tuple[str, ...], _depth: int = 0) -> dict[int, str]:
     """{line: message} for every allow-list violation in one renderer file. Pure: no filesystem access."""
     ext = posixpath.splitext(rel)[1].lower()
     kind = "js" if ext in JS_EXT else "markup" if ext in MARKUP_EXT else "json" if ext == ".json" else "other"
     file_dir = rel.split("/")[:-1]
     escapes = kind in ("js", "json")
     is_test = kind == "js" and bool(TEST_FILE.search(rel))
-    masked = INTERP.sub(lambda m: "${" + "_" * (len(m.group()) - 3) + "}", text)
+    # A masked ${...} keeps marking a path head whose value is unknown; its body is scanned below as code.
+    masked = _mask(text, shell=kind != "js")
     found: dict[int, str] = {}
 
     def report(pos: int, msg: str) -> None:
@@ -405,11 +493,18 @@ def scan_renderer(rel: str, text: str, aliases: tuple[str, ...]) -> dict[int, st
             if why:
                 report(pos, f"renderer path '{tok}' {why}")
                 break
-        if ctx == "anchored":
-            joined = _anchored_join(masked, call_open)
-            why = _renderer_piece(_trim(next(_pieces(joined, escapes), "")), "anchored", file_dir, aliases) if joined else None
+        if call_open >= 0 and ctx in ("anchored", "plain"):
+            joined = (_call_join(masked, call_open, skip_first=True) if ctx == "anchored"
+                      else _call_join(masked, call_open, skip_first=False) or _call_join(masked, call_open, skip_first=True))
+            why = _renderer_piece(_trim(next(_pieces(joined, escapes), "")), ctx, file_dir, aliases,
+                                  url_only=is_test and ctx == "plain") if joined else None
             if why:
                 report(pos, f"renderer path '{joined}' (joined arguments) {why}")
+    if _depth < 2:
+        code = _expand(text, js=kind == "js")
+        if code is not None:
+            for line, msg in scan_renderer(rel, code, aliases, _depth + 1).items():
+                found.setdefault(line, f"{msg} (inside an interpolation)")
     return found
 
 
@@ -419,6 +514,11 @@ def _main_path(token: str, file_dir: list[str]) -> str | None:
         return "names the renderer directory"
     for piece in _pieces(token):
         segs = piece.split("/")
+        # A multi-segment pattern that starts with a wildcard ('*/src/**/*.tsx', f"{ROOT}/*/dist") can match the
+        # renderer directory from the repository root, in any letter case (review finding RV-G3).
+        named = [s for s in segs if s not in ("", ".", "..")]
+        if len(named) > 1 and WILD.search(named[0]) and fnmatch.fnmatchcase("renderer", named[0].lower()):
+            return f"has a wildcard ('{named[0]}') that can match the renderer directory"
         if ".." not in segs or piece.startswith("/"):
             continue
         for base in (file_dir, ["main"]):
@@ -431,19 +531,19 @@ def _main_path(token: str, file_dir: list[str]) -> str | None:
     return None
 
 
-def _main_string(value: str, file_dir: list[str]) -> str | None:
-    if value == "renderer":
+def _main_string(value: str, file_dir: list[str], _depth: int = 0) -> str | None:
+    if value.strip().lower() == "renderer":  # 'Renderer' is the same directory on a case-insensitive disk (RV-G3)
         return "names the renderer directory or module"
     m = CD_FRONTEND.search(value)
     if m:
         return f"command enters or targets the frontend tree ('{m.group()}')"
-    if "/" not in value and "\\" not in value:
-        return None
-    for tm in TOKEN.finditer(INTERP.sub("${}", value)):
-        why = _main_path(tm.group(), file_dir)
-        if why:
-            return why
-    return None
+    if "/" in value or "\\" in value:
+        for tm in TOKEN.finditer(_mask(value, shell=True)):
+            why = _main_path(tm.group(), file_dir)
+            if why:
+                return why
+    code = _expand(value, js=False) if _depth < 2 else None  # "cd ${FRONT:-../renderer}" (RV-G16)
+    return _main_string(code, file_dir, _depth + 1) if code is not None else None
 
 
 def _docstring_nodes(tree: ast.AST) -> set[int]:
@@ -457,7 +557,7 @@ def _docstring_nodes(tree: ast.AST) -> set[int]:
 
 
 def _is_renderer_module(name: str | None) -> bool:
-    return bool(name) and (name == "renderer" or name.startswith("renderer."))
+    return bool(name) and (name.lower() == "renderer" or name.lower().startswith("renderer."))
 
 
 def scan_main_py(rel: str, text: str) -> list[str]:
@@ -482,7 +582,7 @@ def scan_main_py(rel: str, text: str) -> list[str]:
             name = fn.attr if isinstance(fn, ast.Attribute) else fn.id if isinstance(fn, ast.Name) else ""
             if name in MODULE_LOADERS:
                 for a in node.args:
-                    if isinstance(a, ast.Constant) and isinstance(a.value, str) and RENDERER_MODULE.match(a.value) and a.value != "renderer":
+                    if isinstance(a, ast.Constant) and isinstance(a.value, str) and RENDERER_MODULE.match(a.value) and a.value.lower() != "renderer":
                         errors.append(f"{where}: main dynamically imports frontend module '{a.value}'")
         elif isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)) and id(node) not in docstrings:
             value = node.value if isinstance(node.value, str) else node.value.decode("latin-1")
@@ -495,16 +595,17 @@ def scan_main_py(rel: str, text: str) -> list[str]:
 
 def scan_main_text(rel: str, text: str) -> list[str]:
     file_dir = rel.split("/")[:-1]
-    masked = INTERP.sub("${}", text)
     found: dict[int, str] = {}
-    for m in CD_FRONTEND.finditer(masked):
-        found.setdefault(masked.count("\n", 0, m.start()) + 1, f"command enters or targets the frontend tree ('{m.group()}')")
-    for m in TOKEN.finditer(masked):
-        tok = m.group()
-        if "/" in tok or "\\" in tok:
-            why = _main_path(tok, file_dir)
-            if why:
-                found.setdefault(masked.count("\n", 0, m.start()) + 1, f"main path '{tok}' {why}")
+    # the text as written (an interpolation masked), then with each ${...} / $(...) read as its code (RV-G16)
+    for masked in filter(None, (_mask(text, shell=True), _expand(text, js=False))):
+        for m in CD_FRONTEND.finditer(masked):
+            found.setdefault(masked.count("\n", 0, m.start()) + 1, f"command enters or targets the frontend tree ('{m.group()}')")
+        for m in TOKEN.finditer(masked):
+            tok = m.group()
+            if "/" in tok or "\\" in tok:
+                why = _main_path(tok, file_dir)
+                if why:
+                    found.setdefault(masked.count("\n", 0, m.start()) + 1, f"main path '{tok}' {why}")
     return [f"{rel}:{line}: {msg}" for line, msg in sorted(found.items())]
 
 
@@ -730,6 +831,48 @@ VIOLATIONS = {
     "renderer/src/sc11f.ts": "const p = 'C:\\\\Users\\\\dev\\\\Labyrinth\\\\main\\\\pyproject.toml';\n",
     "renderer/src/sc11g.test.ts": "const raw = readFileSync('{ROOT}/data/raw/wout_w7x_kjm.nc');\n",
     "renderer/src/sc11h.css": ".a { background: url({ROOT}/main/logo.png); }\n",
+    # review RV-G1: an interpolated or $VAR head followed by '..' (the head is not a sub-directory)
+    "renderer/src/g1a.ts": "export default defineConfig({ resolve: { alias: { '@b': `${__dirname}/../main` } } });\n",
+    "renderer/src/g1b.ts": "export default defineConfig({ resolve: { alias: { '@b': `${import.meta.dirname}/../main` } } });\n",
+    "renderer/src/g1c.test.ts": "const t = readFileSync(`${process.cwd()}/../main/pyproject.toml`, 'utf8');\n",
+    "renderer/tools/g1d/package.json": '{ "scripts": { "pretest": "cat $PWD/../main/pyproject.toml" } }\n',
+    "renderer/tools/g1e/package.json": '{ "scripts": { "pretest": "pytest $INIT_CWD/../main/tests" } }\n',
+    "renderer/scripts/g1f.sh": '#!/bin/sh\ncd "$PWD/../main" && pytest\n',
+    "renderer/scripts/g1g.sh": '#!/bin/sh\npytest "$(pwd)/../main/tests"\n',
+    # review RV-G2: segmented joins without an __dirname anchor
+    "renderer/src/g2a.test.ts": "const t = readFileSync(resolve(process.cwd(), '..', 'main', 'pyproject.toml'), 'utf8');\n",
+    "renderer/src/g2b.test.ts": "const t = readFileSync(join(here, '..', '..', 'main', 'pyproject.toml'), 'utf8');\n",
+    "renderer/src/g2c.test.ts": "const t = readFileSync(join('..', 'data', 'raw', 'wout_w7x_kjm.nc'));\n",
+    "renderer/src/g2d.test.ts": "const t = readFileSync(resolve('..', 'data/raw/wout_w7x_kjm.nc'));\n",
+    "renderer/src/g2e.ts": "const m = import.meta.glob('./**/../../main/*.py');\n",
+    # review RV-G12: '..' after an alias or bare-package head climbs out of it
+    "renderer/src/g12a.ts": "import t from '@art/../main/pyproject.toml?raw';\n",
+    "renderer/src/g12b.ts": "const t = await import('@art/../main/pyproject.toml?raw');\n",
+    "renderer/src/g12c.ts": "const m = import.meta.glob('@art/../main/**/*.py', { query: '?raw', eager: true });\n",
+    # review RV-G16: code inside a template interpolation or a shell default value
+    "renderer/src/g16a.ts": "const t = `${(await import('../../main/pyproject.toml?raw')).default}`;\n",
+    "renderer/src/g16b.test.ts": "const v = `${readFileSync(resolve(__dirname, '../../main/pyproject.toml'), 'utf8')}`;\n",
+    "renderer/src/g16c.test.ts": "const v = `${readFileSync('../main/pyproject.toml', 'utf8')}`;\n",
+    "renderer/src/g16d.test.ts": "const out = `${execSync('python3 -m labyrinth_main.build_artifacts')}`;\n",
+    "renderer/src/g16e.test.ts": "const out = `${execSync('cd ../main && python3 -m pytest -q')}`;\n",
+    "renderer/vite.g16f.config.ts": "export default { resolve: { alias: { '@b': `${resolve(import.meta.dirname, '../main')}` } } };\n",
+    "renderer/scripts/g16g.sh": '#!/bin/sh\nMAIN="${MAIN:-../main}"\ncd "$MAIN" && python3 -m pytest\n',
+    "renderer/tools/g16h/package.json": '{ "scripts": { "pretest": "cd ${MAIN_DIR:-../main} && python3 -m pytest" } }\n',
+    "main/tools/g16i.sh": '#!/bin/sh\nFRONT="${FRONT:-../renderer}"\nnpm --prefix "$FRONT" run build\n',
+    "main/g16j.yaml": "frontend_dir: ${FRONTEND_DIR:-../renderer/dist}\n",
+    "main/labyrinth_main/g16k.py": 'import subprocess\nsubprocess.run("cd ${FRONT:-../renderer} && npm run build", shell=True)\n',
+    # review RV-G18: a lone '..' as a working directory is the repository root for vitest and npm
+    "renderer/src/g18a.test.ts": "execSync('python3 -m pytest -q main/tests', { cwd: '..' });\n",
+    "renderer/src/g18b.test.ts": "const t = execSync('cat main/pyproject.toml', { cwd: '..', encoding: 'utf8' });\n",
+    "renderer/src/g18c.test.ts": "execSync('bash scripts/verify.sh artifacts', { cwd: '..' });\n",
+    "renderer/src/g18d.test.ts": "process.chdir('..');\nconst raw = readFileSync('data/raw/wout_w7x_kjm.nc');\n",
+    "renderer/src/g18e.test.ts": "process.chdir('..');\nconst t = readFileSync('scripts/verify.sh', 'utf8');\n",
+    "renderer/scripts/g18f.mjs": "execSync('python3 -m pytest -q main/tests', { cwd: '..' });\n",
+    # review RV-G3: the renderer named in another letter case, or matched by a wildcard from the repository root
+    "main/labyrinth_main/g3a.py": 'from pathlib import Path\nROOT = Path(__file__).resolve().parents[2]\nTSX = list(ROOT.glob("*/src/**/*.tsx"))\n',
+    "main/labyrinth_main/g3b.py": 'from pathlib import Path\nROOT = Path(__file__).resolve().parents[2]\nSTATIC = ROOT / "Renderer" / "dist"\n',
+    "main/labyrinth_main/g3c.py": 'import glob\nfiles = glob.glob(f"{REPO}/*/dist/index.html")\n',
+    "main/labyrinth_main/g3d.py": "from Renderer.src import app\n",
     # main: imports
     "main/labyrinth_main/v15.py": "from renderer.src import app\n",
     "main/labyrinth_main/v16.py": "import os, renderer.src as r\n",
@@ -777,7 +920,11 @@ CLEAN = {
         "const out = fileURLToPath(new URL('../src/design/tokens.css', import.meta.url));\n"
         "writeFileSync(out, tokens.renderTokensCss());\n"
     ),
-    "renderer/src/ok1.ts": "import React from 'react';\nimport s from '../../contracts/geometry.schema.json';\nimport { a } from './lib/a';\n",
+    "renderer/src/ok1.ts": (
+        "import React from 'react';\nimport s from '../../contracts/geometry.schema.json';\nimport { a } from './lib/a';\n"
+        "import b from '@art/budget.json';\nconst cwd = { cwd: RENDERER, env };\nconst p = join(dir, 'sub', '..', 'x.json');\n"
+        "const msg = `${count} files in ${dir}`;\nconst rel = (f) => relative(RENDERER, f).split('\\\\').join('/');\n"
+    ),
     "renderer/src/ok2.ts": (
         "const r = await fetch('/artifacts/geometry.json');\nconst label = 'the main process';\n"
         "const el = document.querySelector('main');\nconst s = '/src/main.tsx';\nconst api = '/api/live/status';\n"

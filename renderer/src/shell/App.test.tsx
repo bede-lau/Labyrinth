@@ -181,15 +181,16 @@ test('DS-5 the active nav tab is centred inside the nav scroller (the page is ne
     });
     await waitFor(() => expect(screen.getByText(`view:${id}`)).toBeInTheDocument());
   };
+  // The edge cue is state set from the scroll effect: it lands one render after the view (waited for, not raced).
   await go('transport'); // tab 2: centre = 244 − (390 − 122) / 2
   expect(scroller.scrollLeft).toBe(110);
-  expect(scroller).toHaveAttribute('data-fade', 'both');
+  await waitFor(() => expect(scroller).toHaveAttribute('data-fade', 'both'));
   await go('budget'); // last tab: clamped to the end, only the start is hidden
   expect(scroller.scrollLeft).toBe(342);
-  expect(scroller).toHaveAttribute('data-fade', 'start');
+  await waitFor(() => expect(scroller).toHaveAttribute('data-fade', 'start'));
   await go('locate'); // first tab: back at 0, only the end is hidden
   expect(scroller.scrollLeft).toBe(0);
-  expect(scroller).toHaveAttribute('data-fade', 'end');
+  await waitFor(() => expect(scroller).toHaveAttribute('data-fade', 'end'));
   // A manual swipe updates the edge cue as well.
   scroller.scrollLeft = 200;
   act(() => {
@@ -457,6 +458,54 @@ test('A3 a view that throws shows the named error panel inside the shell, and na
     expect(screen.getByRole('heading', { name: 'Could not load /api/live/status, artifacts/transport.json' })).toBeInTheDocument(),
   );
   expect(routeDef('advance').files).toEqual(['/api/live/status', 'artifacts/transport.json']);
+});
+
+test('FE2-1 when Advance plasma itself fails to render during a billing risk, the header alert carries a working Terminate', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const user = userEvent.setup();
+  const reason = TERM_REASONS['TERMINATE FAILED'];
+  const posts: string[] = [];
+  let terminateAnswer: { code: number; body: unknown } = { code: 502, body: { ok: false, reason, status: status('fallback', { reason }) } };
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === 'POST') {
+        posts.push(url);
+        return new Response(JSON.stringify(terminateAnswer.body), { status: terminateAnswer.code });
+      }
+      return url === '/api/live/status' ? json(status('fallback', { reason })) : new Response('', { status: 404 });
+    }),
+  );
+  // The app header (the error panel below has a <header> of its own, so not found by the banner role).
+  const header = () => document.querySelector<HTMLElement>('header.shell-header')!;
+  // Healthy view: the header points at the panel's control and has none of its own.
+  history.replaceState(null, '', '#/advance');
+  const healthy = render(<App pollMs={60_000} />);
+  const pointer = await within(header()).findByRole('alert');
+  expect(pointer).toHaveTextContent('Use Terminate in the Advance plasma panel below.');
+  expect(within(pointer).queryByRole('button')).toBeNull();
+  healthy.unmount();
+
+  // The view throws: the panel below is an error panel, so the header must not promise it; it offers Terminate itself.
+  boom.advance = true;
+  render(<App pollMs={60_000} />);
+  const alert = await within(header()).findByRole('alert');
+  expect(screen.getByRole('heading', { name: 'Could not load /api/live/status, artifacts/transport.json' })).toBeInTheDocument();
+  expect(alert).not.toHaveTextContent(/panel below/);
+  const retry = within(alert).getByRole('button', { name: 'Retry terminate' });
+  expect(retry).toBeEnabled();
+  await user.click(retry);
+  await waitFor(() => expect(posts).toEqual(['/api/live/terminate']));
+  expect(await within(alert).findByRole('status', { name: 'Terminate answer' })).toHaveTextContent(`Terminate not confirmed: ${reason}`);
+  expect(alert).toHaveAccessibleName('Danger: TERMINATE FAILED — GPUs may still be billing');
+  // A confirmed stop whose status is clean ends the danger: the alert goes.
+  terminateAnswer = { code: 200, body: { ok: true, reason: 'Workers terminated.', status: status('idle') } };
+  await user.click(within(alert).getByRole('button', { name: 'Retry terminate' }));
+  await waitFor(() => expect(within(header()).queryByRole('alert')).toBeNull());
+  expect(posts).toHaveLength(2);
+  expect([...header().querySelectorAll<HTMLElement>('.shell-mode .lab-pill')].map((p) => `${p.dataset.status}:${p.textContent}`)).toEqual(['replay:Replay · $0']);
 });
 
 test('A4 header states the user decision and a global provenance legend is shown', () => {

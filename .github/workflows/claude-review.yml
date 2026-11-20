@@ -14,6 +14,10 @@
 #     without secrets, and the job-level `if:` skips forks altogether.
 #   * The key is passed to the review action only. No step installs dependencies, builds or runs code
 #     from the pull request.
+#   * The action runs Claude Code in the PR checkout, and Claude Code loads project settings from it:
+#     .claude/settings.json hooks run scripts/hooks/*.py and .mcp.json can start servers - code the PR
+#     controls, in a job that holds the key (review finding RV-G8). The step before the action deletes
+#     those files from the checkout, so none of them is loaded.
 name: claude-review
 on:
   pull_request:
@@ -37,6 +41,9 @@ jobs:
       - uses: actions/checkout@v4
         if: env.HAVE_KEY == 'true'
         with: { fetch-depth: 0, persist-credentials: false }
+      - name: Drop the pull request's Claude Code project settings (hooks, MCP servers)
+        if: env.HAVE_KEY == 'true'
+        run: rm -f .claude/settings.json .claude/settings.local.json .mcp.json
       - uses: anthropics/claude-code-action@v1
         if: env.HAVE_KEY == 'true'
         with:

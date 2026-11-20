@@ -72,13 +72,20 @@ function namedColorsInCssValue(value: string): string[] {
   return hits;
 }
 
-/** A string literal that is a colour name, or a CSS shorthand / gradient that ends in or contains one. */
+/**
+ * Marks a string as a CSS value rather than prose: a length (`2px`, `${w}px`, `0.5em`), a line style
+ * (`solid`, `dotted`, …), `inset`, or a gradient. Its words are then read as a CSS value is.
+ */
+const CSS_VALUE_HINT = /\d(?:px|em|rem|ch|vh|vw)\b|\}(?:px|em|rem)\b|\b(?:solid|dashed|dotted|double|groove|ridge|inset|outset)\b|gradient\(/;
+
+/**
+ * A string literal that is a colour name, or a CSS value that holds one anywhere: a border or outline
+ * shorthand, a box shadow, a gradient, a template literal with interpolated lengths (design-r1-R5).
+ */
 function namedColorInString(text: string): string | null {
   const s = text.trim();
   if (NAMED_COLORS.has(s.toLowerCase())) return s;
-  const shorthand = /^\d*\.?\d+(?:px|em|rem)?\s+(?:solid|dashed|dotted|double)\s+([A-Za-z]+)$/.exec(s);
-  if (shorthand && NAMED_COLORS.has((shorthand[1] as string).toLowerCase())) return shorthand[1] as string;
-  if (/gradient\(/.test(s)) return namedColorsInCssValue(s)[0] ?? null;
+  if (CSS_VALUE_HINT.test(s)) return namedColorsInCssValue(s)[0] ?? null;
   return null;
 }
 
@@ -192,6 +199,12 @@ describe('colour-literal scanner (positive controls: it must be able to fail)', 
     ["el.style.border = '1px solid orange';", 'named colour "orange"'],
     ['const bg = `linear-gradient(90deg, white, ${x})`;', 'named colour "white"'],
     ['scene.background = new Color(0x112233);', 'colour literal'],
+    // design-r1-R5 (mutation MUT-G): CSS values in code that are not a bare `Npx solid name` shorthand.
+    ["const s = { boxShadow: '0 0 0 2px red' };", 'named colour "red"'],
+    ['el.style.border = `${1}px solid red`;', 'named colour "red"'],
+    ["const o = { outline: 'thin dotted red' };", 'named colour "red"'],
+    ["const o = { outline: '2px solid var(--lab-color-focus)', boxShadow: 'inset 0 0 0 1px Navy' };", 'named colour "Navy"'],
+    ['const ring = `0 0 0 ${w}px gold, 0 1px 2px var(--lab-color-shadow)`;', 'named colour "gold"'],
   ])('code: flags %s', (code, why) => {
     expect(findColorLiterals(code, 'code').map((h) => h.why)).toContain(why);
   });
@@ -201,6 +214,11 @@ describe('colour-literal scanner (positive controls: it must be able to fail)', 
     "const label = 'Gray = unsampled or context, never data';",
     "const url = 'https://example.org/#/a?b=c';",
     "/* 'red' */ const tone = 'warn';",
+    // CSS-looking strings with token colours only, and prose that happens to hold a length or a style word
+    "const o = { outline: '2px solid var(--lab-color-focus)', boxShadow: '0 1px 2px var(--lab-color-shadow)' };",
+    'const w = `${width}px`;',
+    "const note = 'The hover modebar is about 216px wide and would cover a top legend on a phone.';",
+    "const label = 'A dashed outline means the value is not backed by data in this repo.';",
   ])('code: accepts %s', (code) => {
     expect(findColorLiterals(code, 'code')).toEqual([]);
   });

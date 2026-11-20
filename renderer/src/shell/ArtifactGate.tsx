@@ -63,6 +63,8 @@ export function ArtifactGate<T>({ state, view, file, validate, children }: Artif
 interface BoundaryProps {
   view: string;
   files: string[];
+  /** Told when the view fails (the shell then stops pointing at controls inside it: FE2-1). */
+  onError?: (error: Error) => void;
   children: ReactNode;
 }
 
@@ -76,6 +78,7 @@ export class ViewErrorBoundary extends Component<BoundaryProps, { error: Error |
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.warn(`[labyrinth] ${this.props.view} failed to render`, error, info.componentStack);
+    this.props.onError?.(error);
   }
 
   render() {

@@ -175,12 +175,16 @@ function viewportIsNarrow(): boolean {
   return Boolean(mq) && mq.media === NARROW_CHART_QUERY && mq.matches === true;
 }
 
+/** A partial font over a themed one: the keys given win, the themed family, size, colour and weight stay. */
+const mergeFont = (base: unknown, over: unknown): PlotFont => ({ ...(base as PlotFont | undefined), ...(over as PlotFont | undefined) });
+
 /**
  * A complete Plotly layout for the theme.
  *
  * `overrides` are merged, not swapped in: axes key by key (with `title`, `title.font` and
  * `tickfont` one level deeper, so passing only `title.text` keeps the themed title font and
- * standoff), and `font`, `margin`, `legend`, `hoverlabel`, `title` and `modebar` key by key.
+ * standoff), and `font`, `margin`, `legend`, `hoverlabel`, `title` and `modebar` key by key, with
+ * the `font` inside `title`, `legend` and `hoverlabel` one level deeper too.
  * Everything else (height, shapes, annotations, hovermode, …) replaces the themed value.
  *
  * On a narrow chart (`options.narrow`, default: the viewport matches NARROW_CHART_QUERY) the
@@ -223,7 +227,7 @@ export function plotLayout(theme: ThemeName, overrides: PlotLayoutOverrides = {}
     modebar: { bgcolor: t.plot.paper, color: t.color.textSubtle, activecolor: t.color.accent, orientation: 'h' },
     dragmode: 'zoom',
   };
-  const mergedLegend: Record<string, unknown> = { ...base.legend, ...legend };
+  const mergedLegend: Record<string, unknown> = { ...base.legend, ...legend, font: mergeFont(base.legend.font, legend?.font) };
   return {
     ...base,
     ...rest,
@@ -234,8 +238,8 @@ export function plotLayout(theme: ThemeName, overrides: PlotLayoutOverrides = {}
     // Narrow: under the plot, anchored to the figure (not the plot area), so Plotly reserves the
     // room below the axis title however many rows the legend wraps to.
     legend: narrow ? { ...mergedLegend, yref: 'container', y: 0, yanchor: 'bottom' } : mergedLegend,
-    hoverlabel: { ...base.hoverlabel, ...hoverlabel },
-    title: { ...base.title, ...title },
+    hoverlabel: { ...base.hoverlabel, ...hoverlabel, font: mergeFont(base.hoverlabel.font, hoverlabel?.font) },
+    title: { ...base.title, ...title, font: mergeFont(base.title?.font, title?.font) },
     modebar: { ...base.modebar, ...modebar },
   };
 }

@@ -34,7 +34,8 @@ class Ledger:
     reconciled: bool
 
     def reserve(self, amount_usd: float) -> Ledger:
-        return replace(self, pending=round(self.pending + amount_usd, 2), reconciled=False)
+        """Add a reservation to pending, rounded UP to the cent (never recorded below what was added)."""
+        return replace(self, pending=ceil_cents(self.pending + amount_usd), reconciled=False)
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,7 @@ class GuardDecision:
     pending_usd: float
     slot_estimate_usd: float
     hard_timeout_s: int
+    ledger_usable: bool = True  # False: billed/pending are the conservative stand-ins, not the ledger's (see evaluate)
 
     def budget_snapshot(self) -> dict:
         """The `budget` object of contracts/live-status.schema.json."""
@@ -104,8 +106,11 @@ def modal_timeout_s(kind: str) -> int:
     """Execution timeout Modal enforces on the deployed function of `kind`, counted from container start.
 
     Priced in stages: startup (<= modal_startup_timeout_s) + execution (this) == planned_call_s(kind), the
-    orchestrator's hard timeout counted from launch. The worker stops GX and checkpoints CHECKPOINT_MARGIN
-    seconds before this, so it finishes before the orchestrator gives up even after a full-length cold start."""
+    orchestrator's hard timeout counted from just before the FIRST spawn. The worker stops GX
+    modal_app.CHECKPOINT_MARGIN_S before this; that margin also covers the later spawn's lag, the worker's loop
+    period, GX's stop wait, the checkpoint copy and the orchestrator's polling, so a worker whose cold start used
+    the whole startup budget still reports `done` before the orchestrator gives up. GPU queueing before a container
+    starts is bounded by nothing here: such a session can still end as a hard-timeout fallback (cancelled)."""
     return planned_call_s(kind) - modal_startup_timeout_s()
 
 
@@ -123,18 +128,23 @@ def _usable_usd(v) -> bool:
 
 def evaluate(ledger: Ledger, *, slot_min: float = LIVE_SLOT_MIN, setups: int = 1, ceiling_usd: float = CEILING_USD,
              rate_usd_per_h: float = LIVE_RATE_USD_PER_H) -> GuardDecision:
+    """An unusable ledger (amounts not finite, non-negative numbers; a file that could not be read) is refused and
+    reported as the whole budget spent: billed = the ceiling, pending 0, hard timeout 0. Those stand-ins are never
+    0 + 0 (which would read as "nothing spent"), and the reason says they are not the ledger's figures."""
     estimate = slot_estimate_usd(slot_min, setups=setups, rate_usd_per_h=rate_usd_per_h)
     values_ok = all(_usable_usd(v) for v in (ledger.billed, ledger.pending))
-    billed = float(ledger.billed) if values_ok else 0.0
+    billed = float(ledger.billed) if values_ok else float(ceiling_usd)
     pending = float(ledger.pending) if values_ok else 0.0
     remaining = ceiling_usd - billed - pending
     timeout = hard_timeout_s(remaining, slot_min, setups=setups, rate_usd_per_h=rate_usd_per_h) if values_ok else 0
 
     def decide(ok: bool, reason: str) -> GuardDecision:
-        return GuardDecision(ok, reason, ceiling_usd, round(billed, 2), round(pending, 2), estimate, timeout)
+        return GuardDecision(ok, reason, ceiling_usd, round(billed, 2), round(pending, 2), estimate, timeout, values_ok)
 
     if not values_ok:
-        return decide(False, "Budget guard refused: ledger billed/pending must be finite, non-negative numbers.")
+        return decide(False, "Budget guard refused: ledger.json is unusable (billed/pending must be finite, non-negative "
+                             f"numbers). Until it is fixed and reconciled the budget is reported as fully spent (billed = "
+                             f"the ${ceiling_usd:.2f} ceiling, pending $0.00); these amounts are not read from the ledger.")
     if not ledger.reconciled:
         return decide(False, f"Budget guard refused: ledger not reconciled (billed ${billed:.2f}, pending ${pending:.2f}). "
                              "Check both against Modal's usage page and record them before any allocation.")

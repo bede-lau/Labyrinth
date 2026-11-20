@@ -150,9 +150,11 @@ function SpecimenChart({ theme }: { theme: ThemeName }) {
       cancelled = true;
     };
   }, [theme]);
+  // Named on the figure, not with role="img" on the element Plotly draws into: the children of an img
+  // are presentational, and Plotly puts its focusable modebar buttons in there.
   return (
-    <figure className="gal-figure">
-      <div ref={ref} className="gal-chart" role="img" aria-label="Specimen chart: synthetic heat-flux traces for stella, GENE and GX with analysis windows" />
+    <figure className="gal-figure" aria-label="Specimen chart: synthetic heat-flux traces for stella, GENE and GX with analysis windows">
+      <div ref={ref} className="gal-chart" />
       {error && <Callout tone="warn" title="Chart failed to load">{error}</Callout>}
     </figure>
   );
@@ -288,10 +290,9 @@ export default function Gallery() {
             styling review only.
           </p>
         </div>
+        {/* No mode indicator here: the gallery runs without the app shell and never asks
+            /api/live/status, so it cannot know that $0 is true (DESIGN.md §5). */}
         <div className="gal-header__controls">
-          <StatusPill status="replay" size="md">
-            Replay · $0
-          </StatusPill>
           <SegmentedControl
             label="Theme"
             size="sm"
@@ -434,7 +435,7 @@ export default function Gallery() {
         <Panel
           eyebrow="Live session"
           title="GPUs may still be billing"
-          subtitle="The billing-risk pill leads the header while a stop is unconfirmed or the session state is unknown; the Alert carries the backend's reason word for word and the control that acts on it."
+          subtitle="The billing-risk pill leads the header while a stop is unconfirmed or the session state is unknown; the Alert carries the backend's reason word for word and the control that acts on it. The second Alert is the header's compact copy."
         >
           <div className="gal-pills">
             <StatusPill status="billing-risk" size="md">
@@ -462,11 +463,15 @@ export default function Gallery() {
             >
               Check the Modal dashboard until both workers are confirmed stopped.
             </Alert>
+            {/* The header's copy: compact, with a link to the panel that has the Terminate control. */}
             <Alert
+              compact
               title="CONNECTION LOST — session state unknown"
               reason={SPECIMEN_CONNECTION_LOST}
               action={<a href="#/advance">Open Advance plasma to send Terminate</a>}
-            />
+            >
+              Check the Modal dashboard until both workers are confirmed stopped.
+            </Alert>
           </div>
         </Panel>
 

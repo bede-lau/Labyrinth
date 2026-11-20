@@ -93,6 +93,7 @@
   max-width: 34ch;
 }
 .tr-reason { margin-top: var(--lab-space-1); }
+.tr-reasons { margin: var(--lab-space-1) 0 0; padding-left: var(--lab-space-4); list-style: disc; }
 .tr-key { margin-top: var(--lab-space-2); font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-subtle); max-width: 100ch; }
 
 /* Narrow well: no header row; each window is a card with the claim first and a label on every value. */

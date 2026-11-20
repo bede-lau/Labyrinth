@@ -26,7 +26,15 @@ written ahead of the cancel: a fallback reads TERMINATION PENDING ("terminating 
 yet") from the instant its mode is set until every launched worker's cancel returned — the marker and the
 mode change under the same lock, so no snapshot shows a fallback without it while a launched worker is open —
 and only then "Other worker terminated." / "workers terminated." A worker that was never launched is never
-called terminated: such a reason says "nothing was launched" or names the GPU that "never launched".
+called terminated: such a reason says "nothing was launched" or names the GPU that "never launched"
+(`stopped_wording`, which the service, the server's exit line and the rehearse CLI use as well).
+
+A queued cancel that settles as FAILED after its worker's last terminate attempt is recorded
+(`queued_cancel_failed`): the late call exists now, so one more round can reach it. The service and the rehearse
+CLI run that round, whenever the settle happened.
+
+A poll report is applied only when every value it adds is finite in archive units too (raw t x sqrt(2) overflows
+above ~1.27e308): anything else is a malformed report, so no snapshot ever holds a value JSON cannot carry.
 
 One terminate round per stop. A fallback (worker failure, hard timeout) terminates right where the failure is
 seen and nothing is launched after it, so `run()` does not repeat that round on its way out: the time a session
@@ -38,9 +46,10 @@ It never imports `modal` and makes no network calls itself.
 """
 from __future__ import annotations
 
+import math
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -53,6 +62,11 @@ EXECUTING = {"running", "checkpointed", "done"}
 UNITS = ("archive units: t in a/v_th,i (GX raw t x sqrt(2)), Q in Q_gB,i (GX raw Q / 2 sqrt(2)); "
          "conversion assumes identical dimensional references (UNREHEARSED)")
 NO_REHEARSAL_LABEL = "No qualified GX rehearsal recorded — showing archived stella/GENE evidence"
+# The PRD's live transport comparison is not wired yet (cross-RX-2: needs a live-status contract field): every GX
+# provenance says so rather than implying the samples were checked against the archive.
+COMPARISON_NOT_COMPUTED = ("Live comparison NOT computed: Labyrinth does not yet compare these GX samples with the "
+                           "archive (time-weighted means on 200–300 and 300–400, coverage, saturated-agreement gate); "
+                           "any overlay on Check transport is visual only.")
 TERMINATE_FAILED = "TERMINATE FAILED — check Modal dashboard; GPUs may still be billing"
 TERMINATE_PENDING = "TERMINATION PENDING — cancel queued, not yet confirmed; GPUs may still be billing"
 # A fallback whose terminate round has not returned a verdict yet (the cancels are being sent).
@@ -150,6 +164,7 @@ class WorkerRecord:
     terminate_error: str | None = None
     terminate_pending: bool = False     # cancel queued with the backend; not confirmed yet
     terminate_attempted: bool = False   # a terminate round has already called the backend for this worker
+    queued_cancel_failed: bool = False  # its queued cancel settled as failed after the last backend.terminate call
     transient_polls: int = 0
 
     def to_status(self) -> dict:
@@ -171,6 +186,23 @@ def _iso(epoch: float | None) -> str | None:
 
 def _names(records: list[WorkerRecord]) -> str:
     return ", ".join(f"GPU {r.gpu_index} ({r.tube})" for r in records)
+
+
+def _gpu_names(indices: set[int]) -> str:
+    return ", ".join(f"GPU {g} ({t})" for g, t in TUBES if g in indices)
+
+
+def stopped_wording(launched: Iterable[int]) -> str:
+    """What a CONFIRMED termination stopped, worded from the GPU indices that were launched (the caller asserts
+    that every launched worker's cancel succeeded): "workers terminated" only when every GPU was launched,
+    "nothing was launched" when none was, otherwise the GPUs that were terminated and those that never launched."""
+    launched = set(launched)
+    if not launched:
+        return "nothing was launched"
+    rest = {g for g, _ in TUBES} - launched
+    if not rest:
+        return "workers terminated"
+    return f"{_gpu_names(launched)} terminated; {_gpu_names(rest)} never launched"
 
 
 def _number(x: Any) -> float | None:
@@ -235,12 +267,19 @@ def apply_poll(rec: WorkerRecord, result: Any, now: float) -> str | None:
             return f"malformed checkpoint report {ck!r}"
         ck_obj = Checkpoint(rec.tube, ck_t, str(ck["ref"]))
 
+    # converted values must be finite too: raw t x sqrt(2) overflows to inf above ~1.27e308, and a snapshot holding
+    # inf could not be serialised (every status answer would fail for the rest of the session)
+    sim_time = gx_to_archive([t_raw], [0.0], identical_references=True)[0][0] if t_raw is not None else None
+    if sim_time is not None and not math.isfinite(sim_time):
+        return f"worker reported a simulation time ({t_raw!r}) that overflows archive units"
+    t_arch, q_arch = gx_to_archive(ts, qs, identical_references=True)
+    if not all(math.isfinite(v) for v in (*t_arch, *q_arch)):
+        return "worker reported a flux sample that overflows archive units"
+
     # validated: apply
     if t_raw is not None:
-        rec.sim_time_raw = t_raw
-        rec.sim_time = gx_to_archive([t_raw], [0.0], identical_references=True)[0][0]
+        rec.sim_time_raw, rec.sim_time = t_raw, sim_time
     if ts:
-        t_arch, q_arch = gx_to_archive(ts, qs, identical_references=True)
         rec.samples.extend({"t": a, "Q": b} for a, b in zip(t_arch, q_arch, strict=True))
         rec.last_sample_t_raw = ts[-1]
     if ck_obj is not None:
@@ -300,12 +339,7 @@ class Orchestrator:
     def _stopped(self) -> str:
         """What a confirmed termination stopped, worded from the records (lock held, nothing launched still open):
         "terminated" only for launched workers — their cancel succeeded — and never for one that was not launched."""
-        launched = [r for r in self.workers if r.launched]
-        if not launched:
-            return "nothing was launched"
-        if len(launched) == len(self.workers):
-            return "workers terminated"
-        return f"{_names(launched)} terminated; {_names([r for r in self.workers if not r.launched])} never launched"
+        return stopped_wording(r.gpu_index for r in self.workers if r.launched)
 
     def _fallback_clause(self) -> str:
         """The end of a fallback reason once every launched worker's termination is confirmed (lock held)."""
@@ -337,6 +371,25 @@ class Orchestrator:
         """Whether any worker of this session was launched (a spawn was sent, or may have been)."""
         with self._lock:
             return any(r.launched for r in self.workers)
+
+    @property
+    def launched_gpus(self) -> frozenset[int]:
+        """The GPU indices of this session's launched workers."""
+        with self._lock:
+            return frozenset(r.gpu_index for r in self.workers if r.launched)
+
+    @property
+    def stopped(self) -> str:
+        """`stopped_wording` for this session: what its termination stopped. Meaningful once it is confirmed."""
+        with self._lock:
+            return self._stopped()
+
+    @property
+    def queued_cancel_failed(self) -> bool:
+        """A queued cancel settled as failed after its worker's last terminate attempt: the late call has arrived
+        (or failed), so one more round can act on it."""
+        with self._lock:
+            return any(r.queued_cancel_failed for r in self._open())
 
     @property
     def termination_confirmed(self) -> bool:
@@ -505,6 +558,8 @@ class Orchestrator:
     def _attempt(self, rec: WorkerRecord, was_pending: bool) -> str | None:
         """One backend.terminate call for `rec`. Settles (or, for a queued cancel, subscribes) the worker and
         returns None — except for an attempt that failed in a way worth retrying: -> its error text."""
+        with self._lock:
+            rec.queued_cancel_failed = False  # this call is the attempt a settled-as-failed cancel was waiting for
         try:
             self.backend.terminate(rec.handle)
         except TerminationPending as pending:
@@ -515,7 +570,7 @@ class Orchestrator:
                 if not was_pending or rec.terminate_pending:
                     rec.terminate_pending, rec.terminate_error = True, f"termination pending: {pending}"
             if not was_pending:
-                pending.subscribe(lambda ok, err, rec=rec: self._settled(rec, ok, err))
+                pending.subscribe(lambda ok, err, rec=rec: self._settled(rec, ok, err, queued=True))
             return None
         except TerminationUnconfirmed as e:  # nothing more can be done now: do not hammer the backend
             with self._lock:
@@ -544,9 +599,12 @@ class Orchestrator:
                 self._settle.wait(left)
             return not self._open()
 
-    def _settled(self, rec: WorkerRecord, ok: bool, err: str | None) -> None:
+    def _settled(self, rec: WorkerRecord, ok: bool, err: str | None, *, queued: bool = False) -> None:
+        """`queued`: the verdict of a queued cancel (TerminationPending.subscribe), which may arrive at any time."""
         with self._lock:
             rec.terminate_pending = False
+            if queued:
+                rec.queued_cancel_failed = not ok and not rec.terminated
             if ok:
                 rec.terminated, rec.terminate_error = True, None
                 if rec.wall_start is not None and rec.wall_end is None:
@@ -604,8 +662,7 @@ class Orchestrator:
         if not qualified:
             return {"outcome": "blocked", "details": "UNREHEARSED: no recorded rehearsal has verified initialization and "
                                                      "checkpoint continuation (D-011)."}
-        return {"outcome": "not-applicable",
-                "details": "Qualified by a recorded rehearsal; compare with archived evidence in Check transport."}
+        return {"outcome": "not-applicable", "details": f"Qualified by a recorded rehearsal. {COMPARISON_NOT_COMPUTED}"}
 
     def intervals(self) -> dict[str, tuple[float | None, float | None]]:
         """Wall-clock intervals on the orchestrator's own clock."""

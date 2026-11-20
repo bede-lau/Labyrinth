@@ -87,6 +87,12 @@ test('S6 timing CPU 184.69 s vs GPU 145.44 s (1.27×), run tally 4/4, provenance
   const timing = await screen.findByTestId('timing');
   expect(within(timing).getByRole('group', { name: 'CPU mean: 184.69 s' })).toBeInTheDocument();
   expect(within(timing).getByRole('group', { name: 'GPU mean: 145.44 s' })).toBeInTheDocument();
+  // FF-13: the bars are drawn to the slower mean: CPU fills its bar, GPU fills 145.44 / 184.69 of it.
+  const fill = (k: 'cpu' | 'gpu') => parseFloat(timing.querySelector<HTMLElement>(`.sp-timing__fill--${k}`)!.style.width);
+  expect(fill('cpu')).toBeCloseTo(100, 9);
+  // jsdom keeps 4 decimals of a percentage: 78.7482 %.
+  expect(fill('gpu')).toBeCloseTo((145.44 / 184.69) * 100, 3);
+  expect(fill('gpu')).toBeCloseTo(78.75, 1);
   // Only the division is redone here, on two PRD-reported means: the artifact says basis "arithmetic", so it
   // reads "Arithmetic consistent", not the "Match" of a value recomputed from data.
   const checks = screen.getByTestId('timing-checks');
