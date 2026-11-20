@@ -1,0 +1,8 @@
+/* Plotly adapter frame. Tokens only. */
+.tr-figure { display: flex; flex-direction: column; gap: var(--lab-space-2); min-width: 0; }
+.tr-chart { width: 100%; min-height: 300px; }
+.tr-figure__summary {
+  font-size: var(--lab-font-size-xs);
+  line-height: var(--lab-line-height-xs);
+  color: var(--lab-color-text-subtle);
+}

@@ -1,0 +1,65 @@
+/* Spatial parallelism. Tokens only. Rank identity uses two CVD-checked series colours plus shape
+   (rank 0 circles, rank 1 squares) and text, so colour is never the only channel. */
+.sp-layout { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: var(--lab-space-4); align-items: start; }
+.sp-layout__side { display: flex; flex-direction: column; gap: var(--lab-space-4); min-width: 0; }
+
+.sp-rank--0 { --rank: var(--lab-series-stella); }
+.sp-rank--1 { --rank: var(--lab-series-gene); }
+
+.sp-geometry-label {
+  display: inline-flex; align-items: center; gap: var(--lab-space-1);
+  padding: var(--lab-space-1) var(--lab-space-2);
+  border: 1px dashed var(--lab-status-prd-reported-border);
+  background: var(--lab-status-prd-reported-bg); color: var(--lab-status-prd-reported-fg);
+  border-radius: var(--lab-radius-sm);
+  font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); font-weight: var(--lab-font-weight-semibold);
+}
+.sp-ring { margin: var(--lab-space-3) 0 var(--lab-space-4); }
+.sp-ring__svg { display: block; width: 100%; max-width: 680px; height: auto; margin: 0 auto; }
+.sp-ring__track { fill: none; stroke: var(--lab-color-border); stroke-width: 1; }
+.sp-ring__arc { fill: none; stroke: var(--rank); stroke-width: 8; stroke-linecap: round; }
+.sp-ring__spoke { stroke: var(--lab-color-border-strong); stroke-width: 1.25; stroke-dasharray: 2 3; }
+.sp-ring__arrow { fill: none; stroke: var(--lab-color-text-muted); stroke-width: 1.5; }
+.sp-ring__head { fill: var(--lab-color-text-muted); }
+.sp-ring__boundary { font-size: var(--lab-font-size-2xs); fill: var(--lab-color-text-muted); }
+.sp-ring__rank { font-size: var(--lab-font-size-xs); fill: var(--lab-color-text-muted); }
+.sp-ring__rank-name { fill: var(--lab-color-text); font-weight: var(--lab-font-weight-semibold); }
+.sp-node__shape { fill: var(--lab-color-surface); stroke: var(--rank); stroke-width: 3; }
+.sp-node__label { font-size: var(--lab-font-size-sm); font-weight: var(--lab-font-weight-semibold); fill: var(--lab-color-text); font-variant-numeric: tabular-nums; }
+.sp-cpu__box { fill: var(--lab-color-surface-sunken); stroke: var(--lab-color-border-strong); stroke-width: 1; }
+.sp-cpu__title { font-size: var(--lab-font-size-xs); font-weight: var(--lab-font-weight-semibold); fill: var(--lab-color-text); }
+.sp-cpu__device { font-size: var(--lab-font-size-2xs); fill: var(--lab-color-text-muted); letter-spacing: 0.07em; }
+.sp-ring__caption { margin-top: var(--lab-space-2); }
+.sp-key { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--lab-space-1) var(--lab-space-4); }
+.sp-key__item { display: inline-flex; align-items: center; gap: var(--lab-space-1); font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-muted); }
+
+.sp-timing { display: flex; flex-direction: column; gap: var(--lab-space-3); margin-bottom: var(--lab-space-3); }
+.sp-timing__row { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: var(--lab-space-3); align-items: end; }
+.sp-timing__bar { display: block; height: 14px; margin-bottom: var(--lab-space-1); }
+.sp-timing__fill {
+  display: block; height: 100%;
+  background: var(--lab-color-accent-subtle);
+  border: 1px dashed var(--lab-color-accent);
+  border-radius: var(--lab-radius-xs);
+}
+.sp-small { margin-top: var(--lab-space-2); font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-subtle); }
+
+.sp-tally { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--lab-space-4); flex-wrap: wrap; }
+.sp-tally__runs { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--lab-space-1); }
+.sp-tally__run {
+  display: inline-flex; align-items: center; gap: 2px;
+  height: 24px; padding: 0 var(--lab-space-2);
+  border: 1px dashed var(--lab-color-border-strong); border-radius: var(--lab-radius-sm);
+  font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); font-variant-numeric: tabular-nums;
+}
+/* PRD-reported passes: neutral and dashed, never the green 'Verified' treatment (verification is blocked). */
+.sp-tally__run--pass { color: var(--lab-color-text); }
+
+.sp-ring--compact .sp-ring__boundary { font-size: var(--lab-font-size-xs); }
+.sp-ring--compact .sp-node__label { font-size: var(--lab-font-size-md); }
+.sp-ring--compact .sp-cpu__title { font-size: var(--lab-font-size-sm); }
+.sp-ring--compact .sp-cpu__device { font-size: var(--lab-font-size-xs); }
+
+@media (max-width: 1100px) {
+  .sp-layout { grid-template-columns: minmax(0, 1fr); }
+}
