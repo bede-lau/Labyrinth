@@ -18,6 +18,10 @@ TOOLS="${LABYRINTH_TOOLS:-$HOME/.local/share/labyrinth}"
 [[ -d "$TOOLS/node/bin" ]] && PATH="$TOOLS/node/bin:$PATH"
 [[ -d "$TOOLS/bin" ]] && PATH="$TOOLS/bin:$PATH"
 export PATH
+# Several agents run the renderer suite in one tree at the same time. Uncapped, each run forks one
+# jsdom worker per core and the workers time out starting ("Failed to start forks worker"), which
+# reads as a red gate with zero failing tests. Cap it; override with VITEST_MAX_WORKERS=<n>.
+export VITEST_MAX_WORKERS="${VITEST_MAX_WORKERS:-4}"
 if [[ $# -eq 0 ]]; then
   echo "dev.sh: expected a command to run (e.g. scripts/dev.sh bash scripts/verify.sh all)" >&2
   exit 2

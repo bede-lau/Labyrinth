@@ -13,9 +13,11 @@ Without credentials or the `modal` package the mode is `unavailable` and nothing
 
 Operator note — hung spawn RPC: if Modal never answers a `Function.spawn`, the worker may or may not
 exist. Labyrinth never reports such a session as terminated: status reads "TERMINATION PENDING" (or
-"TERMINATE FAILED"), /api/live/terminate answers 502, and on shutdown the server (and the `rehearse` CLI)
-waits up to WORST_CASE_STOP_S + 10 s, then exits with code 2 printing "NOT confirmed terminated — check
-Modal". In that case open the Modal dashboard, stop any running `labyrinth-gx` function calls, and
+"TERMINATE FAILED"), /api/live/terminate answers 502 and no new launch is accepted. On shutdown (SIGINT,
+SIGTERM, SIGHUP) the server and the `rehearse` CLI let the step in flight finish (every Modal call is
+bounded by CALL_TIMEOUT_S), raise the run's kill switch, and then wait up to WORST_CASE_STOP_S + 10 s for
+the queued cancel to be confirmed; if it is not, they exit with code 2 printing "NOT confirmed terminated —
+check Modal". In that case open the Modal dashboard, stop any running `labyrinth-gx` function calls, and
 record what was billed in ledger.json before the next allocation.
 """
 from __future__ import annotations
@@ -36,15 +38,20 @@ from pathlib import Path
 from ...common.paths import CONTRACTS
 from ..budget.pricing import POSTED_USD
 from . import budget_guard as guard
-from .modal_backend import CALL_TIMEOUT_S, availability
-from .orchestrator import NO_REHEARSAL_LABEL, TERMINATE_BACKOFF_S, Orchestrator, WorkerBackend
+from .modal_backend import CALL_TIMEOUT_S, LAUNCH_CALLS, POLL_CALLS, TERMINATE_CALLS, availability
+from .orchestrator import NO_REHEARSAL_LABEL, TERMINATE_BACKOFF_S, TUBES, Orchestrator, WorkerBackend
 
 BackendFactory = Callable[[str, int], WorkerBackend]  # (run_id, hard_timeout_s) -> backend
 RUN_ID = re.compile(r"^(rehearsal|live)-[0-9a-f]{12}$")
 LOCK_TIMEOUT_S = 5.0
-# Worst case for a session thread to notice a stop: one in-flight launch (lookup + spawn, each bounded by
-# CALL_TIMEOUT_S; launch() checks for stop before the next spawn) plus terminate retries of both workers.
-WORST_CASE_STOP_S = 2 * CALL_TIMEOUT_S + 2 * (sum(TERMINATE_BACKOFF_S) + (1 + len(TERMINATE_BACKOFF_S)) * CALL_TIMEOUT_S)
+POLL_INTERVAL_S = 2.0
+# Worst case for a session to notice a stop and finish terminating when every Modal call takes its full
+# client-side bound: the step in flight when the stop is requested — one launch, or a poll of both workers
+# followed by the poll sleep (the orchestrator checks for the stop before the next spawn / poll) — plus one
+# round of terminate retries for both workers (kill-switch put + cancel per attempt). A terminate that still
+# fails after that is reported unconfirmed, never as terminated, however long the caller waited.
+WORST_CASE_STOP_S = (max(LAUNCH_CALLS, len(TUBES) * POLL_CALLS) * CALL_TIMEOUT_S + POLL_INTERVAL_S
+                     + len(TUBES) * (sum(TERMINATE_BACKOFF_S) + (1 + len(TERMINATE_BACKOFF_S)) * TERMINATE_CALLS * CALL_TIMEOUT_S))
 RUN_KEYS = {"savedRunId", "initVerified", "continuationVerified", "checks", "phases"}
 
 
@@ -167,7 +174,7 @@ def _default_backend_factory(run_id: str, hard_timeout_s: int) -> WorkerBackend:
 
 class LiveService:
     def __init__(self, *, state_dir: Path | None = None, availability_check: Callable[[], tuple[bool, str]] = availability,
-                 backend_factory: BackendFactory = _default_backend_factory, poll_interval_s: float = 2.0,
+                 backend_factory: BackendFactory = _default_backend_factory, poll_interval_s: float = POLL_INTERVAL_S,
                  join_timeout_s: float = WORST_CASE_STOP_S + 10.0, confirm_wait_s: float = 5.0):
         self.state_dir = state_dir or default_state_dir()
         self.ledger = LedgerStore(self.state_dir / "ledger.json")

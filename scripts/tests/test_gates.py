@@ -106,40 +106,115 @@ def test_stop_launcher_without_a_shell_blocks_once_then_releases(tmp_path, monke
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
-    def no_shell(*_a, **_k):
-        raise FileNotFoundError("wsl.exe")
-
-    monkeypatch.setattr(mod.subprocess, "run", no_shell)
-
-    def call(payload):
+    def call(payload, behaviour):
+        monkeypatch.setattr(mod.subprocess, "run", behaviour)
         monkeypatch.setattr(mod.sys, "stdin", io.TextIOWrapper(io.BytesIO(payload)))
         return mod.main()
 
-    assert call(b'{"session_id":"x"}') == 2
-    assert call(b'{"session_id":"x","stop_hook_active":true}') == 0
-    assert call(b"not json") == 2
+    def no_shell(*_a, **_k):
+        raise FileNotFoundError("wsl.exe")
+
+    def exits(code):
+        return lambda *_a, **_k: subprocess.CompletedProcess([], code)
+
+    first, again = b'{"session_id":"x"}', b'{"session_id":"x","stop_hook_active":true}'
+    # The gate's own verdicts pass straight through and are never released.
+    assert call(first, exits(0)) == 0
+    assert call(first, exits(2)) == 2
+    assert call(again, exits(2)) == 2
+    # The gate did not run at all (no shell, broken WSL = 4294967295, script not found = 127, killed):
+    # block once, release on the retry so a machine without a working WSL cannot trap a session (SC-12).
+    for broken in (no_shell, exits(4294967295), exits(127), exits(1), exits(-9)):
+        assert call(first, broken) == 2
+        assert call(b"not json", broken) == 2
+        assert call(again, broken) == 0
 
 
-def test_setup_and_env_scripts_never_leave_the_tools_dir_or_use_sudo():
+def test_setup_pins_versions_and_digests_and_installs_nothing_unchecked():
     text = (ROOT / "scripts/setup-dev.sh").read_text()
-    assert "sudo" not in text.replace("no sudo", "").replace("without sudo", "")
-    assert "UV_NO_MODIFY_PATH=1" in text and "sha256sum -c" in text
+    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    assert "sudo" not in code
+    import re
+    assert not re.search(r"\|\s*(ba|da|z)?sh\b", code)  # no piped installers
+    assert "latest" not in code                          # no floating versions
+    for tool in ("UV", "NODE"):
+        assert re.search(rf'^{tool}_VERSION="v?\d+\.\d+\.\d+"$', code, re.M), tool
+        assert re.search(rf'^{tool}_SHA256="[0-9a-f]{{64}}"$', code, re.M), tool
+    # every download goes through fetch(), and fetch() fails on a digest mismatch
+    assert code.count("curl ") == 1 and "sha256sum -c -" in code and 'fail "sha256 mismatch' in code
 
 
-def test_probe_copy_is_isolated_and_rejects_dangerous_names(tmp_path):
-    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LABYRINTH_PROBE_DIR": str(tmp_path / "probes")}
+def _fake_repo(tmp_path):
+    """A throwaway repo holding a copy of probe-copy.sh: the unsafe cases run against it, never against ROOT."""
+    repo = tmp_path / "fakerepo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "scripts/probe-copy.sh").write_bytes((ROOT / "scripts/probe-copy.sh").read_bytes())
+    (repo / "keep.txt").write_text("precious\n")
+    (repo / "renderer/node_modules/pkg").mkdir(parents=True)
+    (repo / "renderer/node_modules/pkg/index.js").write_text("module.exports = 1;\n")
+    (repo / "renderer/node_modules/.bin").mkdir()
+    (repo / "renderer/src").mkdir()
+    (repo / "renderer/src/a.ts").write_text("export const a = 1;\n")
+    return repo
+
+
+def _probe(repo, tmp_path, probe_dir, *names, cwd=None):
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LABYRINTH_PROBE_DIR": str(probe_dir)}
+    return subprocess.run(["bash", str(repo / "scripts/probe-copy.sh"), *names], cwd=cwd or repo, env=env,
+                          capture_output=True, text=True, check=False)
+
+
+def test_probe_copy_rejects_bad_names_and_makes_an_isolated_copy(tmp_path):
+    repo = _fake_repo(tmp_path)
+    probes = tmp_path / "probes"
     for bad in ([], ["a", "b"], [".."], ["."], ["a/b"], ["-rf"], [""]):
-        assert run(["bash", "scripts/probe-copy.sh", *bad], env=env).returncode == 2, bad
-    r = run(["bash", "scripts/probe-copy.sh", "t1"], env=env)
+        assert _probe(repo, tmp_path, probes, *bad).returncode == 2, bad
+    r = _probe(repo, tmp_path, probes, "t1")
     assert r.returncode == 0, r.stderr
     copy = Path(r.stdout.strip())
-    assert copy == tmp_path / "probes" / "t1"
-    assert (copy / "scripts/verify.sh").read_bytes() == (ROOT / "scripts/verify.sh").read_bytes()
-    assert not (copy / ".git").exists()
-    (copy / "status.md").write_text("mutated\n")  # mutating the copy must not touch the real tree
-    assert (ROOT / "status.md").read_text() != "mutated\n"
+    assert copy == probes / "t1"
+    assert (copy / "keep.txt").read_text() == "precious\n" and (copy / "renderer/src/a.ts").exists()
+    (copy / "keep.txt").write_text("mutated\n")  # mutating the copy must not touch the repo
+    assert (repo / "keep.txt").read_text() == "precious\n"
+    # a second run replaces a copy this script made (it carries the marker)
+    assert _probe(repo, tmp_path, probes, "t1").returncode == 0
+    assert (copy / "keep.txt").read_text() == "precious\n"
+
+
+def test_probe_copy_never_deletes_the_repo_or_anything_it_did_not_create(tmp_path):
+    repo = _fake_repo(tmp_path)
+    # destination == repo, destination inside the repo, repo inside the destination (SC-10)
+    assert _probe(repo, tmp_path, tmp_path, "fakerepo").returncode == 2
+    assert _probe(repo, tmp_path, repo, "renderer").returncode == 2
+    assert _probe(repo, tmp_path, ".", "renderer", cwd=repo).returncode == 2
+    nested = tmp_path / "outer" / "inner"
+    nested.mkdir(parents=True)
+    inner_repo = _fake_repo(nested)
+    assert _probe(inner_repo, tmp_path, tmp_path, "outer").returncode == 2
+    for survivor in (repo / "keep.txt", repo / "renderer/src/a.ts", inner_repo / "keep.txt"):
+        assert survivor.exists(), survivor
+    # an existing directory without the marker is somebody else's: refuse, leave it alone
+    other = tmp_path / "probes" / "mine"
+    other.mkdir(parents=True)
+    (other / "notes.txt").write_text("keep me\n")
+    r = _probe(repo, tmp_path, tmp_path / "probes", "mine")
+    assert r.returncode == 2 and "was not created by probe-copy.sh" in r.stderr
+    assert (other / "notes.txt").read_text() == "keep me\n"
+    # a symlink at the destination is refused, its target untouched
+    (tmp_path / "probes" / "link").symlink_to(repo)
+    assert _probe(repo, tmp_path, tmp_path / "probes", "link").returncode == 2
+    assert (repo / "keep.txt").exists()
+
+
+def test_probe_copy_node_modules_survives_npm_ci_in_the_copy(tmp_path):
+    repo = _fake_repo(tmp_path)
+    copy = Path(_probe(repo, tmp_path, tmp_path / "probes", "nm").stdout.strip())
     nm = copy / "renderer/node_modules"
-    assert not nm.exists() or nm.is_symlink()
+    assert nm.is_dir() and not nm.is_symlink()
+    assert (nm / "pkg").is_symlink() and (nm / ".bin").is_symlink()
+    assert (nm / "pkg/index.js").read_text() == "module.exports = 1;\n"
+    subprocess.run(["rm", "-rf", str(nm)], check=True)  # what `npm ci` does first
+    assert (repo / "renderer/node_modules/pkg/index.js").exists()
 
 
 def test_text_files_are_lf_only():

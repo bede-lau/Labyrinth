@@ -1,13 +1,18 @@
 """Task 06 · Advance plasma (live GX). Tests grouped per expected outcome L1–L8 (names start with the id).
 
-Everything here runs offline with the test-only fake backend; `modal` is never imported (a local stub
-stands in for its API where ModalBackend is exercised) and `modal_app.py` is only parsed as AST.
+Everything here runs offline with the test-only fake backend; the real `modal` is never imported or needed (a
+local stub stands in for its API where ModalBackend is exercised). `modal_app.py` is never imported by this
+process: it is parsed as AST (single helpers are compiled out of it), and one test executes it in a subprocess
+against a stub `modal` module. The rehearse CLI's signal handling is tested in subprocesses (POSIX only).
 """
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 import math
+import os
+import signal
 import socket
 import subprocess
 import sys
@@ -28,10 +33,13 @@ from labyrinth_main.features.live_gx import gx_input, modal_backend, rehearse, s
 from labyrinth_main.features.live_gx.fake_backend import FakeBackend
 from labyrinth_main.features.live_gx.orchestrator import (
     NO_REHEARSAL_LABEL,
+    TERMINATE_BACKOFF_S,
     TERMINATE_FAILED,
     TERMINATE_PENDING,
     Checkpoint,
+    LaunchInFlight,
     Orchestrator,
+    TerminationPending,
     TransientBackendError,
 )
 from labyrinth_main.features.transport.units import HEAT_FLUX_DIVISOR, TIME_MULTIPLIER
@@ -645,19 +653,26 @@ class _StubCall:
         return self.result
 
     def cancel(self, **kw):
+        self.log.append("call.cancel")
         self.cancel_kwargs = kw
 
 
 class _StubDict(dict):
     def __init__(self, log):
         super().__init__()
-        self.log, self.hang = log, False
+        self.log, self.hang, self.fail_put = log, False, False
 
     def get(self, key, default=None):
         self.log.append("dict.get")
         if self.hang:
             time.sleep(1.0)
         return super().get(key, default)
+
+    def __setitem__(self, key, value):
+        self.log.append(f"dict.put {key}")
+        if self.fail_put:
+            raise ConnectionError("Dict unreachable")
+        super().__setitem__(key, value)
 
 
 class _FunctionTimeoutError(TimeoutError):
@@ -798,14 +813,20 @@ def test_L6_shutdown_during_in_flight_launch_is_unconfirmed_until_cancelled(stub
     assert svc.terminate() == (True, "Workers terminated.")
 
 
-def _modal_app_function(name: str):
-    """Compile ONE top-level helper out of modal_app.py's AST (never imports modal_app or modal)."""
+def _modal_app_namespace(*names: str, **module_globals) -> dict:
+    """Compile the named top-level helpers out of modal_app.py's AST into a fresh namespace (never imports
+    modal_app or modal). `module_globals` stands in for the module globals those helpers read."""
     tree = ast.parse((LIVE_GX / "modal_app.py").read_text())
-    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
-    ns: dict = {}
-    exec(compile(ast.Module(body=[ast.parse("from __future__ import annotations").body[0], fn], type_ignores=[]),
+    fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
+    assert sorted(f.name for f in fns) == sorted(names) and not any(f.decorator_list for f in fns)
+    ns: dict = dict(module_globals)
+    exec(compile(ast.Module(body=[ast.parse("from __future__ import annotations").body[0], *fns], type_ignores=[]),
                  "modal_app_helper", "exec"), ns)
-    return ns[name]
+    return ns
+
+
+def _modal_app_function(name: str):
+    return _modal_app_namespace(name)[name]
 
 
 def test_L8_read_flux_returns_a_stable_prefix_and_flags_mid_series_nan(tmp_path):
@@ -838,3 +859,640 @@ def test_L8_read_flux_returns_a_stable_prefix_and_flags_mid_series_nan(tmp_path)
     assert restart_time(str(tmp_path / "r.nc")) == 42.5
     (tmp_path / "torn.nc").write_bytes(b"CDF\x01 truncated")
     assert restart_time(str(tmp_path / "torn.nc")) is None
+
+
+# ---------------------------------------------------------------- L6 · the rehearse CLI never exits with a spawned call un-cancelled
+REHEARSE_HARNESS = r"""
+import signal, sys, time, types
+from pathlib import Path
+signal.signal(signal.SIGINT, signal.default_int_handler)  # start like a foreground terminal session, whatever
+signal.signal(signal.SIGTERM, signal.SIG_DFL)             # dispositions the test runner happened to inherit
+signal.signal(signal.SIGHUP, signal.SIG_DFL)
+log, release = Path(sys.argv[1]), Path(sys.argv[2])
+call_timeout, confirm_wait, cost = (float(a) for a in sys.argv[3:6])
+
+def note(text):  # TEST-ONLY: every stubbed Modal call is appended to a file the test reads
+    with log.open("a") as f:
+        f.write(text + "\n")
+
+class Call:  # stand-in for modal.FunctionCall
+    def __init__(self, tube):
+        self.tube = tube
+    def get(self, timeout=None):
+        raise TimeoutError
+    def cancel(self, **kw):
+        note(f"cancel {self.tube} {sorted(kw.items())}")
+
+class Fn:
+    def spawn(self, **kw):
+        note(f"spawn-sent {kw['tube']}")      # the RPC has left: from here on a GPU worker may exist
+        while not release.exists():           # ... but Modal answers only when the test says so (or never)
+            time.sleep(0.01)
+        note(f"spawn-returned {kw['tube']}")
+        return Call(kw["tube"])
+
+class Progress(dict):  # stand-in for the modal.Dict that holds the run's kill switch
+    def __setitem__(self, key, value):
+        note(f"kill-switch {key.rsplit('-', 1)[1]}={value}")
+        super().__setitem__(key, value)
+
+progress = Progress()
+sys.modules["modal"] = types.SimpleNamespace(
+    Function=types.SimpleNamespace(from_name=lambda app, name: Fn()),
+    Dict=types.SimpleNamespace(from_name=lambda name, create_if_missing: progress),
+    exception=types.SimpleNamespace())
+from labyrinth_main.features.live_gx import modal_backend, rehearse
+
+modal_backend.CALL_TIMEOUT_S = call_timeout
+rehearse.CONFIRM_WAIT_S = confirm_wait
+factory = lambda rid, t: modal_backend.ModalBackend(run_id=rid, hard_timeout_s=t, kind="rehearsal")
+sys.exit(rehearse.main(["--confirm-cost-usd", str(cost)], availability_check=lambda: (True, "test harness"),
+                       backend_factory=factory, poll_interval_s=0.02))
+"""
+CANCEL_BEAN = "cancel bean [('terminate_containers', True)]"
+KILL_SWITCH = "kill-switch init/abort=True"
+
+
+class _RehearseCli:
+    """The rehearse entrypoint in a subprocess, with a TEST-ONLY stub `modal` whose bean spawn RPC stays in
+    flight until `release()`. The stub backend is injected through main()'s keyword hooks, which the command
+    line cannot reach. Every stubbed Modal call is appended to a log the test reads."""
+
+    def __init__(self, tmp_path, *, call_timeout=modal_backend.CALL_TIMEOUT_S, confirm_wait=30.0):
+        self.state, self._log, self._release = tmp_path / "state", tmp_path / "modal-calls.log", tmp_path / "release"
+        self.state.mkdir()
+        write_ledger(self.state)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("MODAL_")}
+        env.update(HOME=str(tmp_path), LABYRINTH_STATE_DIR=str(self.state))
+        argv = [sys.executable, "-c", REHEARSE_HARNESS, str(self._log), str(self._release), str(call_timeout), str(confirm_wait),
+                str(guard.rehearsal_estimate_usd())]
+        self.proc = subprocess.Popen(argv, cwd=REPO_ROOT / "main", env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     text=True)
+
+    def log(self) -> list[str]:
+        return self._log.read_text().splitlines() if self._log.exists() else []
+
+    def wait_until(self, reached, what: str) -> None:
+        deadline = time.time() + 30
+        while not reached():
+            if self.proc.poll() is not None:
+                raise AssertionError(f"exited {self.proc.returncode} before {what}: {self.log()} {self.proc.communicate()}")
+            assert time.time() < deadline, f"never reached {what}: {self.log()}"
+            time.sleep(0.01)
+
+    def spawn_in_flight(self) -> None:
+        self.wait_until(lambda: "spawn-sent bean" in self.log(), "bean's spawn RPC being in flight")
+
+    def waiting_for_queued_cancel(self) -> None:
+        # the run record is the last thing run_rehearsal writes: after it only the termination wait is left
+        self.wait_until(lambda: any((self.state / "runs").glob("rehearsal-*.json")), "the wait for the queued cancel")
+
+    def send(self, *signals) -> None:
+        for sig in signals:
+            self.proc.send_signal(sig)
+
+    def release(self) -> None:
+        self._release.write_text("Modal answers the spawn now\n")
+
+    def finish(self):
+        try:
+            out, err = self.proc.communicate(timeout=30)
+        finally:
+            self.kill()
+        return self.proc.returncode, out, err
+
+    def kill(self) -> None:
+        if self.proc.poll() is None:
+            self.proc.kill()
+            self.proc.communicate()
+
+
+@pytest.fixture
+def rehearse_cli(tmp_path):
+    started = []
+
+    def start(**kw):
+        started.append(_RehearseCli(tmp_path, **kw))
+        return started[-1]
+
+    yield start
+    for cli in started:
+        cli.kill()
+
+
+@pytest.mark.parametrize("signals", [[signal.SIGINT, signal.SIGTERM], [signal.SIGHUP]], ids=["SIGINT+SIGTERM", "SIGHUP"])
+def test_L6_rehearse_cli_signal_during_in_flight_spawn_never_loses_its_handle(signals, rehearse_cli):
+    """The signal lands while bean's spawn RPC is in flight. The phases run on the main thread, which is
+    also where signals are handled: the spawn's handle must survive, so that the call is cancelled as soon
+    as Modal answers, and nothing else may be spawned after the signal. (Two signals back to back, and a
+    hangup; SIGINT and SIGTERM on their own are the two tests below.)"""
+    cli = rehearse_cli()  # the real client-side bound (20 s): the spawn answers inside it
+    cli.spawn_in_flight()
+    cli.send(*signals)
+    time.sleep(0.1)  # the handler has run; the process must still be there, waiting for its spawn
+    assert cli.proc.poll() is None and cli.log() == ["spawn-sent bean"]
+    cli.release()
+    code, out, err = cli.finish()
+    assert code == 2, out + err
+    assert cli.log() == ["spawn-sent bean", "spawn-returned bean", KILL_SWITCH, CANCEL_BEAN]  # and triangular never spawned
+    assert "phase 1: workers terminated. Stopped on request; workers terminated." in out and "NOT confirmed" not in out + err
+    assert "Rehearsal interrupted; nothing qualified." in out and out.rstrip().endswith("Rehearsal did NOT pass; workers terminated.")
+    assert not (cli.state / "qualification.json").exists()
+    # the reservation stays pending and unreconciled: a human reconciles before the next allocation
+    assert service.LedgerStore(cli.state / "ledger.json").load() == guard.Ledger(8.10, guard.rehearsal_estimate_usd(), False)
+
+
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM], ids=["SIGINT", "SIGTERM"])
+def test_L6_rehearse_cli_signal_then_late_spawn_is_cancelled_on_arrival(sig, rehearse_cli):
+    """The spawn outlives its client-side bound after the signal. The process must wait for the late call
+    (ignoring further signals: default SIGTERM would kill it here), cancel it, and only then exit."""
+    cli = rehearse_cli(call_timeout=0.2)
+    cli.spawn_in_flight()
+    cli.send(sig)
+    cli.waiting_for_queued_cancel()
+    assert cli.log() == ["spawn-sent bean", KILL_SWITCH]  # cancel queued, kill switch already up
+    cli.send(signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+    time.sleep(0.1)
+    assert cli.proc.poll() is None  # still waiting: none of them cut the wait short
+    cli.release()
+    code, out, err = cli.finish()
+    assert code == 2, out + err
+    assert cli.log() == ["spawn-sent bean", KILL_SWITCH, "spawn-returned bean", CANCEL_BEAN]
+    assert "phase 1: workers terminated." in out and "NOT confirmed" not in out + err
+    assert out.rstrip().endswith("Rehearsal did NOT pass; workers terminated.")
+    assert not (cli.state / "qualification.json").exists()
+
+
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM], ids=["SIGINT", "SIGTERM"])
+def test_L6_rehearse_cli_signal_with_a_spawn_that_never_returns_exits_2_unconfirmed(sig, rehearse_cli):
+    cli = rehearse_cli(call_timeout=0.2, confirm_wait=0.3)
+    cli.spawn_in_flight()
+    cli.send(sig)
+    code, out, err = cli.finish()  # Modal never answers
+    assert code == 2, out + err
+    assert cli.log() == ["spawn-sent bean", KILL_SWITCH]  # nothing could be cancelled; the kill switch is up
+    line = "phase 1: NOT confirmed terminated — check Modal dashboard. TERMINATION PENDING"
+    assert line in out and line in err
+    assert out.rstrip().endswith("Rehearsal did NOT pass; workers NOT confirmed terminated — check Modal dashboard.")
+    assert "workers terminated" not in out  # termination is never claimed
+    assert not (cli.state / "qualification.json").exists()
+
+
+def test_L6_rehearsal_stop_request_reserves_and_launches_nothing_further(tmp_path):
+    est = guard.rehearsal_estimate_usd()
+    ledger = service.LedgerStore(tmp_path / "ledger.json")
+
+    def rehearsal(factory, stop, started=None):
+        write_ledger(tmp_path)
+        return rehearse.run_rehearsal(factory, state_dir=tmp_path, confirm_cost_usd=est, poll_interval_s=0.005,
+                                      started=started, stop=stop)
+
+    # requested before the reservation: nothing reserved, no backend built
+    stop, backends = rehearse.StopRequest(), []
+    stop.set()
+    ok, rec = rehearsal(rehearsal_factory(backends), stop)
+    assert not ok and "nothing reserved" in rec["reason"] and backends == []
+    assert ledger.load() == guard.Ledger(8.10, 0.0, True)
+
+    # requested after the reservation but before phase 1 is registered (a signal handler cannot stop a phase
+    # it cannot see yet): the phase is registered, stopped, and spawns nothing
+    stop, backends, started = rehearse.StopRequest(), [], []
+
+    def stop_while_building(run_id, timeout):
+        stop.set()
+        return rehearsal_factory(backends)(run_id, timeout)
+
+    ok, rec = rehearsal(stop_while_building, stop, started)
+    assert not ok and len(started) == len(backends) == 1 and backends[0].launch_calls == []
+    assert rec["phases"][0]["mode"] == "terminated" and rec["phases"][0]["reason"].startswith("Stopped on request")
+    assert ledger.load() == guard.Ledger(8.10, est, False)
+
+    # requested when phase 1 has just finished cleanly: the continuation is never built or launched
+    stop, backends, restart_store = rehearse.StopRequest(), [], {}
+
+    class StopsAfterRetrieval(FakeBackend):
+        def terminate(self, w):
+            super().terminate(w)
+            stop.set()
+
+    def factory(run_id, timeout):
+        backends.append(StopsAfterRetrieval(steps=3, restart_store=restart_store))
+        return backends[-1]
+
+    ok, rec = rehearsal(factory, stop)
+    assert not ok and len(backends) == 1 and len(rec["phases"]) == 1
+    assert rec["checks"]["init"] is True and rec["checks"]["continuation"] is False
+    assert service.load_qualification(tmp_path) is None
+
+
+def test_L6_rehearse_cli_cannot_reach_the_test_hooks_and_is_inert_without_credentials(tmp_path, monkeypatch, capsys):
+    src = (LIVE_GX / "rehearse.py").read_text()
+    tree = ast.parse(src)
+    options = [ast.literal_eval(n.args[0]) for n in ast.walk(tree)
+               if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "add_argument"]
+    assert options == ["--confirm-cost-usd"]  # the only switch
+    assert ast.unparse(tree.body[-1]) == "if __name__ == '__main__':\n    sys.exit(main())"  # hooks never passed
+    main_fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+    assert [a.arg for a in main_fn.args.args] == ["argv"]
+    assert {a.arg for a in main_fn.args.kwonlyargs} == {"availability_check", "backend_factory", "poll_interval_s"}
+    assert "fake_backend" not in src and "environ" not in src and "getenv" not in src  # no hidden selector
+    for k in ("MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET", "MODAL_CONFIG_PATH"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("LABYRINTH_STATE_DIR", str(tmp_path / "state"))
+    for argv in (["--backend", "fake"], ["--fake"], ["--poll-interval-s", "0.01"], ["--confirm-cost-usd", "7.73", "fake"]):
+        with pytest.raises(SystemExit) as e:
+            rehearse.main(argv)
+        assert e.value.code == 2, argv
+    capsys.readouterr()
+    assert rehearse.main([]) == 0 and "Nothing launched" in capsys.readouterr().out
+    assert rehearse.main(["--confirm-cost-usd", str(guard.rehearsal_estimate_usd())]) == 2  # no credentials, no modal
+    assert "Live GX unavailable" in capsys.readouterr().err
+    assert not (tmp_path / "state").exists() and "modal" not in sys.modules  # nothing reserved, nothing imported
+
+
+def test_L6_rehearse_cli_in_process_pass_and_crash_paths(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("LABYRINTH_STATE_DIR", str(tmp_path))
+    cost = ["--confirm-cost-usd", str(guard.rehearsal_estimate_usd())]
+    before = {s: signal.getsignal(s) for s in rehearse.STOP_SIGNALS}
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)  # as under nohup
+    try:
+        backends, during = [], []
+        fake = rehearsal_factory(backends)
+
+        def good(run_id, timeout):
+            during.append({s: signal.getsignal(s) for s in rehearse.STOP_SIGNALS})
+            return fake(run_id, timeout)
+
+        write_ledger(tmp_path)
+        assert rehearse.main(cost, availability_check=available, backend_factory=good, poll_interval_s=0.005) == 0
+        out, err = capsys.readouterr()
+        assert out.rstrip().endswith("Rehearsal PASSED; workers terminated.") and "phase 2: workers terminated." in out
+        assert service.load_qualification(tmp_path) is not None and "interrupted" not in out
+        # while it runs, SIGINT and SIGTERM request a cooperative stop; a hangup that was ignored stays ignored
+        assert callable(during[0][signal.SIGINT]) and during[0][signal.SIGINT] is during[0][signal.SIGTERM]
+        assert during[0][signal.SIGINT] is not signal.default_int_handler and during[0][signal.SIGHUP] is signal.SIG_IGN
+        assert {s: signal.getsignal(s) for s in rehearse.STOP_SIGNALS} == {**before, signal.SIGHUP: signal.SIG_IGN}
+
+        def crashing(run_id, timeout):
+            if run_id.endswith("-cont"):
+                raise RuntimeError("factory exploded")
+            return fake(run_id, timeout)
+
+        write_ledger(tmp_path)
+        (tmp_path / "qualification.json").unlink()
+        del backends[:]
+        assert rehearse.main(cost, availability_check=available, backend_factory=crashing, poll_interval_s=0.005) == 2
+        out, err = capsys.readouterr()
+        assert "Rehearsal crashed" in err and "factory exploded" in err
+        assert "phase 1: workers terminated." in out and out.rstrip().endswith("Rehearsal did NOT pass; workers terminated.")
+        assert [w.terminate_calls for w in backends[0].workers] == [1, 1] and service.load_qualification(tmp_path) is None
+    finally:
+        signal.signal(signal.SIGHUP, before[signal.SIGHUP])
+    assert {s: signal.getsignal(s) for s in rehearse.STOP_SIGNALS} == before
+
+
+def test_L6_rehearse_cli_ctrl_c_with_both_workers_running_terminates_both(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("LABYRINTH_STATE_DIR", str(tmp_path))
+    write_ledger(tmp_path)
+    backends = []
+
+    class CtrlC(FakeBackend):  # the operator presses Ctrl-C (once) as soon as both workers are running
+        pressed = False
+
+        def poll(self, w):
+            result = super().poll(w)
+            if not self.pressed and len(self.workers) == 2 and all(x.state == "running" for x in self.workers):
+                self.pressed = True
+                signal.raise_signal(signal.SIGINT)
+            return result
+
+    def factory(run_id, timeout):
+        backends.append(CtrlC(steps=10**6, step_wall_s=0.01))
+        return backends[-1]
+
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)  # as in a foreground terminal session
+    try:
+        code = rehearse.main(["--confirm-cost-usd", str(guard.rehearsal_estimate_usd())], availability_check=available,
+                             backend_factory=factory, poll_interval_s=0.005)
+    except KeyboardInterrupt:
+        pytest.fail("SIGINT was raised into the thread that owns the spawn handles instead of requesting a cooperative stop")
+    finally:
+        signal.signal(signal.SIGINT, previous or signal.default_int_handler)
+    out, _ = capsys.readouterr()
+    assert code == 2 and len(backends) == 1 and backends[0].pressed
+    assert [w.terminate_calls for w in backends[0].workers] == [1, 1] and not any(w.thread.is_alive() for w in backends[0].workers)
+    assert "phase 1: workers terminated. Stopped on request; workers terminated." in out
+    assert "Rehearsal interrupted; nothing qualified." in out and service.load_qualification(tmp_path) is None
+
+
+# ---------------------------------------------------------------- L8 · modal_app refuses a deploy that would lose startup_timeout
+MODAL_APP_HARNESS = r"""
+import json, os, runpy, sys, types
+
+def accepting(registered):  # this modal's App.function takes startup_timeout
+    def function(self, *, image=None, gpu=None, cpu=None, memory=None, timeout=None, retries=None, max_containers=None,
+                 scaledown_window=None, volumes=None, startup_timeout=None):
+        kw = dict(gpu=gpu, cpu=cpu, memory=memory, timeout=timeout, retries=retries, max_containers=max_containers,
+                  scaledown_window=scaledown_window, volumes=sorted(volumes), startup_timeout=startup_timeout)
+        return lambda fn: registered.__setitem__(fn.__name__, kw) or fn
+    return function
+
+def without(registered):  # an older modal: no such parameter (the decorator call itself would be a TypeError)
+    def function(self, *, image=None, gpu=None, cpu=None, memory=None, timeout=None, retries=None, max_containers=None,
+                 scaledown_window=None, volumes=None):
+        return lambda fn: registered.__setitem__(fn.__name__, {"startup_timeout": "LOST"}) or fn
+    return function
+
+def kwargs_only(registered):  # would swallow the argument without anyone noticing
+    def function(self, **kw):
+        return lambda fn: registered.__setitem__(fn.__name__, {"startup_timeout": kw.get("startup_timeout")}) or fn
+    return function
+
+def unsignable(registered):  # inspect.signature() cannot describe it
+    class Function:
+        __signature__ = 42
+        def __call__(self, **kw):
+            return lambda fn: registered.__setitem__(fn.__name__, {"startup_timeout": kw.get("startup_timeout")}) or fn
+    return Function()
+
+def deploy(make_function, *, is_local=True, gx_ref="0123abc"):
+    registered, dicts, volumes = {}, [], []
+    class Image:  # modal.Image.from_registry(...).apt_install(...).pip_install(...).env(...) ...
+        def __getattr__(self, name):
+            return lambda *a, **k: self
+    class App:
+        def __init__(self, name):
+            self.name = name
+    App.function = make_function(registered)
+    modal = types.ModuleType("modal")  # TEST-ONLY stub: the real package is never installed or imported
+    modal.is_local = lambda: is_local
+    modal.Image, modal.App = Image(), App
+    modal.Volume = types.SimpleNamespace(from_name=lambda name, **kw: volumes.append(name) or object())
+    modal.Dict = types.SimpleNamespace(from_name=lambda name, **kw: dicts.append(name) or {})
+    sys.modules["modal"] = modal
+    os.environ.pop("LABYRINTH_GX_REF", None)
+    if gx_ref:
+        os.environ["LABYRINTH_GX_REF"] = gx_ref
+    error = None
+    try:
+        runpy.run_module("labyrinth_main.features.live_gx.modal_app", run_name="modal_app_under_test")
+    except BaseException as e:
+        error = [type(e).__name__, str(e)]
+    return {"error": error, "registered": registered, "dicts": dicts, "volumes": volumes}
+
+print(json.dumps({
+    "accepting": deploy(accepting),
+    "without": deploy(without),
+    "kwargs-only": deploy(kwargs_only),
+    "unsignable": deploy(unsignable),
+    "in-container": deploy(kwargs_only, is_local=False, gx_ref=""),
+    "no-gx-ref": deploy(accepting, gx_ref=""),
+}))
+"""
+
+
+def test_L8_modal_app_refuses_to_deploy_when_startup_timeout_is_not_accepted():
+    """Executes modal_app.py in a subprocess against a stub `modal` (the real package is never needed)."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("MODAL_")}
+    proc = subprocess.run([sys.executable, "-c", MODAL_APP_HARNESS], cwd=REPO_ROOT / "main", env=env, capture_output=True,
+                          text=True, timeout=120)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    r = json.loads(proc.stdout.splitlines()[-1])
+    names = set(modal_backend.FUNCTION_NAMES.values())
+    ok = r["accepting"]
+    assert ok["error"] is None and set(ok["registered"]) == names
+    assert ok["dicts"] == [modal_backend.PROGRESS_DICT] and ok["volumes"] == [modal_backend.CHECKPOINT_VOLUME]
+    for kind, name in modal_backend.FUNCTION_NAMES.items():
+        kw = ok["registered"][name]
+        assert kw["startup_timeout"] == guard.modal_startup_timeout_s() == 300
+        assert kw["timeout"] == guard.modal_timeout_s(kind) and kw["startup_timeout"] + kw["timeout"] == guard.planned_call_s(kind)
+        assert (kw["gpu"], kw["retries"], kw["max_containers"], kw["scaledown_window"]) == ("A100-40GB", 0, 2, 2)
+        assert (kw["cpu"], kw["memory"], kw["volumes"]) == ([4.0, 4.0], [16384, 16384], ["/ckpt"])
+    for variant in ("without", "kwargs-only", "unsignable"):
+        bad = r[variant]
+        assert bad["error"] is not None and bad["error"][0] == "RuntimeError" and "startup_timeout" in bad["error"][1], (variant, bad)
+        assert bad["registered"] == {}, variant  # refused BEFORE any GPU function is registered
+    # inside the container (not a deploy) the same module still imports and defines both functions
+    assert r["in-container"]["error"] is None and set(r["in-container"]["registered"]) == names
+    # and a deploy without a pinned GX commit is refused as well
+    assert r["no-gx-ref"]["error"][0] == "RuntimeError" and "LABYRINTH_GX_REF" in r["no-gx-ref"]["error"][1]
+    assert r["no-gx-ref"]["registered"] == {}
+
+
+# ---------------------------------------------------------------- L6 · run-level kill switch progress["<run_id>/abort"]
+class _KillSwitchDict(dict):
+    """Stub for the Modal progress Dict. Counts every read of the run's kill switch and can raise the switch
+    after a given number of reads, as ModalBackend.terminate() would from the operator's machine."""
+
+    def __init__(self, run_id: str, raise_after_reads: int | None = None):
+        super().__init__()
+        self.key, self.raise_after_reads, self.abort_reads = modal_backend.abort_key(run_id), raise_after_reads, 0
+
+    def get(self, key, default=None):
+        if key == self.key:
+            self.abort_reads += 1
+            if self.raise_after_reads is not None and self.abort_reads > self.raise_after_reads:
+                self[self.key] = True
+        return super().get(key, default)
+
+
+@pytest.fixture
+def gx_container(tmp_path, monkeypatch):
+    """A stand-in for the worker container: fake `nvidia-smi` and `gx` executables on PATH (`gx` records its
+    pid, then just keeps running) and modal_app._worker compiled from the AST against temp directories."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in (("nvidia-smi", "echo GPU-TEST-0000"), ("gx", "echo $$ > gx.pid\nexec sleep 120")):
+        (bin_dir / name).write_text(f"#!/bin/sh\n{body}\n")
+        (bin_dir / name).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    (tmp_path / "REVISION").write_text("0123abc\n")
+    flux_reads: list[str] = []
+
+    def read_flux(out_nc):  # called once per loop iteration and once after the loop
+        flux_reads.append(out_nc)
+        assert len(flux_reads) < 50, "the worker loop ignored the kill switch"
+        pid_file, deadline = Path(out_nc).parent / "gx.pid", time.time() + 10
+        while not (pid_file.exists() and pid_file.read_text().strip()):  # GX is really running before the test goes on
+            assert time.time() < deadline
+            time.sleep(0.005)
+        return [], None
+
+    def worker(progress):
+        ns = _modal_app_namespace(
+            "_aborted", "_restart_time", "_worker", progress=progress, abort_key=modal_backend.abort_key,
+            checkpoints=types.SimpleNamespace(reload=lambda: None, commit=lambda: None), RESUME_FILE=gx_input.RESUME_FILE,
+            CHECKPOINT_MARGIN_S=60, POLL_S=0.02, WORK_ROOT=str(tmp_path / "work"), CKPT_MOUNT=str(tmp_path / "ckpt"),
+            GX_REVISION_FILE=str(tmp_path / "REVISION"), _read_flux=read_flux)
+        return ns["_worker"]
+
+    return types.SimpleNamespace(worker=worker, flux_reads=flux_reads, work=tmp_path / "work")
+
+
+def test_L6_worker_kill_switch_set_before_start_never_starts_gx(gx_container):
+    progress = _KillSwitchDict("run-1")
+    progress[progress.key] = True
+    state = gx_container.worker(progress)(tube="bean", gpu_index=0, progress_key="run-1/bean", input_toml="# test",
+                                          checkpoint_ref=None, hard_timeout_s=1200)
+    assert state["state"] == "failed" and state["error"] == "aborted by the run's kill switch before start"
+    assert state["wall_end"] is not None and progress["run-1/bean"] == state
+    assert progress.abort_reads == 1 and gx_container.flux_reads == []
+    assert not (gx_container.work / "run-1_bean" / "gx.pid").exists()  # GX was never started
+
+
+def test_L6_worker_checks_the_kill_switch_on_every_loop_iteration_and_stops_gx(gx_container):
+    progress = _KillSwitchDict("run-1", raise_after_reads=3)  # clear at start and for two loop iterations, then raised
+    state = gx_container.worker(progress)(tube="bean", gpu_index=0, progress_key="run-1/bean", input_toml="# test",
+                                          checkpoint_ref=None, hard_timeout_s=1200)
+    pid = int((gx_container.work / "run-1_bean" / "gx.pid").read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)  # GX was stopped and reaped, not left running on the GPU
+    assert state["state"] == "failed" and state["error"] == "aborted by the run's kill switch"  # returned, not raised
+    assert (state["device_id"], state["solver_revision"]) == ("GPU-TEST-0000", "GX 0123abc")
+    assert state["wall_end"] is not None and progress["run-1/bean"] == state
+    # one check at start and one per iteration: the 4th read saw the switch, so exactly two iterations ran in full
+    assert progress.abort_reads == 4 and len(gx_container.flux_reads) == 2 + 1
+
+
+def test_L6_kill_switch_key_is_shared_by_backend_and_worker(stub_modal, gx_container):
+    planned = guard.planned_call_s("live")
+    b = modal_backend.ModalBackend(run_id="run-9", hard_timeout_s=planned)
+    h = b.launch("bean", 0, None)
+    assert modal_backend.abort_key("run-9") == "run-9/abort" not in stub_modal.store
+    stub_modal.log.clear()
+    b.terminate(h)
+    assert stub_modal.log == ["dict.put run-9/abort", "call.cancel"]  # the kill switch first, then the cancel
+    assert stub_modal.store["run-9/abort"] is True
+    # a worker of that run reads the very key the backend wrote, so it stops before starting GX
+    state = gx_container.worker(stub_modal.store)(tube="triangular", gpu_index=1, progress_key="run-9/triangular",
+                                                  input_toml="# test", checkpoint_ref=None, hard_timeout_s=1200)
+    assert state["error"] == "aborted by the run's kill switch before start"
+    assert not (gx_container.work / "run-9_triangular" / "gx.pid").exists()
+    # other runs are untouched, and a failed lookup is not an abort (the worker keeps its own deadline)
+    aborted = _modal_app_namespace("_aborted", progress=stub_modal.store, abort_key=modal_backend.abort_key)["_aborted"]
+    assert aborted("run-9/bean") is True and aborted("run-10/bean") is False
+
+    class Unreachable(dict):
+        def get(self, key, default=None):
+            raise ConnectionError("Dict unreachable")
+
+    assert _modal_app_namespace("_aborted", progress=Unreachable(), abort_key=modal_backend.abort_key)["_aborted"]("run-9/bean") is False
+    # the switch is best effort for a call that can be cancelled: a failed put does not stop the cancel
+    b2 = modal_backend.ModalBackend(run_id="run-11", hard_timeout_s=planned)
+    h2 = b2.launch("bean", 0, None)
+    stub_modal.store.fail_put = True
+    b2.terminate(h2)
+    assert stub_modal.spawned[-1].cancel_kwargs == {"terminate_containers": True} and "run-11/abort" not in stub_modal.store
+
+
+def test_L6_spawn_that_fails_client_side_raises_the_kill_switch_or_is_never_reported_terminated(stub_modal):
+    """A spawn RPC that errors on the client may still have started a worker, and there is no call to cancel.
+    The run's kill switch is the only stop: it is raised, or the session stays unconfirmed (TERMINATE FAILED)."""
+    planned = guard.planned_call_s("live")
+    stub_modal.ctl.spawn_error = ConnectionError("stream reset after send")
+    orch = Orchestrator(modal_backend.ModalBackend(run_id="r", hard_timeout_s=planned), hard_timeout_s=planned,
+                        retry_sleep=lambda s: None)
+    orch.run(poll_interval_s=0.01)
+    snap = orch.snapshot(BUDGET, qualified=False)
+    assert snap["mode"] == "fallback" and snap["fallback"]["label"] == FAILED_LABEL
+    assert snap["workers"][0]["error"].startswith("launch failed client-side (ConnectionError: stream reset after send) and a worker "
+                                                  "may have started")
+    assert stub_modal.store["r/abort"] is True and orch.termination_confirmed
+    assert orch.workers[1].launched is False and len(stub_modal.names) == 1  # triangular was never attempted
+    # the kill switch cannot be raised either: retried with backoff, then loud, and a later retry confirms
+    stub_modal.store.fail_put = True
+    sleeps = []
+    orch = Orchestrator(modal_backend.ModalBackend(run_id="s", hard_timeout_s=planned), hard_timeout_s=planned,
+                        retry_sleep=sleeps.append)
+    orch.run(poll_interval_s=0.01)
+    assert not orch.termination_confirmed and orch.reason.startswith(TERMINATE_FAILED)
+    assert "kill switch could not be set" in orch.reason and sleeps[:len(TERMINATE_BACKOFF_S)] == list(TERMINATE_BACKOFF_S)
+    assert "s/abort" not in stub_modal.store
+    stub_modal.store.fail_put = False
+    assert orch.stop_and_terminate() is True and stub_modal.store["s/abort"] is True
+    # the in-flight spawn state: nothing to cancel yet, but the switch is already up
+    stub_modal.ctl.spawn_error, stub_modal.ctl.spawn_delay = None, 0.3
+    b = modal_backend.ModalBackend(run_id="t", hard_timeout_s=planned)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(modal_backend, "CALL_TIMEOUT_S", 0.05)
+        with pytest.raises(LaunchInFlight) as in_flight:
+            b.launch("bean", 0, None)
+    with pytest.raises(TerminationPending):
+        b.terminate(in_flight.value.handle)
+    assert stub_modal.store["t/abort"] is True and stub_modal.spawned == []
+    assert in_flight.value.handle.spawn_done.wait(3.0)  # let the late call arrive and be cancelled before the stub goes away
+    deadline = time.time() + 3
+    while not stub_modal.spawned or stub_modal.spawned[0].cancel_kwargs is None:
+        assert time.time() < deadline
+        time.sleep(0.01)
+
+
+# ---------------------------------------------------------------- L3 · hard timeout on the monotonic clock
+@pytest.mark.parametrize("jump_s", [-3600.0, 3600.0], ids=["wall-clock-jumps-back", "wall-clock-jumps-forward"])
+def test_L3_hard_timeout_fires_on_schedule_despite_a_wall_clock_jump(jump_s, monkeypatch):
+    defaults = inspect.signature(Orchestrator.__init__).parameters
+    assert defaults["monotonic"].default is time.monotonic and defaults["clock"].default is time.time
+
+    class Clocks:
+        mono, wall, sleeps = 5000.0, 1.8e9, 0
+
+        def sleep(self, dt):
+            self.sleeps += 1
+            assert self.sleeps <= 60, "the hard timeout never fired"
+            self.mono += dt
+            self.wall += dt
+            if self.sleeps == 3:
+                self.wall += jump_s  # NTP step, operator, suspend/resume
+
+    c = Clocks()
+    monkeypatch.setattr(time, "time", lambda: c.wall)  # every wall-clock reader sees the jump, injected or not
+    backend = FakeBackend(steps=10**6, step_wall_s=0.01)
+    orch = Orchestrator(backend, hard_timeout_s=10, clock=time.time, monotonic=lambda: c.mono, sleep=c.sleep,
+                        retry_sleep=lambda s: None)
+    orch.run(poll_interval_s=1.0)
+    snap = orch.snapshot(BUDGET, qualified=False)
+    assert snap["mode"] == "fallback" and snap["reason"].startswith("Hard timeout reached: 10 s elapsed")
+    assert c.sleeps == 10  # exactly 10 one-second polls: not after 3 (forward jump), not never (backward jump)
+    assert snap["provenance"]["runtime"] == "10.0 s wall" and snap["fallback"]["label"] == TIMEOUT_LABEL
+    assert [w.terminate_calls for w in backend.workers] == [1, 1]
+
+
+# ---------------------------------------------------------------- L6 · the operator note on a hung spawn RPC matches the code
+def test_L6_hung_spawn_operator_note_matches_the_code():
+    """Behaviour itself: test_server.py::test_H5_terminate_while_a_spawn_rpc_hangs_answers_502_termination_pending,
+    ::test_H1_shutdown_during_in_flight_launch and the rehearse CLI tests above. This pins the note's wording to it."""
+    from labyrinth_main.server import __main__ as server_main
+
+    note = " ".join(service.__doc__.split("Operator note")[1].split())
+    assert "wait up to WORST_CASE_STOP_S + 10 s" in note and "exit with code 2" in note
+    assert inspect.signature(service.LiveService.__init__).parameters["join_timeout_s"].default == service.WORST_CASE_STOP_S + 10
+    assert rehearse.CONFIRM_WAIT_S == service.WORST_CASE_STOP_S + 10
+    for quoted, emitted in (("TERMINATION PENDING", TERMINATE_PENDING), ("TERMINATE FAILED", TERMINATE_FAILED)):
+        assert f'"{quoted}"' in note and emitted.startswith(quoted)
+    message = "NOT confirmed terminated — check Modal"
+    assert f'"{message}"' in note and message in inspect.getsource(server_main) and message in inspect.getsource(rehearse)
+    assert "answers 502" in note and "200 if confirmed else 502" in (REPO_ROOT / "main/labyrinth_main/server/app.py").read_text()
+    assert f"`{modal_backend.APP_NAME}`" in note
+    assert "(SIGINT, SIGTERM, SIGHUP)" in note
+    assert rehearse.STOP_SIGNALS == server_main.STOP_SIGNALS == (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+
+
+def test_L6_worst_case_stop_bound_counts_every_bounded_modal_call(stub_modal, monkeypatch):
+    calls, real = [], modal_backend.bounded
+    monkeypatch.setattr(modal_backend, "bounded", lambda fn, what, timeout_s=None: calls.append(what) or real(fn, what, timeout_s))
+    b = modal_backend.ModalBackend(run_id="r", hard_timeout_s=guard.planned_call_s("live"))
+    h = b.launch("bean", 0, None)
+    launch = len(calls) + 1  # + Function.spawn itself, bounded by the spawn_done wait
+    del calls[:]
+    b.poll(h)
+    poll = len(calls)
+    del calls[:]
+    b.terminate(h)
+    terminate = len(calls)
+    assert (launch, poll, terminate) == (modal_backend.LAUNCH_CALLS, modal_backend.POLL_CALLS, modal_backend.TERMINATE_CALLS)
+    per_call, workers = modal_backend.CALL_TIMEOUT_S, len(Orchestrator(b, hard_timeout_s=1).workers)
+    in_flight = max(launch, workers * poll) * per_call + service.POLL_INTERVAL_S  # one launch, or one poll round + its sleep
+    terminating = workers * (sum(TERMINATE_BACKOFF_S) + (1 + len(TERMINATE_BACKOFF_S)) * terminate * per_call)
+    assert service.WORST_CASE_STOP_S == in_flight + terminating == 497.0
+    assert inspect.signature(service.LiveService.__init__).parameters["poll_interval_s"].default == service.POLL_INTERVAL_S

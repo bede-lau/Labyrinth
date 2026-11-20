@@ -6,27 +6,46 @@
 # Verifiers and reviewers must never mutate the shared working tree: other agents are
 # running tests in it at the same time. Mutate the copy instead, run the gates there
 # (`cd <copy> && bash scripts/verify.sh renderer`), and delete it when done.
-# The copy lives under $LABYRINTH_PROBE_DIR (default ~/.cache/labyrinth-probes/<name>), has no
-# .git, and shares renderer/node_modules through a symlink (never edit inside node_modules).
+# The copy lives under $LABYRINTH_PROBE_DIR (default ~/.cache/labyrinth-probes/<name>) and has no .git.
+# renderer/node_modules in the copy is a real directory holding one symlink per package, so
+# `npm ci` or `rm -rf node_modules` inside a copy removes links, never the shared packages.
 #
-# Exit codes: 0 ok, 2 bad invocation or copy failure.
+# Safety (review finding SC-10): the destination may not overlap the repo in either direction,
+# and an existing destination is only replaced when it carries this script's marker file.
+#
+# Exit codes: 0 ok, 2 bad invocation, unsafe destination or copy failure.
 set -uo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MARKER=".labyrinth-probe-copy"
+fail() { echo "probe-copy.sh: $*" >&2; exit 2; }
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)" || fail "cannot resolve the repo root"
 if [[ $# -ne 1 || ! "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
-  echo "probe-copy.sh: expected exactly one name matching [A-Za-z0-9][A-Za-z0-9_-]*" >&2
-  exit 2
+  fail "expected exactly one name matching [A-Za-z0-9][A-Za-z0-9_-]*"
 fi
 BASE="${LABYRINTH_PROBE_DIR:-$HOME/.cache/labyrinth-probes}"
+mkdir -p "$BASE" || fail "cannot create $BASE"
+BASE="$(cd "$BASE" && pwd -P)" || fail "cannot resolve $BASE"
 DEST="$BASE/$1"
-mkdir -p "$BASE" || { echo "probe-copy.sh: cannot create $BASE" >&2; exit 2; }
-rm -rf "$DEST" && mkdir "$DEST" || { echo "probe-copy.sh: cannot reset $DEST" >&2; exit 2; }
+case "$DEST/" in "$ROOT"/*) fail "refusing: destination $DEST is the repo or inside it";; esac
+case "$ROOT/" in "$DEST"/*) fail "refusing: the repo is inside destination $DEST";; esac
+if [[ -L "$DEST" ]]; then fail "refusing: $DEST is a symlink"; fi
+if [[ -e "$DEST" ]]; then
+  [[ -f "$DEST/$MARKER" ]] || fail "refusing: $DEST exists and was not created by probe-copy.sh (no $MARKER)"
+  rm -rf -- "$DEST" || fail "cannot remove the previous copy $DEST"
+fi
+mkdir -- "$DEST" && : >"$DEST/$MARKER" || fail "cannot create $DEST"
 tar -C "$ROOT" \
     --exclude=./.git --exclude=./renderer/node_modules --exclude=./renderer/dist \
     --exclude='*.bundle' --exclude=__pycache__ --exclude=.pytest_cache --exclude=.ruff_cache \
-    --exclude=./.claude/state -cf - . \
-  | tar -C "$DEST" -xf - || { echo "probe-copy.sh: copy failed" >&2; exit 2; }
+    --exclude=./.claude/state --exclude="./$MARKER" -cf - . \
+  | tar -C "$DEST" -xf - || fail "copy failed"
 if [[ -d "$ROOT/renderer/node_modules" ]]; then
-  ln -s "$ROOT/renderer/node_modules" "$DEST/renderer/node_modules" || { echo "probe-copy.sh: cannot link node_modules" >&2; exit 2; }
+  mkdir -- "$DEST/renderer/node_modules" || fail "cannot create node_modules in the copy"
+  shopt -s nullglob
+  links=("$ROOT"/renderer/node_modules/* "$ROOT/renderer/node_modules/.bin")
+  for entry in "${links[@]}"; do
+    [[ -e "$entry" ]] || continue
+    ln -s -- "$entry" "$DEST/renderer/node_modules/" || fail "cannot link $(basename "$entry")"
+  done
 fi
 echo "$DEST"
 exit 0

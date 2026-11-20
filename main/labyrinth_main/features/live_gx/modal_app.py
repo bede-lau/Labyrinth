@@ -1,4 +1,5 @@
-"""UNREHEARSED — Modal app for the live GX workers (D-011). Never imported by tests, the server or replay.
+"""UNREHEARSED — Modal app for the live GX workers (D-011). Never imported by the server, replay or the test
+process (tests read it as AST; one executes it in a subprocess against a stub `modal`, never the real package).
 
 Deploy explicitly (registers the functions; launches nothing, costs nothing until called):
 
@@ -20,8 +21,9 @@ cold start uses the whole startup budget still finishes cleanly before the orche
 `startup_timeout` is REQUIRED: if this modal version's `App.function` does not visibly accept it, the
 deploy fails with RuntimeError (no silent loss of the startup bound).
 Kill switch: terminating a run first sets progress["<run_id>/abort"]; every worker checks it at start
-and on every loop iteration and stops GX cleanly — this also stops a worker whose spawn "failed" or
-timed out client-side but started anyway.
+and on every loop iteration (every POLL_S seconds) and stops GX cleanly — this also stops a worker whose
+spawn failed or timed out client-side but started anyway (the backend hands such a spawn to the
+orchestrator as a launched worker, so its termination — and with it the switch — is never skipped).
 The worker keeps the original deadline across a rescheduled input (wall_start persisted in the progress
 Dict) and refuses to extend it.
 GPU 0 = bean, GPU 1 = triangular: the function is spawned once per tube, each in its own container;
@@ -55,6 +57,10 @@ LIVE_TIMEOUT_S = guard.modal_timeout_s("live")
 REHEARSAL_PHASE_TIMEOUT_S = guard.modal_timeout_s("rehearsal")
 STARTUP_TIMEOUT_S = guard.modal_startup_timeout_s()
 CHECKPOINT_MARGIN_S = 60
+POLL_S = 10                               # worker loop period: flux read, restart snapshot, kill-switch check
+WORK_ROOT = "/work"                       # container-local scratch, one sub-directory per call
+CKPT_MOUNT = "/ckpt"                      # where the checkpoint Volume is mounted
+GX_REVISION_FILE = "/opt/gx/REVISION"     # written by the image build: the GX commit actually built
 CUDA_IMAGE = "nvidia/cuda:12.4.1-devel-ubuntu22.04"
 
 image = (
@@ -66,7 +72,7 @@ image = (
     .run_commands(
         f"git clone {GX_GIT_URL} /opt/gx && cd /opt/gx && git checkout {GX_REF}",
         "cd /opt/gx && make -j8 GK_SYSTEM=linux_generic && install -m 755 gx /usr/local/bin/gx",
-        "cd /opt/gx && git rev-parse HEAD > /opt/gx/REVISION",
+        f"cd /opt/gx && git rev-parse HEAD > {GX_REVISION_FILE}",
     )
     .add_local_file(str(WOUT_W7X_KJM), "/inputs/wout_w7x_kjm.nc")
     .add_local_python_source("labyrinth_main")
@@ -161,11 +167,11 @@ def _worker(*, tube: str, gpu_index: int, progress_key: str, input_toml: str, ch
     prior = progress.get(progress_key, None) or {}
     wall_start = prior.get("wall_start") or time.time()   # a rescheduled input keeps the ORIGINAL deadline
     deadline = wall_start + hard_timeout_s - CHECKPOINT_MARGIN_S
-    work = Path("/work") / progress_key.replace("/", "_")
+    work = Path(WORK_ROOT) / progress_key.replace("/", "_")
     work.mkdir(parents=True, exist_ok=True)
     device_id = subprocess.run(["nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader"], capture_output=True,
                                text=True, check=True).stdout.strip().splitlines()[0]
-    revision = Path("/opt/gx/REVISION").read_text().strip()
+    revision = Path(GX_REVISION_FILE).read_text().strip()
     state = {"device_id": device_id, "state": "initializing", "sim_time_raw": None, "samples_raw": [], "error": None,
              "checkpoint": None, "wall_start": wall_start, "wall_end": None, "solver_revision": f"GX {revision}",
              "gpu_index": gpu_index, "tube": tube}
@@ -182,7 +188,7 @@ def _worker(*, tube: str, gpu_index: int, progress_key: str, input_toml: str, ch
     progress[progress_key] = state
     if checkpoint_ref:
         checkpoints.reload()
-        shutil.copy(f"/ckpt/{checkpoint_ref}", work / RESUME_FILE)
+        shutil.copy(f"{CKPT_MOUNT}/{checkpoint_ref}", work / RESUME_FILE)
     (work / f"{tube}.in").write_text(input_toml)
     proc = subprocess.Popen(["gx", f"{tube}.in"], cwd=work)
     restart, good = work / f"{tube}.restart.nc", work / f"{tube}.restart.good.nc"
@@ -192,7 +198,7 @@ def _worker(*, tube: str, gpu_index: int, progress_key: str, input_toml: str, ch
             if _aborted(progress_key):
                 aborted = True
                 break
-            time.sleep(10)
+            time.sleep(POLL_S)
             samples, problem = _read_flux(str(work / f"{tube}.out.nc"))
             if samples:
                 state.update(state="running", samples_raw=samples, sim_time_raw=samples[-1][0])
@@ -221,8 +227,8 @@ def _worker(*, tube: str, gpu_index: int, progress_key: str, input_toml: str, ch
     source, t_ck = (restart, _restart_time(str(restart))) if proc.returncode == 0 and restart.exists() else (good, good_t)
     if source.exists() and t_ck is not None:
         ref = f"{progress_key}/{tube}.restart.nc"
-        Path(f"/ckpt/{ref}").parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(source, f"/ckpt/{ref}")
+        Path(f"{CKPT_MOUNT}/{ref}").parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(source, f"{CKPT_MOUNT}/{ref}")
         checkpoints.commit()
         state["checkpoint"] = {"ref": ref, "sim_time_raw": t_ck}
     else:
@@ -244,7 +250,7 @@ def _worker(*, tube: str, gpu_index: int, progress_key: str, input_toml: str, ch
 
 
 @app.function(image=image, gpu=GPU, cpu=CPU_PER_WORKER, memory=MEMORY_MIB_PER_WORKER, timeout=LIVE_TIMEOUT_S,
-              retries=0, max_containers=2, scaledown_window=SCALEDOWN_S, volumes={"/ckpt": checkpoints},
+              retries=0, max_containers=2, scaledown_window=SCALEDOWN_S, volumes={CKPT_MOUNT: checkpoints},
               startup_timeout=STARTUP_TIMEOUT_S)
 def gx_worker_live(*, tube: str, gpu_index: int, progress_key: str, input_toml: str, checkpoint_ref: str | None,
                    hard_timeout_s: int) -> dict:
@@ -253,7 +259,7 @@ def gx_worker_live(*, tube: str, gpu_index: int, progress_key: str, input_toml: 
 
 
 @app.function(image=image, gpu=GPU, cpu=CPU_PER_WORKER, memory=MEMORY_MIB_PER_WORKER, timeout=REHEARSAL_PHASE_TIMEOUT_S,
-              retries=0, max_containers=2, scaledown_window=SCALEDOWN_S, volumes={"/ckpt": checkpoints},
+              retries=0, max_containers=2, scaledown_window=SCALEDOWN_S, volumes={CKPT_MOUNT: checkpoints},
               startup_timeout=STARTUP_TIMEOUT_S)
 def gx_worker_rehearsal(*, tube: str, gpu_index: int, progress_key: str, input_toml: str, checkpoint_ref: str | None,
                         hard_timeout_s: int) -> dict:
