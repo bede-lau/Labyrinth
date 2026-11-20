@@ -1,5 +1,7 @@
 # Labyrinth · architecture
 
+> Companion docs: `interface.md` (every cross-boundary contract), `status.md` (state + next steps), `decision.md` (why).
+
 Labyrinth lets a stellarator transport researcher judge whether a W7-X heat-flux estimate is accurate
 enough to justify a longer simulation, by putting the sampled field line, the solver output and an
 independent reference in one view. Replay costs $0; live GX is gated behind qualification and a $40 ceiling.
@@ -60,12 +62,25 @@ independent reference in one view. Replay costs $0; live GX is gated behind qual
 * **Units.** GX raw → archive: t × √2, Q ÷ 2√2, only with identical dimensional references.
 * **Forecast.** Persistence (previous window) vs frozen (initialisation window) on 50-unit windows.
 
-## Live GX (main/features/live_gx)
+## Live GX (main/features/live_gx) — UNVERIFIED, UNREHEARSED
 
-`orchestrator` (pure, backend injected) ← `modal_backend` (only module that imports `modal`, lazily)
-← `modal_app.py` (GX image + function, 2× A100-40GB, hard timeout). `budget_guard` must approve every
-allocation against billed + pending + estimate ≤ $40. Without credentials the mode is `unavailable`
-and the UI plays replay. A worker failure switches to `fallback` and plays the saved run.
+`service.LiveService` (status / guarded launch / terminate / shutdown; ledger + qualification + saved runs under `$LABYRINTH_STATE_DIR`)
+→ `orchestrator.Orchestrator` (pure state machine; backend injected via the `WorkerBackend` Protocol)
+→ `modal_backend` (the only module importing `modal`, lazily) → `modal_app` (two Modal functions, `gx_worker_live` /
+`gx_worker_rehearsal`, A100-40GB, `retries=0`, never imported by tests/server/replay).
+`budget_guard` approves every allocation: billed + pending + estimate ≤ $40, ledger reconciled, exact-cent confirmation;
+each launch reserves its estimate and marks the ledger unreconciled again. Time is priced in stages: Modal `startup_timeout`
+(300 s) + execution (planned − 300 s) = the orchestrator's hard timeout, so billed time per container ≤ planned.
+**Safety invariants (each came from a review finding):** termination is never reported confirmed until a cancel succeeded;
+a spawn that outlives its client bound is cancelled on arrival (`LaunchInFlight`/`TerminationPending`); SIGINT/SIGTERM on the server
+*and* the rehearse CLI terminate workers before exit (exit 2 + "NOT confirmed terminated" otherwise); a run-level abort key in the progress
+Dict stops workers whose handle was lost; hard timeout uses a monotonic clock; qualification requires a saved rehearsal run that validates
+against `contracts/live-run.schema.json`. Without credentials the mode is `unavailable` and the UI plays replay.
+
+## Frontend layout (renderer/src)
+
+`shell/` (hash router, mode indicator, artifact gate, provenance legend, theme switch) · `lib/` (`artifacts.ts`, `liveStatus.ts` — the only data access) ·
+`design/` (tokens → generated CSS, Plotly/Three themes, primitives, `Gallery`, `DESIGN.md`) · `features/<name>/` (view + `model.ts` data→props logic + thin WebGL/Plotly adapters, lazy-loaded).
 
 ## Quality loop
 

@@ -1,6 +1,6 @@
 # Labyrinth — agent operating rules
 
-**Start every session by reading `status.md`, then `architecture.md` and `decision.md`.**
+**Start every session by reading `status.md` (state + next steps), then `interface.md` (every contract), `architecture.md` and `decision.md`.**
 `status.md` is the single source of truth for what is done, in flight, and blocked. Update it when
 you finish anything. If you run out of budget mid-task, write where you stopped in `status.md` first.
 
@@ -22,6 +22,10 @@ reviewer agent has approved the diff. `scripts/check_docs.py` enforces the VERIF
 ## Agents (`.claude/agents/`)
 backend-engineer (main/), frontend-engineer (renderer/), design-lead (renderer/src/design/ + design
 review), verifier (external verification, writes VERIFY.md), reviewer (read-only code review).
+
+## Current stage
+Build stage handed over on 2026-11-20 with **nothing marked DONE**: backends of 01–05 are verified+approved; live GX (06/07), the design system (08),
+the shell (09) and all frontend views are built but **not** externally verified. `status.md` §4 is the work queue.
 
 ## Honesty rules (non-negotiable)
 - Never present replayed or PRD-reported numbers as live or as recomputed.

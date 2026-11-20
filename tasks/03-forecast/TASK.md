@@ -21,4 +21,6 @@ Frontend:
 | F4–F5 | `renderer/src/features/forecast/*.test.tsx` |
 
 ## Status
-TODO
+IN-PROGRESS
+
+Backend F1–F3: verifier PASS (round 2) + reviewer APPROVE. Frontend F4–F5: built with tests, unverified.

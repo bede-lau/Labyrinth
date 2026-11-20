@@ -21,4 +21,6 @@ Frontend:
 | B6–B7 | `renderer/src/features/budget/*.test.tsx` |
 
 ## Status
-TODO
+IN-PROGRESS
+
+Backend B1–B5: verifier PASS + reviewer APPROVE. Frontend B6–B7: built with tests, unverified.

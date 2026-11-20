@@ -26,4 +26,6 @@ Frontend:
 | L9–L10 | `renderer/src/features/live-gx/*.test.tsx` |
 
 ## Status
-TODO
+IN-PROGRESS
+
+Backend L1–L8: built, UNREHEARSED; reviewer round 4 CHANGES REQUESTED (rehearse CLI orphan-GPU test, startup_timeout test). Frontend L9–L10: built, unverified.

@@ -21,3 +21,5 @@ orchestrator
 
 ## Status
 VERIFYING
+
+Verifier run 3 PASS; later fixes R1/R3/R4/R5 not re-verified; no reviewer yet. See status.md §2.

@@ -1,49 +1,97 @@
 # Labyrinth · status
 
-> Single source of truth for handoff. Read this first. Update it whenever a task changes state.
-> Last updated by: orchestrator, 2026-11-19 (wave 1 in flight).
+> **Single source of truth for handoff. Read this first, then `interface.md`, `architecture.md`, `decision.md`.**
+> Last updated: 2026-11-20 by the orchestrator, at the user's request to stop the build stage and hand over.
+> Branch `claude/focused-cori-6s5ucw`. **Not pushed** (GitHub App has no write access — see Blockers). A `git bundle` of the branch was produced as a fallback.
 
-## Where things stand
-| Task | Owner | State | Verify | Review | Notes |
+## 1. Where the build stands (one paragraph)
+
+The PRD is built end to end *in code*: five replay features (geometry, transport, forecast, budget, spatial) produce
+deterministic, schema-valid artifacts; a live-GX orchestrator + guarded HTTP API exist (never run against Modal); the
+frontend has a design system, an app shell and all six views with a test per expected outcome. **`bash scripts/verify.sh all`
+exits 0 (11/11 stages) at the last code commit.** What is *not* done: external verification and review of the whole frontend and
+of the design system, two open money-safety items on the live backend, and nothing live has been rehearsed. No task is `DONE`.
+
+## 2. Task table
+
+States: TODO → IN-PROGRESS → VERIFYING → DONE. `DONE` requires `tasks/<NN>/VERIFY.md` ending in `Verdict: PASS` that covers the whole
+task (enforced by `scripts/check_docs.py`) **and** a reviewer `APPROVE`.
+
+| # | Task | State | Backend | Frontend | Evidence / gaps |
 |---|---|---|---|---|---|
-| 00 scaffold | orchestrator | VERIFYING: run 3 PASS; R1/R3/R4/R5 fixed after; awaiting reviewer | PASS (run 3) | — | |
-| 01 geometry | backend-engineer / frontend A | IN-PROGRESS: backend cleared; frontend A building | backend PASS | backend APPROVE | UI must show acceptance-129 BLOCKED |
-| 02 transport | backend-engineer / frontend B | IN-PROGRESS: backend fix round done (TOST compare, N_eff≥20 gate, D-017: no archive window permits a claim); frontend B building | re-verify running | re-review running | |
-| 03 forecast | backend-engineer / frontend B | IN-PROGRESS: backend fix done (one-sided edge; sample-and-hold note, D-016); frontend B building | re-verify running | re-review running | |
-| 04 budget | backend-engineer / frontend B | IN-PROGRESS: backend minors fixed; frontend B building | backend PASS | re-review running | |
-| 05 spatial | backend-engineer / frontend A | IN-PROGRESS: backend minors fixed; frontend A building | backend PASS | re-review running | |
-| 06 live-gx | backend-engineer / frontend B | IN-PROGRESS: backend fix round done (shutdown terminates GPUs, Modal cap = guard, saved-run route D-018); frontend B building | re-verify running | re-review running | UNREHEARSED |
-| 07 server | backend-engineer | VERIFYING: fix round done | re-verify running | re-review running | |
-| 08 design system | design-lead | VERIFYING: D1–D5 built, 553 tests | verifier pending | review pending | |
-| 09 app shell | frontend A | IN-PROGRESS | — | — | |
+| 00 | scaffold, boundary, gates | VERIFYING | n/a | n/a | Verifier run 3 **PASS** (runs 1–2 FAIL, fixed). Fixes R1/R3/R4/R5 landed *after* run 3 (commit `86a5142`+) and were not re-verified. **Reviewer never ran.** Residuals R2/R6/R7 (obfuscation-only, accepted) listed in `tasks/00-scaffold/VERIFY.md` |
+| 01 | geometry | IN-PROGRESS | **PASS + APPROVE** (float64 match to stella 2.9e-13; independent verifier agreed) | built (G7–G10 tests), **unverified, unreviewed** | acceptance-129 is BLOCKED by design (D-007) |
+| 02 | transport | IN-PROGRESS | **PASS (round 2) + APPROVE** | built (T8–T12 tests), **unverified, unreviewed** | all 4 PRD archive means reproduce (D-013); no window permits a claim (D-017) |
+| 03 | forecast | IN-PROGRESS | **PASS (round 2) + APPROVE** | built (F4–F5 tests), **unverified** | PRD MAE not reproduced (D-008/D-016) |
+| 04 | budget | IN-PROGRESS | **PASS + APPROVE** | built (B6–B7 tests), **unverified** | range fixtures carry a midpoint (interface.md §10) |
+| 05 | spatial | IN-PROGRESS | **PASS + APPROVE** | built (S5–S6 tests), **unverified** | prd-reported/blocked: no checkpoints in repo |
+| 06 | live GX | IN-PROGRESS | built, 58+ tests; **reviewer round 4: CHANGES REQUESTED (1 blocker, 1 major)** | built (L9–L10 tests), **unverified** | see §4 — **UNREHEARSED, never run on Modal** |
+| 07 | HTTP server | VERIFYING | verifier **PASS** (round 1, before fix rounds 2–4); re-verification was cut off | n/a | re-verify after §4 |
+| 08 | design system | VERIFYING | n/a | built, 553 tests; **verifier run was cut off** | screenshots in the scratchpad were reviewed by the author only |
+| 09 | app shell | IN-PROGRESS | n/a | built (A1–A5 tests), **unverified** | |
 
-States: TODO → IN-PROGRESS → VERIFYING → DONE (needs VERIFY.md `Verdict: PASS` + reviewer APPROVE) · BLOCKED.
+Frontend outcome → test coverage: every ID A1–A5, G7–G10, S5–S6, T8–T12, F4–F5, B6–B7, L9–L10 has a named test
+(`renderer/src/**/*.test.tsx`). "Has a test" ≠ verified: no external verifier has attacked any of them yet.
 
-## Interruption log
-- 2026-11-20: account usage limit (429) killed 8 background agents mid-run (design-lead, 6 verifiers/reviewers). All resumed after reset via SendMessage with their context. If this happens again and you are a NEW session: the agents' transcripts are gone — re-dispatch each in-flight row above with the matching `.claude/agents/*.md` and its TASK.md.
+## 3. What was verified and how (so you can trust or re-check it)
 
-- 2026-11-20 (second hit, resets 07:40 UTC): usage limit killed the frontend wave and the backend re-verification round mid-run. In flight when killed — resume each (same session: SendMessage "continue"; new session: re-dispatch with the agent file + brief):
-  - frontend A (`frontend-engineer`): 09 shell A1–A5, 01 geometry G7–G10, 05 spatial S5–S6. Barely started.
-  - frontend B (`frontend-engineer`): 02 transport T8–T12, 03 forecast F4–F5, 04 budget B6–B7, 06 live L9–L10.
-  - verifier 02 transport (re-verify after stats/compare rewrite, D-017); verifier 03 forecast (re-verify, D-016); verifier 06+07 (re-verify after live fix round, D-018).
-  - reviewer data backends (re-review fix round); reviewer live+server (re-review fix round).
-  - Not yet started: verifier + reviewer for 08 design system; reviewer for 00 scaffold; design-lead screenshot review of the full app.
-  - Uncommitted on purpose: backend feature code (all of main/labyrinth_main/features/*, server/, main/tests/*), renderer/src/design/*, artifacts/*. `verify.sh all` was green before the hit. Commit backend + artifacts together once re-review approves (manifest spans all features).
+- Backend halves of 01–05 and 07 (round 1): independent verifier re-implemented the maths in its own code (VMEC evaluator with bisection, window means, MAE, budget in Decimal), ran mutation tests on copies, and wrote `tasks/<NN>/VERIFY.md` with real output.
+- Statistical gate for transport: reviewer Monte-Carlo (AR(1) at N=68/277/1000/2000): claims open only at N_eff ≳ 20, false stationarity rejections 2–4 %, TOST false-disagree ≈ 4–6 %. Result: no archive window may claim saturated agreement (D-017) — this is correct, not a bug.
+- Gates themselves are tested (`scripts/tests/`, 11 tests; boundary self-test has 37 violation shapes).
 
-## Execution plan
-1. Wave 1 (parallel): backend geometry · backend data (transport, forecast, budget, spatial) · backend live (live_gx, server) · design-lead (design system).
-2. Wave 2 (parallel, after wave 1 artifacts + design system): frontend shell+geometry+spatial · frontend transport+forecast+budget+live.
-3. After each task: external verifier → VERIFY.md; reviewer on diff; fix loop until PASS/APPROVE.
-4. Final: design review screenshots, full `verify.sh all`, push.
+## 4. Open work, in priority order (the next agent starts here)
 
-## Blockers needing a human
-- **GitHub push is blocked (403):** the Claude GitHub App lacks write access to bede-lau/Labyrinth. All commits are local on `claude/focused-cori-6s5ucw` until access is fixed.
-- **129 saved stella samples at ρ 0.8** (PRD acceptance for Locate the tubes) — not in repo or at the cited stella commit. Provide the file. (D-007)
-- **Modal credentials + GX rehearsal** for live mode. (D-011)
-- **Dommaschk GENE-X checkpoints** to turn the spatial-parallelism replay from PRD-reported into verified. (05)
-- **ANTHROPIC_API_KEY repo secret** to enable automated PR review in CI. (D-012)
+1. **Live GX backend — close two money-safety items, then re-review and re-verify (06, 07).** Reviewer round 4 findings, *code is in, tests and re-review are not*:
+   - **R1 (blocker):** `rehearse.py` must never exit with a spawned GPU call un-cancelled. Code now maps SIGTERM→KeyboardInterrupt, ignores signals while terminating, waits `wait_terminated(WORST_CASE_STOP_S+10)` per phase, prints "NOT confirmed terminated — check Modal dashboard", exits 2. **Missing: a subprocess test running the rehearse entrypoint with a late-spawn stub for SIGINT and SIGTERM** (model it on `test_H1_shutdown_during_in_flight_launch` in `main/tests/test_server.py`).
+   - **R2 (major):** `modal_app.py` now raises `RuntimeError` at deploy if `startup_timeout` isn't accepted. **Missing: an AST/behaviour test for that branch.**
+   - Minors with code but no tests: run-level kill switch (`progress["<run_id>/abort"]`, worker checks at start and every loop; test with a stub Dict), orchestrator hard timeout on `time.monotonic` (test with a backwards wall-clock jump), docs for a hung spawn RPC (done in `service.py` docstring).
+   - Then: reviewer re-review (`.claude/agents/reviewer.md`), verifier for 06 + 07 (`.claude/agents/verifier.md`). Rules for those agents: no `modal` install, no credentials, no network, state dir under the scratchpad.
+2. **Verify and review the frontend.** One verifier per task (01 G7–G10, 02 T8–T12, 03 F4–F5, 04 B6–B7, 05 S5–S6, 06 L9–L10, 09 A1–A5, 08 D1–D5), each writing the *whole-task* VERIFY.md (backend + frontend; keep the history of earlier runs). Then a reviewer on `renderer/src/{shell,features}`. Things to attack: acceptance-129 rendered BLOCKED (not passed); `stationary:null` rendered "undecidable"; every transport row says claim "not allowed" with the N_eff explanation; LIVE only when `mode==="live"`; `TERMINATE FAILED/PENDING` shown as danger even when mode is live; forecast never says "forecast = previous observed"; stella vs GENE not shown as agreeing; budget range midpoint never shown as a PRD figure; mesh seam wrapped; Plotly/Three lazy-loaded.
+3. **Design review with screenshots** (`.claude/agents/design-lead.md`): build, serve `renderer/dist`, Playwright at 1440×900 and 390×844, light + dark, all six routes + `#gallery`; frontend B was in the middle of a mobile-overflow check on `#/transport` when cut off; frontend A had screenshots in the scratchpad `frontA/`. No design review of the integrated app has happened.
+4. **Reviewer for 00 scaffold** and a final check that `86a5142`+ fixes hold (`verify.sh boundary`, `docs`).
+5. When a task has full-task `Verdict: PASS` **and** reviewer `APPROVE`: set its `## Status` to `DONE` in `tasks/<NN>/TASK.md` and update §2.
 
-## Resume instructions for the next agent
-1. `pip install -r main/requirements.txt && npm --prefix renderer ci`
-2. `bash scripts/verify.sh` — must exit 0 before you start.
-3. Pick the first task above not DONE; read its `tasks/<NN>/TASK.md`; follow the matching `.claude/agents/*.md`.
+## 5. Decisions waiting on the product owner
+
+- **D-016 (forecast definition).** The PRD averages two ways: a sample-and-hold mean reproduces the PRD forecast scores (0.0444/0.0423) but breaks the 2.55 archive fixture; the edge-interpolated mean reproduces all four archive means but not the forecast scores. We kept one definition (D-013) and show the mismatch. If the forecast scores are the acceptance criterion, switch the forecast feature only.
+- **D-017 consequence.** With archive-length windows the app never allows a "saturated agreement" claim. A live run needs ~3–5× the archive's τ-normalised window before any claim is possible.
+- **D-015 guard allowances** (5 min setup, 5 min idle, $0.10 storage/egress) are assumptions; planned spend is $26.21, not the PRD's $21.83 (GPU time only). Replace with measured values after the first rehearsal.
+
+## 6. Blockers needing a human
+
+| Blocker | Impact | Action |
+|---|---|---|
+| **GitHub push → 403** ("Claude doesn't have GitHub access to bede-lau/Labyrinth") | all work exists only in this container + the bundle | Install/reconnect the Claude GitHub App with write access (https://claude.ai/connect-github), then `git push -u origin claude/focused-cori-6s5ucw`. The GitHub connector can *read* the repo (branch `main` only exists) but cannot carry a 209-file / 5 MB push (3 binaries) |
+| 129 saved stella samples at ρ 0.8 | PRD acceptance for "Locate the tubes" stays BLOCKED (D-007) | provide the stella `.geometry`/`.out.nc` holding them; add to `data/raw/`, pin sha256, turn the blocked check into a real comparison, tighten the schema |
+| Modal credentials + GX rehearsal | live mode stays `unavailable`; fallback plays archive | follow "Live rehearsal runbook" below |
+| Dommaschk GENE-X checkpoints | spatial replay stays prd-reported/blocked | provide the checkpoints |
+| `ANTHROPIC_API_KEY` repo secret | `.github/workflows/claude-review.yml` is skipped; PRs are not auto-reviewed in CI | add the secret |
+
+### Live rehearsal runbook (human; nothing here has ever been run)
+1. `pip install modal==1.6.4 && modal token new`. 2. Check billed + pending on Modal's usage page, write `~/.labyrinth/ledger.json` `{"billedUsd":X,"pendingUsd":Y,"reconciled":true}`.
+3. `cd main && LABYRINTH_GX_REF=<GX commit sha> modal deploy -m labyrinth_main.features.live_gx.modal_app` — **fails loudly if `startup_timeout` isn't supported; the GX image build is unrehearsed and may need fixes.**
+4. `python3 -m labyrinth_main.features.live_gx.rehearse` prints the estimate (**$7.73**, hard timeout 4500 s) and launches nothing. 5. `… rehearse --confirm-cost-usd 7.73` runs init then checkpoint-continuation.
+6. Reconcile the ledger again; `python3 -m labyrinth_main.server` should report `idle`; a slot is `POST /api/live/launch {"confirmCostUsd": 2.65}`. Planned total 8.10 + 2×7.73 + 2.65 = **$26.21** of the $40 ceiling. **Do this only after §4.1 is closed.**
+Unverified against an installed modal 1.6.4: `cancel(terminate_containers=True)`, `startup_timeout`, `(request, limit)` tuples, `scaledown_window`, `Image.env`, `modal.is_local()`, GX TOML parameter names and build commands.
+
+## 7. How to resume
+
+```
+pip install -r main/requirements.txt && npm --prefix renderer ci
+bash scripts/verify.sh            # must exit 0 before you start (it did at the last code commit)
+```
+- **Agents** (`.claude/agents/`): `backend-engineer` (main/), `frontend-engineer` (renderer/), `design-lead` (design system + screenshot review), `verifier` (adversarial, writes VERIFY.md, never fixes), `reviewer` (read-only diff review). The loop that worked: engineer → `verify.sh <scope>` until exit 0 → verifier → reviewer → fix round → re-verify.
+- **Always give a verifier an isolated probe plan** (own code, mutation tests on copies, real output) — every FAIL so far was found that way (13 boundary bypasses, a spoofable DONE gate, a wrong "PRD error", a 40 % stderr bias, an orphaned-GPU path).
+- **Usage limits:** two limit hits killed all background agents mid-run. Agents' transcripts do not survive a *new* session — re-dispatch from §4 briefs, not from memory.
+- **Stop-hook friction:** the Stop hook runs `verify.sh all` on the *shared working tree*, so parallel agents' half-finished files block the orchestrator (decision D-014 below: "wave mode" was proposed and **not adopted**). Either run agents sequentially/in git worktrees, or wait for their loops to go green.
+- Never commit generated artifacts without rebuilding (`artifacts:fresh`), never edit `contracts/` without a decision entry (interface.md §9).
+
+## 8. Interruption log
+
+- 2026-11-20 ×2: account usage limit (HTTP 429) killed all background agents mid-run; all were resumed once, then the third interruption ended the session's build stage.
+- Final in-flight work at hand-over: frontend A (shell/geometry/spatial) and B (transport/forecast/budget/live) had reached the screenshot-review stage; live backend fix round 4 (code landed, tests pending); design verifier (08) just started; no reviewer assigned to 00/08/frontend.
+
+## 9. Commit map (local; oldest first, after the scaffold)
+
+`80888d4` verified data backends · `b0d02a2` live GX + server (**UNVERIFIED**) · `27f77ea` design system (verification pending) ·
+`407827f` frontend WIP (**UNVERIFIED**) · then this docs commit. Earlier commits: scaffold, gate hardening (3 rounds), decisions D-013…D-018, contracts incl. `live-run`.

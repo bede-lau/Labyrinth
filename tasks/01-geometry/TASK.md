@@ -32,4 +32,6 @@ Frontend:
 | G7–G10 | `renderer/src/features/geometry/*.test.tsx` (one `test()` per outcome, named `G7 …` … `G10 …`) |
 
 ## Status
-TODO
+IN-PROGRESS
+
+Backend G1–G6: verifier PASS + reviewer APPROVE. Frontend G7–G10: built with tests, unverified/unreviewed.

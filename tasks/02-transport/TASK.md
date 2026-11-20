@@ -28,4 +28,6 @@ Frontend:
 | T8–T12 | `renderer/src/features/transport/*.test.tsx`, one `test('T8 …')` per outcome |
 
 ## Status
-TODO
+IN-PROGRESS
+
+Backend T1–T7: verifier PASS (round 2) + reviewer APPROVE. Frontend T8–T12: built with tests, unverified.

@@ -16,4 +16,6 @@ design-lead (`renderer/src/design/`)
 | D1–D5 | `renderer/src/design/**/*.test.ts(x)` |
 
 ## Status
-TODO
+VERIFYING
+
+D1–D5 built, 553 tests; external verifier run was cut off by a usage limit.

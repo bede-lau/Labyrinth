@@ -17,4 +17,6 @@ backend: backend-engineer (`main/labyrinth_main/server/`)
 | H1–H6 | `main/tests/test_server.py` (real server on an ephemeral port) |
 
 ## Status
-TODO
+VERIFYING
+
+H1–H6: verifier PASS in round 1; re-verification after fix rounds 2–4 pending (depends on task 06 items).

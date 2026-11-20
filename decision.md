@@ -140,3 +140,17 @@ serialised as `null` (undecidable), never `true`.
 ## D-018 · Saved rehearsal runs have a contract
 `contracts/live-run.schema.json` describes `GET /api/live/runs/<savedRunId>`; phases are live-status
 snapshots. The "playing saved GX run" label is only used when such a run exists and qualified.
+
+## D-014 · (not adopted) "Wave mode" for the orchestrator's Stop hook
+**Context.** With parallel agents editing one working tree, the Stop hook (`verify.sh all` on the shared tree)
+repeatedly blocked the orchestrator on files it must not touch. A proposal to verify committed HEAD in a clean
+temporary worktree while a wave was in flight was **declined by the permission system and not applied**; the number
+D-014 was never used for a real change. Workaround used: wait in-turn for agents' loops to go green.
+**Open.** Options for the next orchestrator: run agents sequentially, give each agent its own `git worktree`, or adopt wave mode with the owner's approval.
+
+## D-019 · Build stage ended early at the owner's request; unverified work committed with labels
+**Context.** After repeated usage-limit interruptions the owner asked to wrap up, write `interface.md` and hand over
+(2026-11-20). Until then the rule was "commit only after verifier PASS + reviewer APPROVE".
+**Decision.** Everything was committed, in separate, explicitly labelled commits (verified backends / live GX UNVERIFIED /
+design system pending / frontend WIP UNVERIFIED). `status.md` §2 is the truth about what is verified. No task is marked `DONE`.
+**Consequence.** Do not read the presence of code in `main/` or `renderer/` as verification: check the VERIFY.md and status table.

@@ -20,4 +20,6 @@ Frontend:
 | S5–S6 | `renderer/src/features/spatial/*.test.tsx` |
 
 ## Status
-TODO
+IN-PROGRESS
+
+Backend S1–S4: verifier PASS + reviewer APPROVE. Frontend S5–S6: built with tests, unverified.

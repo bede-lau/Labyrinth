@@ -16,4 +16,6 @@ frontend-engineer (`renderer/src/shell/`, `renderer/src/lib/`)
 | A1–A5 | `renderer/src/shell/*.test.tsx`, `renderer/src/lib/*.test.ts` |
 
 ## Status
-TODO
+IN-PROGRESS
+
+A1–A5 built with tests; unverified.
