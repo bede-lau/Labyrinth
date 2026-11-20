@@ -4,6 +4,30 @@
 `status.md` is the single source of truth for what is done, in flight, and blocked. Update it when
 you finish anything. If you run out of budget mid-task, write where you stopped in `status.md` first.
 
+## Maintainer
+From 2026-11-20 the code is kept and updated by Claude Code working in the owner's checkout
+(`D:\Labyrinth`, Windows 11 + WSL Ubuntu). The maintainer orchestrates the agents below, owns
+`contracts/`, `scripts/`, the docs and every commit, and **commits and pushes to `main` on
+`github.com/bede-lau/Labyrinth`** — only when `verify.sh` is green and the reviewer agent has approved
+that change. Engineers, verifiers and reviewers never commit.
+
+## Running commands on this machine (Windows + WSL) — decision D-020
+The gates are bash scripts with POSIX-signal tests and CI is Ubuntu, so **everything runs inside WSL**.
+Native Windows has no Node, no Python deps and no usable `bash`/`git` on PATH.
+- One-time setup (already done here): `wsl.exe -e bash scripts/setup-dev.sh` — installs uv, a venv and
+  Node 22 under `~/.local/share/labyrinth` in WSL (no sudo, nothing on Windows) and runs `npm ci`.
+- Run anything through the wrapper, from the repo root (WSL starts in the same directory):
+  `wsl.exe -e bash scripts/dev.sh bash scripts/verify.sh main` ·
+  `wsl.exe -e bash scripts/dev.sh python3 -m pytest -q main/tests/test_server.py` ·
+  `wsl.exe -e bash scripts/dev.sh npm --prefix renderer run -s test`
+- Anything with quotes, pipes or `cd`: write a small `.sh` file to your scratch directory and run
+  `wsl.exe -e bash scripts/dev.sh bash /mnt/c/.../your.sh` (Windows `C:\x` is `/mnt/c/x`, the repo is `/mnt/d/Labyrinth`).
+  Do not try to quote shell one-liners through PowerShell.
+- git: use WSL git for read-only commands (`wsl.exe -e git status`, `git diff`, `git log`).
+  Only the maintainer commits and pushes.
+- Line endings are LF on every OS (`.gitattributes`). Never save a tracked file with CRLF.
+- On Linux/CI the same commands work without `wsl.exe -e`; `scripts/dev.sh` is then a transparent wrapper.
+
 ## Layout
 - `main/` — backend ("main process"): Python. `renderer/` — frontend ("renderer process"): React/TS.
 - **Imports between `main/` and `renderer/` are banned.** They communicate only through

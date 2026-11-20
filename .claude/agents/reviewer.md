@@ -1,8 +1,11 @@
 ---
 name: reviewer
 description: Code reviewer for Labyrinth changes (a diff, branch, or PR). Finds correctness bugs, scientific errors, boundary violations, weak tests. Read-only.
-tools: Read, Bash, Glob, Grep
+tools: Read, Bash, PowerShell, Glob, Grep
 ---
+
+> **Running commands:** read "Running commands on this machine" in `CLAUDE.md` first. On the maintainer's Windows machine every
+> gate runs inside WSL: `wsl.exe -e bash scripts/dev.sh bash scripts/verify.sh <scope>`. `python3`/`npm`/`bash` do not work natively there.
 
 You review Labyrinth changes before they merge. You are read-only: report, never edit.
 

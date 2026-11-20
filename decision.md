@@ -141,6 +141,32 @@ serialised as `null` (undecidable), never `true`.
 `contracts/live-run.schema.json` describes `GET /api/live/runs/<savedRunId>`; phases are live-status
 snapshots. The "playing saved GX run" label is only used when such a run exists and qualified.
 
+## D-020 · The maintainer's machine is Windows; every gate runs inside WSL, line endings are LF
+**Context.** The build moved from a Linux container to the owner's Windows 11 checkout (2026-11-20). Findings on arrival:
+(1) git's `core.autocrlf=true` checked every text file out as CRLF, which breaks the bash gates, the byte-equality check
+`artifacts:fresh` and anything sha256-pinned; (2) Windows had no Node, no Python deps, no native `bash`, and `git` only inside
+GitHub Desktop; (3) the hook commands used `$CLAUDE_PROJECT_DIR`, which PowerShell expands to nothing, so the PostToolUse hook
+failed on every edit and the Stop hook silently did nothing; (4) the live-GX safety tests send real SIGINT/SIGTERM, which Windows
+cannot deliver to a handler. Porting the gates to Windows would have meant skipping exactly the money-safety tests.
+**Decision.** Keep one execution environment, the same as CI (Ubuntu): WSL. `.gitattributes` forces LF on every OS.
+`scripts/setup-dev.sh` installs a user-local toolchain in WSL (uv, venv with the pinned deps, Node 22, sha256-checked, no sudo,
+nothing on Windows). `scripts/dev.sh <cmd>` puts it on PATH and is a transparent wrapper elsewhere. Hooks are launched through
+`python3 -c` (valid in bash and PowerShell); `scripts/hooks/stop_launcher.py` runs `stop_verify.sh` in WSL on Windows and maps every
+failure to exit 2 (D-003). The PostToolUse hook also matches `PowerShell`. `scripts/probe-copy.sh <name>` gives verifiers an isolated
+copy for mutation tests, so parallel agents never mutate the shared tree (this replaces the unadopted D-014 idea).
+**Consequences.** Commands are prefixed `wsl.exe -e bash scripts/dev.sh …` on this machine and unchanged on Linux/CI. Hook edits
+in `.claude/settings.json` only load in a new session; a session started before the fix still sees the old PostToolUse error
+("can't open file …post_edit_boundary.py") — ignore it and run `scripts/check_boundaries.py` through the wrapper instead.
+Python is 3.12 in WSL vs 3.13 in CI (both ≥ the required 3.11); Node is 22 in both.
+
+## D-021 · Commits go straight to `main`, after green gates and reviewer approval
+**Context.** The first push (owner's GitHub sign-in, 2026-11-20) published the hand-over branch and fast-forwarded `main`.
+The owner chose "straight to main" over branch-then-main and over GitHub pull requests (no `gh` CLI on this machine).
+**Decision.** The maintainer commits and pushes to `main` only. Before each push: `verify.sh all` exits 0 and the `reviewer`
+agent has approved that change (D-012 still holds; the review happens on the working tree / local commits instead of on a PR).
+Engineers, verifiers and reviewers never commit. `claude/focused-cori-6s5ucw` stays on GitHub as the hand-over snapshot.
+**Consequences.** `main` can carry tasks that are not `DONE`; `status.md` §2, not the branch, says what is verified.
+
 ## D-014 · (not adopted) "Wave mode" for the orchestrator's Stop hook
 **Context.** With parallel agents editing one working tree, the Stop hook (`verify.sh all` on the shared tree)
 repeatedly blocked the orchestrator on files it must not touch. A proposal to verify committed HEAD in a clean
