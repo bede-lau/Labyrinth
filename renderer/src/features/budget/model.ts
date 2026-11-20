@@ -30,19 +30,28 @@ export interface LedgerSegment {
   pct: number;
 }
 
+/** "Planned: 2 rehearsals + 1 live slot", with the rehearsal count read from the live-demo scenario inputs. */
+export function planLabel(a: BudgetArtifact): string {
+  const n = Number(a.scenarios.find((s) => s.id === 'live-demo')?.inputs.rehearsals);
+  return Number.isInteger(n) && n > 0 ? `Planned: ${n} rehearsal${n === 1 ? '' : 's'} + 1 live slot` : 'Planned: rehearsals + live slot';
+}
+
 /** PRD ledger against the ceiling: posted, newly planned (rehearsals + slot), remaining. */
 export function ledgerSegments(a: BudgetArtifact): LedgerSegment[] {
   const pct = (v: number) => Math.max(0, Math.min(100, (v / a.ceilingUsd) * 100));
   const plan = a.plannedUsd - a.postedUsd;
   return [
     { id: 'posted', label: 'Posted earlier', usd: a.postedUsd, pct: pct(a.postedUsd) },
-    { id: 'plan', label: 'Planned: 2 rehearsals + 1 live slot', usd: plan, pct: pct(plan) },
+    { id: 'plan', label: planLabel(a), usd: plan, pct: pct(plan) },
     { id: 'remaining', label: 'Remaining', usd: a.remainingAfterPlanUsd, pct: pct(a.remainingAfterPlanUsd) },
   ];
 }
 
-export const usd = (v: number) =>
-  `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+/** Dollars with two decimals and a true minus sign in front of the currency symbol (−$1.11, never $-1.11). */
+export const usd = (v: number) => {
+  const abs = Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return v < 0 && Number(abs.replace(/,/g, '')) !== 0 ? `−$${abs}` : `$${abs}`;
+};
 
 export interface GuardView {
   ceilingUsd: number;
@@ -76,7 +85,8 @@ export function guardView(s: LiveState): GuardView | null {
 
 /**
  * The guard's planning figures recorded in decision.md D-015 (no artifact or API field carries the
- * rehearsal estimate or the planned total yet). Shown with that source, never as PRD numbers.
+ * rehearsal estimate or the planned total yet). Shown with that source, never as PRD numbers, and
+ * marked as possibly out of date as soon as the live guard reports a different slot estimate.
  */
 export const GUARD_PLAN_D015 = {
   source: 'decision.md · D-015',
@@ -87,11 +97,35 @@ export const GUARD_PLAN_D015 = {
   plannedUsd: 26.21,
 } as const;
 
+/** True when the live guard answered and its slot estimate is no longer the one D-015 planned with. */
+export function guardPlanStale(guard: GuardView | null, planSlotUsd: number = GUARD_PLAN_D015.slotUsd): boolean {
+  return guard !== null && Math.round(guard.slotEstimateUsd * 100) !== Math.round(planSlotUsd * 100);
+}
+
+export interface PlanCheck {
+  label: string;
+  usd: number;
+  inside: boolean;
+  /** Dollars over the ceiling (0 when inside). */
+  overBy: number;
+}
+
+/** Each plan against the artifact's ceiling: the "stays inside" statement is computed, not typed in. */
+export function planChecks(a: BudgetArtifact, guardPlannedUsd: number): PlanCheck[] {
+  const check = (label: string, v: number): PlanCheck => {
+    const over = Math.round((v - a.ceilingUsd) * 100) / 100;
+    return { label, usd: v, inside: over <= 0, overBy: Math.max(0, over) };
+  };
+  return [check('PRD plan', a.plannedUsd), check('D-015 guard plan', guardPlannedUsd)];
+}
+
 export interface RangeFixture {
   id: string;
   label: string;
-  lo: number;
-  hi: number;
+  /** False when neither the label nor the note carries "PRD range [lo, hi]": the range is then shown as unavailable. */
+  rangeAvailable: boolean;
+  lo: number | null;
+  hi: number | null;
   loText: string;
   hiText: string;
   unit: string;
@@ -105,28 +139,40 @@ export interface RangeFixture {
 const RANGE = /PRD range \[([0-9][0-9,]*(?:\.[0-9]+)?),\s+([0-9][0-9,]*(?:\.[0-9]+)?)\]\s*([A-Za-z$-]+)?/;
 const num = (s: string) => Number(s.replace(/,/g, ''));
 
+/**
+ * The four fixtures whose `claimed` is the midpoint of a PRD range (interface.md §2 item 7). They are
+ * named here because the contract has no `claimedRange` field yet (interface.md §10): recognising them
+ * by prose alone would let the midpoint through as a "Claimed (PRD)" figure the day the prose changes.
+ */
+export const RANGE_FIXTURE_IDS: readonly string[] = ['full-grid-days', 'full-grid-usd', 'halved-dt-days', 'halved-dt-usd'];
+
 export function isRangeFixture(f: FixtureCheckData): boolean {
-  return RANGE.test(f.label) || RANGE.test(f.note ?? '');
+  return (
+    RANGE_FIXTURE_IDS.includes(f.id) ||
+    RANGE.test(f.label) ||
+    RANGE.test(f.note ?? '') ||
+    /midpoint of (?:the )?PRD range/i.test(`${f.label} ${f.note ?? ''}`)
+  );
 }
 
 /** A range fixture: the PRD prints only a range, so the range is shown — never the midpoint. */
-export function rangeFixture(f: FixtureCheckData): RangeFixture | null {
+export function rangeFixture(f: FixtureCheckData): RangeFixture {
   const m = RANGE.exec(f.label) ?? RANGE.exec(f.note ?? '');
-  if (!m) return null;
-  const lo = num(m[1] as string);
-  const hi = num(m[2] as string);
-  const unit = m[3] ?? '';
+  const lo = m ? num(m[1] as string) : null;
+  const hi = m ? num(m[2] as string) : null;
+  const unit = m?.[3] ?? (fixtureUnit(f) === 'dimensionless' ? '' : fixtureUnit(f));
   const computed = f.computed;
-  const inRange = computed === null ? null : computed >= lo && computed <= hi;
+  const inRange = computed === null || lo === null || hi === null ? null : computed >= lo && computed <= hi;
   const inside = inRange === null || f.matches === null ? null : inRange && f.matches;
   const decimals = unit === 'USD' ? 0 : 2;
   return {
     id: f.id,
     label: f.label.replace(/\s*[—-]\s*PRD range \[.*$/, '').trim(),
+    rangeAvailable: m !== null,
     lo,
     hi,
-    loText: m[1] as string,
-    hiText: m[2] as string,
+    loText: m ? (m[1] as string) : '',
+    hiText: m ? (m[2] as string) : '',
     unit,
     computed,
     computedText:
@@ -164,4 +210,24 @@ export function fixtureUnit(f: FixtureCheckData): string {
   if (/-min$/.test(f.id)) return 'min';
   if (/-days$/.test(f.id)) return 'days';
   return 'dimensionless';
+}
+
+/**
+ * Column label for the claimed value when the claim is not a figure the PRD prints. The artifact says
+ * so in the fixture note ("value from tasks/04-budget/TASK.md (the PRD implies it but does not print
+ * it)"); such a value must not sit under "Claimed (PRD)". Undefined keeps the default label.
+ */
+export function claimedLabelFor(f: FixtureCheckData): string | undefined {
+  return /value from \S*TASK\.md/.test(f.note ?? '') ? 'Claimed (TASK.md)' : undefined;
+}
+
+/**
+ * What a matching fixture row is backed by (DS-13). A value "recomputed" from inputs that are
+ * themselves PRD-reported (161 h × 288 processors = 46,368) only shows the arithmetic is consistent;
+ * it is not a data-backed match. Read from the artifact: the fixture's scenario is PRD-reported, or
+ * its note says "inputs are PRD-reported".
+ */
+export function fixtureBasis(a: BudgetArtifact, f: FixtureCheckData): 'data' | 'arithmetic' {
+  const scenario = a.scenarios.find((s) => (SCENARIO_FIXTURES[s.id] ?? []).includes(f.id));
+  return scenario?.provenance.kind === 'prd-reported' || /inputs are PRD-reported/i.test(f.note ?? '') ? 'arithmetic' : 'data';
 }

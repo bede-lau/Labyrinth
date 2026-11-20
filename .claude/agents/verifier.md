@@ -23,17 +23,32 @@ Your only write access is `tasks/<NN-feature>/VERIFY.md`.
 4. Check the boundary rule held: `python3 scripts/check_boundaries.py`.
 5. Check honesty: any PRD number that did not reproduce must be visible as a mismatch, not hidden.
 
-## VERIFY.md format
+## VERIFY.md format (enforced by `scripts/check_docs.py`, decision D-022)
+Keep earlier runs in the file and append a new run. The docs gate reads only the **last** run:
 ```
-# Verify: <NN-feature>
-Verifier run: <date>, commit <git rev-parse --short HEAD> + working tree
-## Outcomes
+## Run N — whole task
+Verifier run: <date>, commit <git rev-parse --short HEAD>
+### Outcomes
 | # | Expected outcome | Test | Independent probe | Result |
-## Real output
+|---|---|---|---|---|
+| G7 | ... | ... | ... | PASS (optional note) |
+### Real output
 <verbatim command lines and output tails — never paraphrased>
-## Findings
+### Findings
 <defects, weak tests, unverifiable claims; each with file:line>
-Verdict: PASS | FAIL
+
+Verdict: PASS
 ```
-Verdict is PASS only if verify.sh exits 0 AND every outcome has a meaningful test AND your independent
+Rules the gate checks before a task may be DONE:
+- **Verify a committed tree.** `git status` must be clean for the task's owned files (the backticked paths under
+  `## Owner` in TASK.md) before you start; if it is not, stop and tell the caller to commit first. The `Verifier run`
+  line names that commit, and any later change to the owned files makes your run stale.
+- **One table row per outcome ID in TASK.md**, the ID alone in the first cell, the Result cell starting with `PASS`,
+  `FAIL` or `NOT CHECKED`. Only a row starting with `PASS` counts; a missing row counts as not verified.
+- **The verdict is the last non-blank line of the file**, exactly `Verdict: PASS`, or `Verdict: FAIL — <reason>`.
+  Nothing after it. Do not write any other line that starts with "Verdict".
+Verdict is PASS only if the gates exit 0 AND every outcome has a meaningful test AND your independent
 probes agree. Otherwise FAIL with the exact reason. Report the verdict and findings back to the caller.
+
+Mutation probes never touch the shared working tree: `bash scripts/probe-copy.sh <name>` prints an isolated copy;
+mutate and test there, delete it when done.

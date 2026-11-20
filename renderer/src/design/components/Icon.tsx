@@ -5,6 +5,7 @@ export type IconName =
   | 'check'
   | 'cross'
   | 'dash'
+  | 'equals'
   | 'alert'
   | 'blocked'
   | 'question'
@@ -23,6 +24,7 @@ const PATHS: Record<IconName, { stroke?: string[]; fill?: string[]; circle?: [nu
   check: { stroke: ['M3.5 8.5l3 3 6-7'] },
   cross: { stroke: ['M4.5 4.5l7 7', 'M11.5 4.5l-7 7'] },
   dash: { stroke: ['M4 8h8'] },
+  equals: { stroke: ['M4 6h8', 'M4 10h8'] },
   alert: { circle: [[8, 8, 6, false], [8, 11, 0.9, true]], stroke: ['M8 4.75v3.75'] },
   blocked: { circle: [[8, 8, 6, false]], stroke: ['M3.9 12.1l8.2-8.2'] },
   question: {

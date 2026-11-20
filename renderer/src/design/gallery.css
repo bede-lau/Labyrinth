@@ -33,21 +33,26 @@
 .gal-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--lab-space-4); padding: var(--lab-space-1) 0 var(--lab-space-3); }
 .gal-figure { margin: 0; }
 .gal-chart { width: 100%; min-height: 300px; }
-.gal-scene { width: 100%; height: 300px; border-radius: var(--lab-radius-sm); overflow: hidden; }
+/* Height comes from the canvas (half its width, 180–300px), so a narrow panel is not mostly empty. */
+.gal-scene { width: 100%; min-height: 180px; border-radius: var(--lab-radius-sm); overflow: hidden; }
+.gal-scene canvas { display: block; }
 .gal-stack { display: flex; flex-direction: column; gap: var(--lab-space-2); margin-top: var(--lab-space-4); }
 .gal-row { margin-bottom: var(--lab-space-3); }
 .gal-colorbar { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: var(--lab-space-3); margin-top: var(--lab-space-3); font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); }
 .gal-colorbar__bar { height: 10px; border-radius: var(--lab-radius-xs); }
 .gal-colorbar__ticks { grid-column: 2; display: flex; justify-content: space-between; color: var(--lab-color-text-subtle); }
-.gal-status { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--lab-space-2) var(--lab-space-3); align-items: center; }
+/* justify-items: start keeps each pill at its own width (grid items stretch by default). */
+.gal-status { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--lab-space-2) var(--lab-space-3); align-items: center; justify-items: start; }
 .gal-status li { display: contents; }
 .gal-status__desc { font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-muted); }
-.gal-cvd { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: var(--lab-font-size-xs); }
-.gal-cvd th:first-child { width: 26%; }
-.gal-cvd th, .gal-cvd td { padding: 6px var(--lab-space-1); overflow: hidden; text-overflow: ellipsis; text-align: center; border-bottom: 1px solid var(--lab-color-border); }
-.gal-cvd thead th { color: var(--lab-color-text-muted); font-weight: var(--lab-font-weight-medium); }
-.gal-cvd tbody th { text-align: left; color: var(--lab-color-text-muted); font-weight: var(--lab-font-weight-regular); text-transform: capitalize; }
-.gal-cvd__chip { display: inline-block; width: 100%; max-width: 40px; height: 6px; border-radius: 3px; vertical-align: middle; }
+/* Series down, vision across: four columns fit a 390px panel with every header whole. */
+.gal-cvd { width: 100%; border-collapse: collapse; font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); }
+.gal-cvd th, .gal-cvd td { padding: 6px var(--lab-space-1); text-align: center; border-bottom: 1px solid var(--lab-color-border); }
+.gal-cvd thead th { color: var(--lab-color-text-muted); font-weight: var(--lab-font-weight-medium); vertical-align: bottom; }
+.gal-cvd th[scope='row'], .gal-cvd thead th:first-child { text-align: left; white-space: nowrap; color: var(--lab-color-text-muted); font-weight: var(--lab-font-weight-regular); }
+.gal-cvd tfoot td { color: var(--lab-color-text); font-weight: var(--lab-font-weight-medium); }
+.gal-cvd tfoot tr:last-child td { color: var(--lab-color-text-subtle); font-weight: var(--lab-font-weight-regular); }
+.gal-cvd__chip { display: inline-block; width: 100%; max-width: 56px; height: 6px; border-radius: 3px; vertical-align: middle; }
 .gal-swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--lab-space-2) var(--lab-space-3); }
 .gal-swatch { display: grid; grid-template-columns: 28px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: var(--lab-space-2); align-items: center; }
 .gal-swatch__chip { grid-row: span 2; width: 28px; height: 28px; border-radius: var(--lab-radius-sm); border: 1px solid; }

@@ -17,7 +17,8 @@ const artifactFile = (id: ArtifactId) => `artifacts/${id}.json`;
 
 export const ROUTES: readonly RouteDef[] = [
   { id: 'locate', label: 'Locate the tubes', source: 'replay', files: [artifactFile('geometry')] },
-  { id: 'advance', label: 'Advance plasma', source: 'live', files: ['/api/live/status'] },
+  // The live panel reads the status API and replays the archived traces from the transport artifact.
+  { id: 'advance', label: 'Advance plasma', source: 'live', files: ['/api/live/status', artifactFile('transport')] },
   { id: 'transport', label: 'Check transport', source: 'replay', files: [artifactFile('transport')] },
   { id: 'forecast', label: 'Forecast replay', source: 'replay', files: [artifactFile('forecast')] },
   { id: 'spatial', label: 'Spatial parallelism', source: 'replay', files: [artifactFile('spatial')] },

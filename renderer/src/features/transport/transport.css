@@ -1,15 +1,61 @@
-/* Check transport view. Tokens only (var(--lab-…)); no colour literals. Prefix: tr-. */
+/* Check transport view. Tokens only (var(--lab-…)); no colour literals. Prefix: tr-.
+   Narrow layouts use container queries on this view's own wrappers (.tr-verdict-wrap, .tr-stats-wrap,
+   .tr-table-wrap), so a block reflows by the width it actually gets, not by the viewport. */
 .tr-view { display: flex; flex-direction: column; gap: var(--lab-space-4); min-width: 0; }
 .tr-view .lab-callout { margin-top: var(--lab-space-3); }
 .tr-badges { display: flex; flex-wrap: wrap; gap: var(--lab-space-2); align-items: center; justify-content: flex-end; }
+.tr-badge { display: inline-flex; align-items: center; gap: var(--lab-space-1); }
+.tr-badge__name { font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); font-weight: var(--lab-font-weight-semibold); color: var(--lab-color-text-muted); }
 .tr-muted { color: var(--lab-color-text-muted); }
+.tr-source { color: var(--lab-color-text-muted); }
 
+/* Verdict strip (first panel) */
+.tr-verdict-wrap { container-type: inline-size; }
+.tr-verdict__gate { font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text); max-width: 100ch; }
+.tr-verdict { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--lab-space-3) var(--lab-space-4); margin-top: var(--lab-space-3); }
+.tr-verdict__block {
+  min-width: 0;
+  padding: var(--lab-space-3) var(--lab-space-4);
+  border: 1px solid var(--lab-color-border);
+  border-radius: var(--lab-radius-md);
+  background: var(--lab-color-surface-sunken);
+}
+.tr-verdict__title { font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); font-weight: var(--lab-font-weight-semibold); color: var(--lab-color-text); }
+.tr-verdict__stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--lab-space-2) var(--lab-space-4); align-items: start; margin-top: var(--lab-space-2); }
+.tr-verdict__note { margin-top: var(--lab-space-2); font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-sm); color: var(--lab-color-text-subtle); }
+@container (max-width: 880px) {
+  .tr-verdict { grid-template-columns: minmax(0, 1fr); }
+}
+@container (max-width: 420px) {
+  .tr-verdict { gap: var(--lab-space-2); margin-top: var(--lab-space-2); }
+  .tr-verdict__block { padding: var(--lab-space-2) var(--lab-space-3); }
+  .tr-verdict__stats { column-gap: var(--lab-space-2); margin-top: var(--lab-space-1); }
+  /* The PRD-reported figure with its pill is wider than a third of a phone: it takes the first row,
+     the two archive means sit side by side under it. */
+  .tr-verdict__stats--lead { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tr-verdict__stats--lead > :first-child { grid-column: 1 / -1; }
+  .tr-verdict__note { margin-top: var(--lab-space-1); line-height: var(--lab-line-height-xs); }
+}
 
 .tr-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: var(--lab-space-4); }
-.tr-stats { display: flex; flex-wrap: wrap; gap: var(--lab-space-4) var(--lab-space-6); align-items: flex-start; }
 
-/* Window table */
+/* Discrepancy: three equal columns, each Δ under its archive value */
+.tr-stats-wrap { container-type: inline-size; }
+.tr-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--lab-space-4) var(--lab-space-5); align-items: start; }
+.tr-stats__col { display: flex; flex-direction: column; gap: var(--lab-space-2); min-width: 0; }
+@container (max-width: 520px) {
+  .tr-stats { grid-template-columns: minmax(0, 1fr); }
+}
+.tr-delta-line { font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text); padding-top: var(--lab-space-2); border-top: 1px solid var(--lab-color-border); }
+.tr-delta-line__k { color: var(--lab-color-text-muted); }
+.tr-delta { font-weight: var(--lab-font-weight-semibold); }
+.tr-ref-note { display: block; margin-top: var(--lab-space-1); font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-subtle); }
+
+/* Window table. position: relative keeps the visually hidden caption and "Detail for …" text inside
+   the scrolling well (they are absolutely positioned and otherwise widen the page). */
 .tr-table-wrap {
+  position: relative;
+  container-type: inline-size;
   overflow-x: auto;
   margin-top: var(--lab-space-3);
   border: 1px solid var(--lab-color-border);
@@ -36,44 +82,52 @@
 .tr-table td { color: var(--lab-color-text); }
 .tr-table td[data-covered='false'] { color: var(--lab-color-text-muted); }
 .tr-num { text-align: right !important; white-space: nowrap; }
+.tr-cell-unit { display: none; }
 
-.tr-claim {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--lab-space-1);
-  font-weight: var(--lab-font-weight-semibold);
-  white-space: nowrap;
-  padding: 0 var(--lab-space-1);
-  border-radius: var(--lab-radius-sm);
-  border: 1px solid var(--lab-status-blocked-border);
-  background: var(--lab-status-blocked-bg);
-  color: var(--lab-status-blocked-fg);
-}
-.tr-claim[data-allowed='true'] {
-  border-color: var(--lab-status-passed-border);
-  background: var(--lab-status-passed-bg);
-  color: var(--lab-status-passed-fg);
-}
 .tr-claim__why {
   display: block;
   margin-top: var(--lab-space-1);
   font-size: var(--lab-font-size-xs);
   line-height: var(--lab-line-height-xs);
   color: var(--lab-color-text-muted);
-  min-width: 14rem;
+  max-width: 34ch;
+}
+.tr-reason { margin-top: var(--lab-space-1); }
+.tr-key { margin-top: var(--lab-space-2); font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-subtle); max-width: 100ch; }
+
+/* Narrow well: no header row; each window is a card with the claim first and a label on every value. */
+@container (max-width: 640px) {
+  .tr-table thead { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .tr-table, .tr-table tbody { display: block; }
+  .tr-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--lab-space-2) var(--lab-space-3);
+    padding: var(--lab-space-3);
+    border-bottom: 1px solid var(--lab-color-border);
+  }
+  .tr-table tbody tr:last-child { border-bottom: 0; }
+  .tr-table tbody th, .tr-table tbody td { display: block; min-width: 0; padding: 0; border-bottom: 0; white-space: normal; }
+  .tr-table tbody th { grid-column: 1 / -1; order: -2; font-size: var(--lab-font-size-md); line-height: var(--lab-line-height-md); }
+  .tr-table td.tr-cell-claim { grid-column: 1 / -1; order: -1; }
+  .tr-table td.tr-num { text-align: left !important; }
+  .tr-table td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: var(--lab-font-size-2xs);
+    line-height: var(--lab-line-height-2xs);
+    font-weight: var(--lab-font-weight-semibold);
+    letter-spacing: 0.04em;
+    color: var(--lab-color-text-muted);
+  }
+  .tr-cell-unit { display: inline; margin-left: var(--lab-space-1); font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); }
+  .tr-claim__why { max-width: none; }
 }
 
 .tr-details { font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-muted); }
-.tr-details summary { cursor: pointer; color: var(--lab-color-accent-text); width: max-content; }
+.tr-details summary { cursor: pointer; color: var(--lab-color-accent-text); width: max-content; min-height: 24px; line-height: 24px; }
 .tr-details p { margin-top: var(--lab-space-1); max-width: 72ch; }
 .tr-details--row { margin-top: var(--lab-space-1); }
-
-/* Discrepancy */
-.tr-deltas { list-style: none; margin: var(--lab-space-4) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--lab-space-2); }
-.tr-deltas li { font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text); }
-.tr-deltas li > span:first-child { display: inline-block; min-width: 6.5rem; color: var(--lab-color-text-muted); }
-.tr-delta { font-weight: var(--lab-font-weight-semibold); }
-.tr-ref-note { display: block; font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-subtle); }
 
 .tr-tri-label { margin-top: var(--lab-space-3); font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text-muted); }
 

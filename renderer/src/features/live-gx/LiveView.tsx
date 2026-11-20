@@ -1,6 +1,8 @@
-// Advance plasma (task 06, L9–L10). Polls /api/live/status via useLiveStatus. LIVE appears ONLY when
-// the API reports mode "live"; every other state plays saved evidence and says so. Launch needs mode
-// idle + budget.slotFits + an explicit confirmation of the slot cost; Terminate is always loud on failure.
+// Advance plasma (task 06, L9–L10). Reads the shared live status (lib/liveStatus.ts, one poller for
+// the whole app). LIVE appears ONLY when the API reports mode "live" on a current, valid answer; every
+// other state plays saved evidence and says so. Launch needs a fresh idle snapshot + budget.slotFits +
+// an explicit confirmation of the exact slot cost, and locks after one POST. Terminate stays available
+// whenever a session may still be billing, and every unconfirmed termination is a loud alert.
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import {
   Callout,
@@ -12,10 +14,21 @@ import {
   Unit,
   formatNumber,
   useResolvedTheme,
-  type Provenance,
 } from '../../design';
 import { useArtifact, type ArtifactState } from '../../lib/artifacts';
-import { useLiveStatus, type LiveState, type LiveStatus, type LiveWorker } from '../../lib/liveStatus';
+import {
+  fetchSavedRun,
+  isLive,
+  liveDanger,
+  liveStatusStore,
+  postLiveLaunch,
+  postLiveTerminate,
+  terminationProblem,
+  useLiveStatus,
+  type LiveState,
+  type LiveStatus,
+  type LiveWorker,
+} from '../../lib/liveStatus';
 import { PlotlyChart } from '../transport/PlotlyChart';
 import type { TransportArtifact } from '../transport/types';
 import { TIME_UNIT, FLUX_UNIT, playFigure } from './chart';
@@ -26,11 +39,12 @@ import {
   clockAdvance,
   launchBlockedReason,
   modeView,
+  overlapClaim,
   savedRunQualified,
   savedRunSeries,
   savedRunToFetch,
-  statusTerminateFailure,
   trackClocks,
+  type ClockTrack,
   type Clocks,
   type PlaySeries,
   type SavedRun,
@@ -45,10 +59,12 @@ export interface LiveViewProps {
   autoPlay?: boolean;
 }
 
-// The contract allows an optional provenance on the status; lib's LiveStatus type omits it.
-const provenanceOf = (d: LiveStatus | null): Provenance | undefined => (d as (LiveStatus & { provenance?: Provenance }) | null)?.provenance;
+type Budget = LiveStatus['budget'];
 
 const usd = (v: number) => `$${formatNumber(v, 2)}`;
+/** The slot cost exactly as it will be sent: cents when that is exact, the full number otherwise. */
+const usdExact = (v: number) => (Number(v.toFixed(2)) === v ? `$${v.toFixed(2)}` : `$${String(v)}`);
+const seconds = (ms: number) => formatNumber(ms / 1000, 1);
 
 type SavedRunState =
   | { status: 'none' }
@@ -65,15 +81,10 @@ function useSavedRun(id: string | null): SavedRunState {
     }
     let alive = true;
     setState({ status: 'loading', id });
-    fetch(`/api/live/runs/${encodeURIComponent(id)}`, { headers: { Accept: 'application/json' } })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`/api/live/runs/${id}: HTTP ${res.status}`);
-        return (await res.json()) as SavedRun;
-      })
-      .then(
-        (run) => alive && setState({ status: 'ready', id, run }),
-        (e: unknown) => alive && setState({ status: 'error', id, message: e instanceof Error ? e.message : String(e) }),
-      );
+    fetchSavedRun(id).then(
+      (run) => alive && setState({ status: 'ready', id, run }),
+      (e: unknown) => alive && setState({ status: 'error', id, message: e instanceof Error ? e.message : String(e) }),
+    );
     return () => {
       alive = false;
     };
@@ -81,77 +92,112 @@ function useSavedRun(id: string | null): SavedRunState {
   return state;
 }
 
-interface PostResult {
-  httpOk: boolean;
-  status: number;
-  body: { ok?: boolean; reason?: string } | null;
-}
-async function postJson(url: string, body: unknown): Promise<PostResult> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify(body),
-  });
-  let parsed: PostResult['body'] = null;
-  try {
-    parsed = (await res.json()) as PostResult['body'];
-  } catch {
-    parsed = null;
-  }
-  return { httpOk: res.ok, status: res.status, body: parsed };
+/** accepted = 2xx ok; refused = the backend's 409; unknown = anything else (no answer, proxy error). */
+interface LaunchAttempt {
+  outcome: 'pending' | 'accepted' | 'refused' | 'unknown';
+  text: string;
 }
 
 export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
   const live = useLiveStatus(pollMs);
   const transport = useArtifact<TransportArtifact>('transport');
-  const mv = modeView(live);
   const saved = useSavedRun(savedRunToFetch(live));
   const [clocks, setClocks] = useState<Clocks>({});
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [launchMsg, setLaunchMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [dialog, setDialog] = useState<Budget | null>(null); // the budget shown in the open confirmation
+  const [dialogClosed, setDialogClosed] = useState<string | null>(null);
+  const [launch, setLaunch] = useState<LaunchAttempt | null>(null);
   const [terminate, setTerminate] = useState<{ ok: boolean; reason: string } | null>(null);
-  const [busy, setBusy] = useState<'launch' | 'terminate' | null>(null);
+  const [terminating, setTerminating] = useState(0);
+  const [clearedSinceLaunch, setClearedSinceLaunch] = useState(false);
+  const posting = useRef(false);
   const launchRef = useRef<HTMLButtonElement>(null);
   const data = live.status === 'ready' ? live.data : null;
 
   useEffect(() => {
-    if (data) setClocks((c) => trackClocks(c, data.workers));
-  }, [data]);
+    if (live.status === 'ready' && live.receivedAt !== undefined) {
+      const at = live.receivedAt;
+      setClocks((c) => trackClocks(c, live.data.workers, at));
+    }
+  }, [live]);
 
-  const statusTermFail = statusTerminateFailure(live);
   const termFailed = terminate !== null && !terminate.ok;
-  const launchEnabled = canLaunch(live) && busy === null;
-  const terminateEnabled = canTerminate(live, termFailed) && busy !== 'terminate';
-  const isLiveNow = data?.mode === 'live';
+  // A failed Terminate answered to this page is a danger state even before the status poll says so.
+  const localProblem = termFailed
+    ? (terminationProblem(terminate.reason) ?? { marker: 'TERMINATE FAILED' as const, title: 'TERMINATE FAILED — GPUs may still be billing', reason: terminate.reason })
+    : null;
+  const statusProblem = terminationProblem(live);
+  const problem = localProblem ?? statusProblem;
+  const danger = liveDanger(live);
+  const mv = modeView(live, localProblem);
+  const isLiveNow = isLive(live);
+
+  const launchUnconfirmed = live.launchLocked === true && launch?.outcome !== 'refused' && !clearedSinceLaunch;
+  const launchEnabled = canLaunch(live, Date.now()) && launch?.outcome !== 'pending';
+  const terminateEnabled = canTerminate(live, { terminateFailed: termFailed, launchUnconfirmed });
+
+  const closeDialog = (why: string | null) => {
+    setDialog(null);
+    setDialogClosed(why);
+    launchRef.current?.focus();
+  };
+
+  // The open confirmation is valid only while launching is still allowed at the cost it shows.
+  useEffect(() => {
+    if (!dialog) return;
+    const blocked = launchBlockedReason(live, Date.now());
+    const cost = live.status === 'ready' ? live.data.budget.slotEstimateUsd : null;
+    if (blocked) closeDialog(blocked);
+    else if (cost !== null && cost !== dialog.slotEstimateUsd) {
+      closeDialog(`the slot estimate changed from ${usdExact(dialog.slotEstimateUsd)} to ${usdExact(cost)}; open the confirmation again to see the new cost.`);
+    }
+  }, [live, dialog]);
+
+  const openDialog = () => {
+    const now = liveStatusStore.getState();
+    if (now.status !== 'ready' || !canLaunch(now, Date.now())) return;
+    setDialogClosed(null);
+    setDialog(now.data.budget);
+  };
 
   const doLaunch = async (cost: number) => {
-    setDialogOpen(false);
-    setBusy('launch');
-    setLaunchMsg(null);
+    if (posting.current) return; // a second click in the same frame
+    const now = liveStatusStore.getState();
+    const blocked = launchBlockedReason(now, Date.now());
+    if (blocked || now.status !== 'ready' || now.data.budget.slotEstimateUsd !== cost) {
+      closeDialog(blocked ?? 'the slot estimate changed; open the confirmation again to see the new cost.');
+      return;
+    }
+    posting.current = true;
+    liveStatusStore.lockLaunch(); // before the request leaves: no second POST until the mode changes
+    setDialog(null);
+    setDialogClosed(null);
+    setClearedSinceLaunch(false);
+    setLaunch({ outcome: 'pending', text: '' });
     try {
-      const r = await postJson('/api/live/launch', { confirmCostUsd: cost });
-      const ok = r.httpOk && r.body?.ok === true;
-      setLaunchMsg({ ok, text: r.body?.reason ?? `HTTP ${r.status}` });
-    } catch (e) {
-      setLaunchMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+      const r = await postLiveLaunch(cost);
+      const outcome = r.ok ? 'accepted' : r.httpStatus === 409 ? 'refused' : 'unknown';
+      setLaunch({ outcome, text: r.reason });
+      // Show what the backend says now, not the idle snapshot from before the POST.
+      if (!r.status || !liveStatusStore.apply(r.status)) void liveStatusStore.refresh();
     } finally {
-      setBusy(null);
+      posting.current = false;
       launchRef.current?.focus();
     }
   };
 
   const doTerminate = async () => {
-    setBusy('terminate');
+    setTerminating((n) => n + 1);
     try {
-      const r = await postJson('/api/live/terminate', {});
-      const ok = r.httpOk && r.body?.ok === true;
-      setTerminate({ ok, reason: r.body?.reason ?? `HTTP ${r.status}` });
-    } catch (e) {
-      setTerminate({ ok: false, reason: `No response from /api/live/terminate (${e instanceof Error ? e.message : String(e)}); termination is unconfirmed.` });
+      const r = await postLiveTerminate();
+      setTerminate({ ok: r.ok, reason: r.httpStatus === null ? `${r.reason}; termination is unconfirmed.` : r.reason });
+      if (r.ok) setClearedSinceLaunch(true);
+      if (!r.status || !liveStatusStore.apply(r.status)) void liveStatusStore.refresh();
     } finally {
-      setBusy(null);
+      setTerminating((n) => n - 1);
     }
   };
+
+  const provenance = data?.provenance;
 
   return (
     <div className="lg-view">
@@ -162,37 +208,67 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
         status={
           <div className="lg-pills" data-testid="mode-pills">
             {mv.pills.map((p) => (
-              <StatusPill key={p.text} status={p.status} size="md">
+              <StatusPill key={`${p.status}:${p.text}`} status={p.status} size="md">
                 {p.text}
               </StatusPill>
             ))}
-            {provenanceOf(data) && <ProvenanceBadge provenance={provenanceOf(data)!} subject="live GX status" />}
+            {provenance && <ProvenanceBadge provenance={provenance} subject="live GX status" />}
           </div>
         }
       >
-        {(statusTermFail || termFailed) && (
+        {problem && (
           <div className="lg-danger" role="alert" data-testid="terminate-failed">
             <Icon name="alert" size={20} />
             <div>
-              <p className="lg-danger__title">TERMINATE FAILED — GPUs may still be billing</p>
+              <p className="lg-danger__title">{problem.title}</p>
               <p className="lg-danger__body">
-                {termFailed ? terminate?.reason : statusTermFail} Retry Terminate, and check the Modal dashboard until both
-                workers are confirmed stopped.
+                {problem.reason} Retry Terminate, and check the Modal dashboard until both workers are confirmed stopped.
+              </p>
+            </div>
+          </div>
+        )}
+        {danger?.kind === 'connection-lost' && (
+          <div className="lg-danger" role="alert" data-testid="connection-lost">
+            <Icon name="alert" size={20} />
+            <div>
+              <p className="lg-danger__title">{danger.title}</p>
+              <p className="lg-danger__body">
+                {danger.detail} Terminate stays available below; also check the Modal dashboard until both workers are
+                confirmed stopped.
+              </p>
+            </div>
+          </div>
+        )}
+        {launchUnconfirmed && launch?.outcome === 'unknown' && (
+          <div className="lg-danger" role="alert" data-testid="launch-unknown">
+            <Icon name="alert" size={20} />
+            <div>
+              <p className="lg-danger__title">Launch not confirmed — a session may have started</p>
+              <p className="lg-danger__body">
+                {launch.text}. The request left this page but its outcome is unknown, so a session may have started and
+                GPUs may be billing. Use Terminate, and check the Modal dashboard.
               </p>
             </div>
           </div>
         )}
 
         <div className="lg-banner" data-tone={mv.tone} data-live={isLiveNow} data-testid="mode-banner">
-          <p className="lg-banner__title">{mv.title}</p>
-          <p className="lg-banner__body">
-            {live.status === 'ready'
-              ? live.data.reason
-              : live.status === 'unreachable'
-                ? `${live.message}. No backend is answering (static replay build), so nothing can be launched from here.`
-                : 'Waiting for the first status poll.'}
-          </p>
-          {data && data.fallback.label && <p className="lg-banner__body lg-banner__fallback">{data.fallback.label}</p>}
+          <Icon name={mv.icon} size={18} className="lg-banner__icon" />
+          <div className="lg-banner__text">
+            <p className="lg-banner__title">{mv.title}</p>
+            <p className="lg-banner__body">
+              {live.status === 'ready'
+                ? statusProblem
+                  ? 'The API reason is quoted in the alert above. This label stays until the API reports the termination as confirmed.'
+                  : live.data.reason
+                : live.status === 'connecting'
+                  ? 'Waiting for the first status poll.'
+                  : danger || live.cause === 'stale'
+                    ? `${live.message}. Polling continues; this page updates as soon as the API answers again.`
+                    : `${live.message}. No backend is answering (static replay build), so nothing can be launched from here.`}
+            </p>
+            {data && data.fallback.label && <p className="lg-banner__body lg-banner__fallback">{data.fallback.label}</p>}
+          </div>
         </div>
 
         <BudgetLine live={live} />
@@ -203,29 +279,29 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
             type="button"
             className="lg-btn lg-btn--primary"
             disabled={!launchEnabled}
-            aria-describedby={launchEnabled ? undefined : 'lg-launch-why'}
-            onClick={() => setDialogOpen(true)}
+            aria-describedby={!launchEnabled && launch?.outcome !== 'pending' ? 'lg-launch-why' : undefined}
+            onClick={openDialog}
           >
-            {busy === 'launch' ? 'Launching…' : 'Launch live slot…'}
+            {launch?.outcome === 'pending' ? 'Launching…' : 'Launch live slot…'}
           </button>
-          <button
-            type="button"
-            className="lg-btn lg-btn--danger"
-            disabled={!terminateEnabled}
-            onClick={doTerminate}
-          >
-            {busy === 'terminate' ? 'Terminating…' : termFailed || statusTermFail ? 'Retry terminate' : 'Terminate'}
+          <button type="button" className="lg-btn lg-btn--danger" disabled={!terminateEnabled} aria-busy={terminating > 0} onClick={doTerminate}>
+            {terminating > 0 ? 'Terminating… (send again)' : termFailed || statusProblem ? 'Retry terminate' : 'Terminate'}
           </button>
-          {!launchEnabled && busy === null && (
+          {!launchEnabled && launch?.outcome !== 'pending' && (
             <span id="lg-launch-why" className="lg-why">
-              Launch disabled: {launchBlockedReason(live)}
+              Launch disabled: {launchBlockedReason(live, Date.now())}
             </span>
           )}
         </div>
-        {launchMsg && (
-          <p className="lg-msg" role={launchMsg.ok ? 'status' : 'alert'} data-ok={launchMsg.ok}>
-            {launchMsg.ok ? 'Launch accepted: ' : 'Launch refused: '}
-            {launchMsg.text.replace(/^launch refused:\s*/i, '')}
+        {dialogClosed && (
+          <p className="lg-msg" role="status" aria-label="Launch confirmation closed" data-ok="false">
+            Launch confirmation closed, nothing was sent: {dialogClosed}
+          </p>
+        )}
+        {launch && (launch.outcome === 'accepted' || launch.outcome === 'refused') && (
+          <p className="lg-msg" role={launch.outcome === 'accepted' ? 'status' : 'alert'} data-ok={launch.outcome === 'accepted'}>
+            {launch.outcome === 'accepted' ? 'Launch accepted: ' : 'Launch refused: '}
+            {launch.text.replace(/^launch refused:\s*/i, '')}
           </p>
         )}
         {terminate?.ok && (
@@ -233,12 +309,10 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
             Terminate confirmed: {terminate.reason}
           </p>
         )}
-        {dialogOpen && data && (
-          <ConfirmLaunch status={data} onCancel={() => { setDialogOpen(false); launchRef.current?.focus(); }} onConfirm={doLaunch} />
-        )}
+        {dialog && <ConfirmLaunch budget={dialog} onCancel={() => closeDialog(null)} onConfirm={doLaunch} />}
       </Panel>
 
-      {data && data.workers.length > 0 && <Workers status={data} clocks={clocks} />}
+      {data && data.workers.length > 0 && <Workers status={data} live={isLiveNow} clocks={clocks} />}
 
       {isLiveNow && data ? (
         <LiveChart workers={data.workers} />
@@ -257,19 +331,18 @@ function BudgetLine({ live }: { live: LiveState }) {
   return (
     <p className="lg-budget lab-num" data-testid="budget-line">
       Budget guard: billed {usd(b.billedUsd)} + pending {usd(b.pendingUsd)} of the {usd(b.ceilingUsd)} ceiling · next slot{' '}
-      {usd(b.slotEstimateUsd)} (incl. setup, idle and storage)
+      {usdExact(b.slotEstimateUsd)} (incl. setup, idle and storage)
       {b.hardTimeoutS !== undefined ? ` · hard timeout ${b.hardTimeoutS} s` : ''} ·{' '}
       <strong>{b.slotFits ? 'slot fits' : 'slot does NOT fit'}</strong>
     </p>
   );
 }
 
-function ConfirmLaunch({ status, onCancel, onConfirm }: { status: LiveStatus; onCancel: () => void; onConfirm: (cost: number) => void }) {
+/** `budget` is frozen by the parent when the dialog opens: the cost shown is exactly the cost sent. */
+function ConfirmLaunch({ budget: b, onCancel, onConfirm }: { budget: Budget; onCancel: () => void; onConfirm: (cost: number) => void }) {
   const id = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
-  // Freeze the price the user is shown; the POST confirms exactly this figure.
-  const [b] = useState(status.budget);
   useEffect(() => cancelRef.current?.focus(), []);
   const after = b.billedUsd + b.pendingUsd + b.slotEstimateUsd;
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -300,13 +373,13 @@ function ConfirmLaunch({ status, onCancel, onConfirm }: { status: LiveStatus; on
           <p>
             Two A100-40GB workers (GPU 0 bean, GPU 1 triangular) on Modal. The budget guard estimates this slot at{' '}
             <strong className="lab-num" data-testid="confirm-cost">
-              {usd(b.slotEstimateUsd)}
+              {usdExact(b.slotEstimateUsd)}
             </strong>{' '}
             including setup, idle margin and storage
             {b.hardTimeoutS !== undefined ? <>, with a hard timeout of <span className="lab-num">{b.hardTimeoutS} s</span></> : null}.
           </p>
           <p className="lab-num">
-            Billed {usd(b.billedUsd)} + pending {usd(b.pendingUsd)} + this slot {usd(b.slotEstimateUsd)} = {usd(after)} of the{' '}
+            Billed {usd(b.billedUsd)} + pending {usd(b.pendingUsd)} + this slot {usdExact(b.slotEstimateUsd)} = {usd(after)} of the{' '}
             {usd(b.ceilingUsd)} ceiling.
           </p>
         </div>
@@ -315,7 +388,7 @@ function ConfirmLaunch({ status, onCancel, onConfirm }: { status: LiveStatus; on
             Cancel
           </button>
           <button ref={confirmRef} type="button" className="lg-btn lg-btn--primary" onClick={() => onConfirm(b.slotEstimateUsd)}>
-            Confirm launch — {usd(b.slotEstimateUsd)}
+            Confirm launch — {usdExact(b.slotEstimateUsd)}
           </button>
         </div>
       </div>
@@ -323,10 +396,9 @@ function ConfirmLaunch({ status, onCancel, onConfirm }: { status: LiveStatus; on
   );
 }
 
-function Workers({ status, clocks }: { status: LiveStatus; clocks: Clocks }) {
-  const live = status.mode === 'live';
+function Workers({ status, live, clocks }: { status: LiveStatus; live: boolean; clocks: Clocks }) {
   const workers = [...status.workers].sort((a, b) => a.gpuIndex - b.gpuIndex);
-  const running = workers.filter((w) => w.state === 'running' || w.state === 'initializing');
+  const overlap = overlapClaim(workers, live);
   return (
     <Panel
       eyebrow="Advance plasma"
@@ -337,24 +409,23 @@ function Workers({ status, clocks }: { status: LiveStatus; clocks: Clocks }) {
     >
       <div className="lg-workers">
         {workers.map((w) => (
-          <WorkerCard key={w.gpuIndex} w={w} advance={clockAdvance(clocks[w.gpuIndex])} />
+          <WorkerCard key={w.gpuIndex} w={w} track={clocks[w.gpuIndex]} />
         ))}
       </div>
       {workers.length === 2 && (
-        <p className="lg-overlap" data-testid="overlap">
-          {running.length === 2
-            ? 'Both solvers are executing concurrently on separate devices.'
-            : `Concurrent execution not shown: ${running.length} of 2 workers running.`}
-          {workers[0]?.deviceId === workers[1]?.deviceId && ' Warning: both workers report the same device ID.'}
+        <p className="lg-overlap" data-testid="overlap" data-concurrent={overlap.concurrent}>
+          {overlap.text}
         </p>
       )}
     </Panel>
   );
 }
 
-function WorkerCard({ w, advance }: { w: LiveWorker; advance: number | null }) {
+function WorkerCard({ w, track }: { w: LiveWorker; track: ClockTrack | undefined }) {
   const expected = EXPECTED_TUBE[w.gpuIndex];
   const last = w.samples[w.samples.length - 1];
+  const advance = clockAdvance(track);
+  const hasDevice = w.deviceId.trim() !== '';
   return (
     <article className="lg-worker" aria-label={`GPU ${w.gpuIndex}, ${w.tube} tube`} data-testid={`worker-${w.gpuIndex}`}>
       <header className="lg-worker__head">
@@ -365,21 +436,49 @@ function WorkerCard({ w, advance }: { w: LiveWorker; advance: number | null }) {
         </span>
       </header>
       <p className="lg-worker__dev">
-        Device ID <span className="lab-mono" data-testid={`device-${w.gpuIndex}`}>{w.deviceId}</span>
+        Device ID{' '}
+        <span className={hasDevice ? 'lab-mono' : 'lg-worker__nodev'} data-testid={`device-${w.gpuIndex}`}>
+          {hasDevice ? w.deviceId : 'not reported yet'}
+        </span>
       </p>
       {w.tube !== expected && (
         <p className="lg-worker__warn">Expected the {expected} tube on GPU {w.gpuIndex}.</p>
       )}
       <div className="lg-worker__stats">
         <Stat label={`GPU ${w.gpuIndex} sim clock`} value={w.simTime} unit={TIME_UNIT} decimals={1} />
-        <Stat label={`GPU ${w.gpuIndex} flux samples`} value={w.samples.length} unit="dimensionless" decimals={0} note={last ? `latest Q = ${formatNumber(last.Q, 3)} at t = ${formatNumber(last.t, 1)}` : undefined} />
+        <Stat
+          label={`GPU ${w.gpuIndex} flux samples`}
+          value={w.samples.length}
+          unit="dimensionless"
+          decimals={0}
+          note={
+            last ? (
+              <>
+                latest Q = {formatNumber(last.Q, 3)} <Unit unit={FLUX_UNIT} /> at t = {formatNumber(last.t, 1)} <Unit unit={TIME_UNIT} />
+              </>
+            ) : undefined
+          }
+        />
       </div>
-      <p className="lg-worker__clock" data-testid={`clock-${w.gpuIndex}`} data-advancing={advance !== null && advance > 0}>
-        {advance === null
-          ? 'Clock: waiting for a second reading'
-          : advance > 0
-            ? `Clock advancing: +${formatNumber(advance, 1)} since the previous reading`
-            : 'Clock not advancing since the previous reading'}
+      {/* Evidence-based: a claim needs two timestamped status readings; "advancing" needs them to differ. */}
+      <p className="lg-worker__clock" data-testid={`clock-${w.gpuIndex}`} data-advancing={advance !== null && advance.delta > 0}>
+        {advance === null ? (
+          'Clock: waiting for a second reading'
+        ) : advance.delta > 0 ? (
+          <>
+            Clock advancing: +{formatNumber(advance.delta, 1)} <Unit unit={TIME_UNIT} /> between two readings {seconds(advance.overMs)} s apart
+          </>
+        ) : advance.delta === 0 ? (
+          <>
+            Clock not advancing: unchanged at {formatNumber(w.simTime, 1)} <Unit unit={TIME_UNIT} /> between two readings{' '}
+            {seconds(advance.overMs)} s apart
+          </>
+        ) : (
+          <>
+            Clock not advancing: it went back by {formatNumber(-advance.delta, 1)} <Unit unit={TIME_UNIT} /> between two readings{' '}
+            {seconds(advance.overMs)} s apart
+          </>
+        )}
       </p>
       {w.error && <p className="lg-worker__error" role="alert">Worker error: {w.error}</p>}
     </article>

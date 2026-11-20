@@ -1,8 +1,9 @@
 /// <reference types="vitest/config" />
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import { cpSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { cpSync, createReadStream, existsSync, statSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
+import type { Readable } from 'node:stream';
 
 // The renderer never imports backend code. It reads versioned JSON from
 // ../artifacts (produced by main/) and talks to the main process over HTTP
@@ -10,17 +11,39 @@ import { resolve } from 'node:path';
 // needs $0 of compute and no backend at all.
 const ARTIFACTS = resolve(import.meta.dirname, '../artifacts');
 
+/**
+ * Map a request below /artifacts to a file, or null when it must not be served: anything that is
+ * not a regular file strictly inside `root`. Containment is decided on whole path segments (the
+ * resolved path must continue after `root` + separator) — a bare string-prefix test would admit a
+ * sibling folder such as `artifacts-private/`.
+ */
+export function resolveArtifactRequest(root: string, url: string | undefined): string | null {
+  if (url === undefined) return null;
+  const base = resolve(root);
+  const file = resolve(base, '.' + url.split('?')[0]);
+  if (!file.startsWith(base + sep)) return null;
+  try {
+    return statSync(file).isFile() ? file : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Dev server: serve ../artifacts at /artifacts. */
-function serveArtifacts(): Plugin {
+export function serveArtifacts(root = ARTIFACTS, open: (file: string) => Readable = createReadStream): Plugin {
   return {
     name: 'labyrinth-artifacts-serve',
     apply: 'serve',
     configureServer(server) {
       server.middlewares.use('/artifacts', (req, res, next) => {
-        const file = resolve(ARTIFACTS, '.' + (req.url ?? '').split('?')[0]);
-        if (!file.startsWith(ARTIFACTS) || !existsSync(file)) return next();
+        const file = resolveArtifactRequest(root, req.url);
+        if (!file) return next();
+        const stream = open(file);
+        // A read error (file removed or unreadable after the check) must not take the dev server down:
+        // hand it to the server's error handler, or cut the response if part of it was already sent.
+        stream.once('error', (err) => (res.headersSent ? res.destroy(err) : next(err)));
         res.setHeader('Content-Type', 'application/json');
-        import('node:fs').then((fs) => fs.createReadStream(file).pipe(res));
+        stream.pipe(res);
       });
     },
   };

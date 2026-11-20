@@ -4,6 +4,7 @@ import {
   formatNumber,
   plotLayout,
   seriesStyle,
+  spokenUnit,
   themes,
   type PlotLayout,
   type ThemeName,
@@ -60,7 +61,7 @@ export function playFigure(
     .map((s) => {
       const n = cursor === null ? s.t.length : countUpTo(s.t, cursor);
       const last = n > 0 ? s.Q[n - 1] : null;
-      return `${s.name}: ${n} of ${s.t.length} samples shown${last != null ? `, latest Q = ${formatNumber(last, 3)}` : ''}`;
+      return `${s.name}: ${n} of ${s.t.length} samples shown${last != null ? `, latest Q = ${formatNumber(last, 3)} ${spokenUnit(FLUX_UNIT)}` : ''}`;
     })
     .join('; ');
   return { data, layout, summary: `${summary}.` };

@@ -7,6 +7,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        # Full history: scripts/check_docs.py compares a DONE task's files with the commit its VERIFY.md
+        # names, and fails (exit 2) when that commit is not in the clone.
+        with: { fetch-depth: 0 }
       - uses: actions/setup-python@v5
         with: { python-version: "3.13" }
       - uses: actions/setup-node@v4

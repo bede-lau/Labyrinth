@@ -46,10 +46,16 @@ export function ValidationPanel({ g }: { g: GeometryArtifact }) {
           <Stat label="Max |Δ| in |B|" value={ref.maxAbsError} unit="B_ref" decimals={6} />
           <Stat label="Max relative Δ" value={ref.maxRelError * 100} unit="%" decimals={4} />
         </div>
-        {f64 && (
+        {f64 ? (
           <p className="geo-check__text" data-testid="float64">
             Against stella’s float64 output (out.nc): max |Δ| in |B| <Sci value={f64.maxAbsError} /> B<sub>ref</sub> over{' '}
             {f64.samples} samples.
+          </p>
+        ) : (
+          // No contract field carries the float64 comparison; it lives in the provenance sentence. If that
+          // sentence cannot be read as numbers, show it as written rather than dropping the statement.
+          <p className="geo-check__text" data-testid="verification-record">
+            Verification record (from the artifact): {g.provenance.verification.details}
           </p>
         )}
         <p className="geo-check__source">

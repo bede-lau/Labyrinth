@@ -167,6 +167,20 @@ agent has approved that change (D-012 still holds; the review happens on the wor
 Engineers, verifiers and reviewers never commit. `claude/focused-cori-6s5ucw` stays on GitHub as the hand-over snapshot.
 **Consequences.** `main` can carry tasks that are not `DONE`; `status.md` §2, not the branch, says what is verified.
 
+## D-022 · A task is DONE only on a genuine, whole-task, current PASS (replaces the phrase list in `check_docs.py`)
+**Context.** Scaffold review SC-5: the DONE gate accepted a final `Verdict: FAILED` / `**Verdict: FAIL**` / `Verdict: PARTIAL` after an older PASS,
+accepted verdicts that predated later fix rounds, and its "partial verification" phrase list was trivially dodged.
+**Decision.** `scripts/check_docs.py` requires, for a task whose Status is DONE:
+1. *Verdict.* The last line with "verdict" among its first three words must be exactly `Verdict: PASS` and must be the last non-blank line of `VERIFY.md`.
+2. *Coverage.* The final run (everything after the last `Verifier run` line) has an outcome table (header ending `| Result |`) with a row for every outcome ID
+   under TASK.md "## Expected outcome", each Result cell starting with `PASS`.
+3. *Currency.* The last `Verifier run: <date>, commit <sha>` line names the verified commit; the files the task owns (backticked paths under TASK.md `## Owner`,
+   at least one, each must exist) are identical in that commit and in the working tree, with no untracked file under them. So the final run is always on a committed tree.
+4. *No history.* `.git` present but git cannot answer (missing, shallow, unknown sha) → exit 2 (`ci.yml` now checks out with `fetch-depth: 0`). No `.git` in a
+   `scripts/probe-copy.sh` copy (marker `.labyrinth-probe-copy`) → stderr warning, rules 1–2 still decide. No `.git` anywhere else → exit 2.
+**Consequences.** Any change to a task's owned files after its verified commit reopens the task until a verifier runs again: a passing task that a later fix round
+touches is no longer DONE-able (01, 03, 05 after wave 2). Every TASK.md needs backticked owned paths under `## Owner`. Verifiers follow the format in `.claude/agents/verifier.md`.
+
 ## D-014 · (not adopted) "Wave mode" for the orchestrator's Stop hook
 **Context.** With parallel agents editing one working tree, the Stop hook (`verify.sh all` on the shared tree)
 repeatedly blocked the orchestrator on files it must not touch. A proposal to verify committed HEAD in a clean

@@ -48,8 +48,9 @@ backend-engineer (main/), frontend-engineer (renderer/), design-lead (renderer/s
 review), verifier (external verification, writes VERIFY.md), reviewer (read-only code review).
 
 ## Current stage
-Build stage handed over on 2026-11-20 with **nothing marked DONE**: backends of 01–05 are verified+approved; live GX (06/07), the design system (08),
-the shell (09) and all frontend views are built but **not** externally verified. `status.md` §4 is the work queue.
+Session 2 (2026-11-20) was stopped by the owner when the usage budget ran low; **nothing is marked DONE**. Wave 1 verified and reviewed everything once
+(01, 03, 05 passed; 02, 04, 08, 09 failed; every review requested changes); wave 2 fixed the design system, the gates and most frontend/backend findings but
+was **not re-reviewed or re-verified**. **Start at the HANDOVER section at the top of `status.md`**: it lists what is open and the exact next steps.
 
 ## Honesty rules (non-negotiable)
 - Never present replayed or PRD-reported numbers as live or as recomputed.

@@ -36,9 +36,13 @@ export type CalloutTone = (typeof CALLOUT_TONES)[number];
 export interface StatusColors {
   /** Text and icon colour. ≥ 4.5:1 on `bg` and on every surface. */
   fg: string;
-  /** Tinted fill behind the pill / row. */
+  /** Tinted fill behind the pill / row. `live` is the only solid fill: ≥ 3:1 against every surface. */
   bg: string;
-  /** Hairline around the pill (decorative; the text carries meaning). */
+  /**
+   * Outline of the pill. A hairline for most kinds (the icon and text carry the meaning). For the
+   * kinds drawn DASHED (prd-reported, unverified) the dash itself means "not backed by data in
+   * this repo", so those two are ≥ 3:1 against every surface and against their own tint.
+   */
   border: string;
 }
 
@@ -84,11 +88,14 @@ export interface PlotTokens {
   grid: string;
   axis: string;
   zero: string;
-  /** Shading for the analysis windows (200–300, 300–400, …). */
+  /** Shading for the analysis windows (200–300, 300–400, …). An alpha fill: the data stays visible through it. */
   windowShade: string;
+  /** Dotted boundary of an analysis window. Opaque, ≥ 3:1 on the plot, on the shade and on the unsampled fill. */
   windowEdge: string;
   /** Gray = unsampled / not covered. */
   unsampled: string;
+  /** Opacity of the `unsampled` gray when it covers a range of a chart (the data stays visible around it). */
+  unsampledAlpha: number;
   /** Opacity applied to a series colour for its ±1σ sampling-uncertainty band. */
   bandAlpha: number;
 }
@@ -149,8 +156,8 @@ const light: ThemeTokens = {
     rehearsal: { fg: '#3a4796', bg: '#eceefa', border: '#c3c9ec' },
     archive: { fg: '#2c5674', bg: '#e8f0f6', border: '#bcd0e0' },
     derived: { fg: '#086a6b', bg: '#e2f1f0', border: '#a9d4d2' },
-    'prd-reported': { fg: '#6c5715', bg: '#f7f2e3', border: '#cfbd84' },
-    unverified: { fg: '#56686f', bg: '#f6f8f9', border: '#8a9ba2' },
+    'prd-reported': { fg: '#6c5715', bg: '#f7f2e3', border: '#96803a' },
+    unverified: { fg: '#56686f', bg: '#f6f8f9', border: '#73868e' },
     passed: { fg: '#1d6a39', bg: '#e5f3e9', border: '#a3d2b1' },
     failed: { fg: '#b3261e', bg: '#fcebea', border: '#efb0aa' },
     blocked: { fg: '#673f9c', bg: '#f1ecf8', border: '#cbb9e4' },
@@ -178,8 +185,9 @@ const light: ThemeTokens = {
     axis: '#73868e',
     zero: '#c3ced3',
     windowShade: 'rgba(11, 127, 128, 0.07)',
-    windowEdge: 'rgba(11, 127, 128, 0.45)',
+    windowEdge: '#238c8d',
     unsampled: '#c9d2d6',
+    unsampledAlpha: 0.35,
     bandAlpha: 0.18,
   },
   scene: {
@@ -219,12 +227,12 @@ const dark: ThemeTokens = {
     shadow: 'rgba(0, 0, 0, 0.5)',
   },
   status: {
-    live: { fg: '#ffffff', bg: '#cf1739', border: '#cf1739' },
+    live: { fg: '#ffffff', bg: '#da2a48', border: '#da2a48' },
     replay: { fg: '#b4c2c8', bg: '#18252b', border: '#34464e' },
     rehearsal: { fg: '#aab4f2', bg: '#181d36', border: '#3a4584' },
     archive: { fg: '#97bfe2', bg: '#12212d', border: '#2e4d66' },
     derived: { fg: '#6fcfcb', bg: '#0f2627', border: '#245e5d' },
-    'prd-reported': { fg: '#dcc78c', bg: '#241f12', border: '#6b5b2d' },
+    'prd-reported': { fg: '#dcc78c', bg: '#241f12', border: '#8f7c40' },
     unverified: { fg: '#a9b8be', bg: '#141f24', border: '#62777f' },
     passed: { fg: '#74d394', bg: '#11281a', border: '#2b6a3f' },
     failed: { fg: '#ff8f85', bg: '#311513', border: '#7a2b25' },
@@ -251,8 +259,9 @@ const dark: ThemeTokens = {
     axis: '#62777f',
     zero: '#34464e',
     windowShade: 'rgba(65, 178, 178, 0.09)',
-    windowEdge: 'rgba(65, 178, 178, 0.5)',
+    windowEdge: '#379495',
     unsampled: '#3a4a51',
+    unsampledAlpha: 0.35,
     bandAlpha: 0.22,
   },
   scene: {
@@ -408,6 +417,25 @@ button, input, select, textarea { font: inherit; color: inherit; }
   outline-offset: 2px;
   border-radius: var(--lab-radius-xs);
 }
+/* Chart modebar buttons. Plotly injects its own focus rule for them at runtime (a 1px black
+ * outline), after this sheet and more specific than the rule above; on the dark plot that ring
+ * is 1.2:1. This selector out-ranks Plotly's (tokens.test.ts compares the two), so chart buttons
+ * take the same themed ring as every other control. */
+.js-plotly-plot .plotly .modebar .modebar-btn:focus-visible {
+  outline: 2px solid var(--lab-color-focus);
+  outline-offset: 1px;
+  border-radius: var(--lab-radius-xs);
+}
+/* Disclosure summaries are pointer targets: at least 24px tall (WCAG 2.5.8). Done with padding
+ * and min-height, never display:flex, so the disclosure triangle stays. */
+summary {
+  min-height: 24px;
+  padding-block: var(--lab-space-1);
+  cursor: pointer;
+}
+/* Subscripts in units (Q_gB, a/v_th,i) must not grow the line box, or a row of numbers loses
+ * its shared baseline. */
+sub, sup { line-height: 0; }
 
 /* ---- utilities ------------------------------------------------------------------------- */
 /* Numbers: tabular, lining figures so columns of values align digit-for-digit. */
@@ -434,6 +462,29 @@ button, input, select, textarea { font: inherit; color: inherit; }
   }
 }
 `;
+
+/**
+ * The "Token reference" tables of DESIGN.md: every custom property with its values. Written between
+ * the `tokens:begin` / `tokens:end` markers by `npm run tokens`; designDoc.test.ts fails on drift.
+ */
+export function renderTokenReferenceMd(): string {
+  const lightVars = themeCssVars('light');
+  const darkVars = themeCssVars('dark');
+  const code = (v: string | undefined) => `\`${v ?? ''}\``;
+  return [
+    '### Theme tokens',
+    '',
+    '| Custom property | Light | Dark |',
+    '|---|---|---|',
+    ...Object.keys(lightVars).map((k) => `| ${code(k)} | ${code(lightVars[k])} | ${code(darkVars[k])} |`),
+    '',
+    '### Scale tokens (the same in both themes)',
+    '',
+    '| Custom property | Value |',
+    '|---|---|',
+    ...Object.entries(staticCssVars()).map(([k, v]) => `| ${code(k)} | ${code(v)} |`),
+  ].join('\n');
+}
 
 /** The full contents of tokens.css. */
 export function renderTokensCss(): string {

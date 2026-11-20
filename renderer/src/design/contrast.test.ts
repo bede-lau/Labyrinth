@@ -1,71 +1,11 @@
+// @vitest-environment node
 // D2: WCAG 2.x AA contrast computed from the token values, both themes.
 //   Text (any size we use, incl. 11px pills): ≥ 4.5:1.  Non-text UI (control borders, focus ring,
-//   accent indicators, chart lines, |B| colormap): ≥ 3:1 (SC 1.4.11).
-import { contrastRatio } from './color';
-import { STATUS_KINDS, THEMES, themes, CALLOUT_TONES, type ThemeName } from './tokens';
-
-const TEXT = 4.5;
-const NON_TEXT = 3;
-
-interface Pair {
-  name: string;
-  fg: string;
-  bg: string;
-  min: number;
-}
-
-function pairs(theme: ThemeName): Pair[] {
-  const t = themes[theme];
-  const c = t.color;
-  const surfaces = {
-    bg: c.bg,
-    surface: c.surface,
-    surfaceSunken: c.surfaceSunken,
-    surfaceRaised: c.surfaceRaised,
-    surfaceHover: c.surfaceHover,
-    accentSubtle: c.accentSubtle,
-    plotPaper: t.plot.paper,
-  };
-  const out: Pair[] = [];
-  // Every text token on every surface.
-  for (const fgName of ['text', 'textMuted', 'textSubtle', 'accentText'] as const)
-    for (const [sName, s] of Object.entries(surfaces)) out.push({ name: `${fgName} on ${sName}`, fg: c[fgName], bg: s, min: TEXT });
-  // Selected segment / primary button.
-  out.push({ name: 'accentFg on accent', fg: c.accentFg, bg: c.accent, min: TEXT });
-  out.push({ name: 'accentFg on accentHover', fg: c.accentFg, bg: c.accentHover, min: TEXT });
-  // Status pills: fg on its own tint, and fg used bare (icons/labels) on every surface.
-  for (const k of STATUS_KINDS) {
-    const s = t.status[k];
-    out.push({ name: `status ${k} fg on its bg`, fg: s.fg, bg: s.bg, min: TEXT });
-    if (k === 'live') continue; // live is only ever drawn as a solid pill
-    for (const [sName, sv] of Object.entries(surfaces)) out.push({ name: `status ${k} fg on ${sName}`, fg: s.fg, bg: sv, min: TEXT });
-    // Rows tinted with a status bg (FixtureCheck mismatch) carry body text.
-    out.push({ name: `text on status ${k} bg`, fg: c.text, bg: s.bg, min: TEXT });
-    out.push({ name: `textMuted on status ${k} bg`, fg: c.textMuted, bg: s.bg, min: TEXT });
-  }
-  // The LIVE pill must stand out from the page as a shape, too.
-  out.push({ name: 'live pill fill vs surface', fg: t.status.live.bg, bg: c.surface, min: NON_TEXT });
-  out.push({ name: 'live pill fill vs bg', fg: t.status.live.bg, bg: c.bg, min: NON_TEXT });
-  // Callouts: title in tone colour, body in text colours.
-  for (const tone of CALLOUT_TONES) {
-    const s = t.callout[tone];
-    out.push({ name: `callout ${tone} fg on bg`, fg: s.fg, bg: s.bg, min: TEXT });
-    out.push({ name: `text on callout ${tone}`, fg: c.text, bg: s.bg, min: TEXT });
-    out.push({ name: `textMuted on callout ${tone}`, fg: c.textMuted, bg: s.bg, min: TEXT });
-    out.push({ name: `accentText on callout ${tone}`, fg: c.accentText, bg: s.bg, min: TEXT });
-  }
-  // Non-text UI.
-  for (const [sName, s] of Object.entries(surfaces)) {
-    out.push({ name: `borderStrong on ${sName}`, fg: c.borderStrong, bg: s, min: NON_TEXT });
-    out.push({ name: `focus ring on ${sName}`, fg: c.focus, bg: s, min: NON_TEXT });
-    out.push({ name: `accent on ${sName}`, fg: c.accent, bg: s, min: NON_TEXT });
-  }
-  out.push({ name: 'plot axis line', fg: t.plot.axis, bg: t.plot.plot, min: NON_TEXT });
-  for (const [k, v] of Object.entries(t.series)) out.push({ name: `series ${k} on plot`, fg: v, bg: t.plot.plot, min: NON_TEXT });
-  for (const [k, v] of Object.entries(t.series)) out.push({ name: `series ${k} on scene`, fg: v, bg: t.scene.background, min: NON_TEXT });
-  t.scene.bmag.forEach((v, i) => out.push({ name: `|B| stop ${i} on scene`, fg: v, bg: t.scene.background, min: NON_TEXT }));
-  return out;
-}
+//   accent indicators, chart lines, |B| colormap, the LIVE fill, dashed outlines, window edges): ≥ 3:1 (SC 1.4.11).
+// The pair list lives in contrastPairs.ts (DESIGN.md quotes its worst cases; designDoc.test.ts checks them).
+import { compositeOver, contrastRatio } from './color';
+import { NON_TEXT_MIN, TEXT_MIN, contrastPairs, worstContrast } from './contrastPairs';
+import { THEMES } from './tokens';
 
 describe('contrast-ratio implementation (sanity: must be able to fail)', () => {
   test('known reference values', () => {
@@ -75,15 +15,57 @@ describe('contrast-ratio implementation (sanity: must be able to fail)', () => {
     expect(contrastRatio('#767676', '#ffffff')).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio('#777777', '#ffffff')).toBeLessThan(4.5);
   });
+  test('alpha compositing: source-over in sRGB, layers applied in order', () => {
+    expect(compositeOver('#ffffff', 'rgba(0, 0, 0, 0.5)')).toBe('#808080');
+    expect(compositeOver('#000000', 'rgba(255, 255, 255, 0.2)')).toBe('#333333');
+    expect(compositeOver('#ffffff', 'rgba(0, 0, 0, 0)')).toBe('#ffffff');
+    expect(compositeOver('#ffffff', '#102030')).toBe('#102030'); // an opaque layer replaces what is under it
+    expect(compositeOver('#ffffff', 'rgba(0, 0, 0, 0.5)', 'rgba(255, 0, 0, 0.5)')).toBe('#bf4040');
+    expect(() => compositeOver('#ffffff', 'teal')).toThrow(/not a colour/);
+  });
+  test('a label on a strong alpha fill is measured against the fill, not the paper (mutation M33)', () => {
+    // 95 % teal over white is a dark fill: muted text on it must read as a failure.
+    const fill = compositeOver('#ffffff', 'rgba(11, 127, 128, 0.95)');
+    expect(contrastRatio('#42565e', fill)).toBeLessThan(4.5);
+    expect(contrastRatio('#42565e', '#ffffff')).toBeGreaterThan(4.5);
+  });
+});
+
+describe('the pairs that carry the fix round are in the list', () => {
+  test.each(THEMES)('%s: live fill on hover/raised, dashed borders, window edge, labels on alpha fills', (theme) => {
+    const names = contrastPairs(theme).map((p) => p.name);
+    for (const n of [
+      'live pill fill vs surfaceHover',
+      'live pill fill vs surfaceRaised',
+      'dashed prd-reported border vs surface',
+      'dashed prd-reported border vs its own tint',
+      'dashed unverified border vs surface',
+      'window edge vs plot',
+      'window edge vs window shade',
+      'window label text on the window shade over the plot',
+      'unsampled label text on the unsampled fill over a window shade',
+      'segment focus: track gap vs selected fill',
+      'focus ring on plotPaper', // the themed modebar ring (tokens.test.ts) is drawn on plot paper
+    ])
+      expect(names, n).toContain(n);
+    expect(new Set(names).size, 'pair names are unique').toBe(names.length);
+  });
 });
 
 describe.each(THEMES)('WCAG AA contrast — %s theme', (theme) => {
-  const list = pairs(theme);
+  const list = contrastPairs(theme);
   test('covers every text token × surface and every status', () => {
-    expect(list.length).toBeGreaterThan(150);
+    expect(list.length).toBeGreaterThan(190);
+    expect(list.every((p) => p.min === TEXT_MIN || p.min === NON_TEXT_MIN)).toBe(true);
   });
   test.each(list.map((p) => [p.name, p] as const))('%s', (_name, p) => {
     const ratio = contrastRatio(p.fg, p.bg);
     expect(ratio, `${p.fg} on ${p.bg} = ${ratio.toFixed(2)}:1, needs ${p.min}:1`).toBeGreaterThanOrEqual(p.min);
+  });
+  test('worstContrast() reports the minimum of each class', () => {
+    for (const min of [TEXT_MIN, NON_TEXT_MIN]) {
+      const ratios = list.filter((p) => p.min === min).map((p) => contrastRatio(p.fg, p.bg));
+      expect(worstContrast(theme, min).ratio).toBe(Math.min(...ratios));
+    }
   });
 });

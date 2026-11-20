@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { trimNumber } from '../format';
-import { STATUS_META, VERIFICATION_STATUS } from '../status';
+import { STATUS_META, VERIFICATION_STATUS, provenanceStatus } from '../status';
 import type { Provenance } from '../types';
 import { Icon } from './Icon';
 import { StatusPill } from './StatusPill';
@@ -10,6 +10,13 @@ export interface ProvenanceBadgeProps {
   provenance: Provenance;
   /** What the provenance is for, used in the accessible name: "stella bean trace". */
   subject?: string;
+  /**
+   * Pass `true` ONLY from the live-status path, when `/api/live/status` reports mode "live" right
+   * now (`isLive(state)` in `lib/liveStatus.ts`). Without it a record of kind `live` — which is
+   * what an artifact or a saved run carries — is drawn as "Recorded run" with the replay
+   * treatment, never as LIVE. The flag does nothing for any other kind. Default `false`.
+   */
+  live?: boolean;
   defaultOpen?: boolean;
   /** Which edge of the badge the detail card aligns to. Default 'end' (badges sit at a panel's right). */
   align?: 'start' | 'end';
@@ -21,11 +28,13 @@ const shortHash = (sha: string) => (sha === 'n/a' ? 'n/a' : `${sha.slice(0, 10)}
 /**
  * Compact provenance: kind + verification outcome. Click (or Enter/Space) to expand the record the
  * PRD requires with every result — solver revision, units, coverage, runtime, verification, sources.
- * Escape or a click outside closes it and returns focus to the badge.
+ * Escape closes it and returns focus to the badge. A click outside closes it and leaves focus where
+ * the click landed.
  */
 export function ProvenanceBadge({
   provenance,
   subject,
+  live = false,
   defaultOpen = false,
   align = 'end',
   className,
@@ -34,7 +43,7 @@ export function ProvenanceBadge({
   const id = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const kindMeta = STATUS_META[provenance.kind];
+  const kindMeta = provenanceStatus(provenance.kind, live);
   const outcomeStatus = VERIFICATION_STATUS[provenance.verification.outcome];
   const outcomeMeta = STATUS_META[outcomeStatus];
   const { tStart, tEnd } = provenance.coverage;
@@ -71,7 +80,7 @@ export function ProvenanceBadge({
         aria-label={name}
         onClick={() => setOpen((o) => !o)}
       >
-        <StatusPill status={provenance.kind} />
+        <StatusPill status={kindMeta.status}>{kindMeta.label}</StatusPill>
         <StatusPill status={outcomeStatus} />
         <Icon name="chevron" size={12} className="lab-prov__chev" />
       </button>

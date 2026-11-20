@@ -3,9 +3,11 @@
   GET  /api/health            {"ok": true, "version": ...}
   GET  /api/live/status       live status (contracts/live-status.schema.json)
   GET  /api/live/stream       Server-Sent Events: `data: <status json>\\n\\n` per snapshot
-  POST /api/live/launch       {"confirmCostUsd": <current slot estimate>} -> 202, else 409 {"reason"}
-  POST /api/live/terminate    always allowed -> 200 when every worker's termination is confirmed,
-                              502 {"ok": false, "reason": "TERMINATE FAILED ..."} otherwise (retry it)
+  POST /api/live/launch       {"confirmCostUsd": <current slot estimate, to the cent>} -> 202, else 409
+                              {"ok": false, "reason", "status"} for every refusal (nothing launched or reserved)
+  POST /api/live/terminate    always allowed -> 200 when every worker's termination is confirmed (a cancel
+                              succeeded), 502 {"ok": false, "reason": "TERMINATE FAILED ..." | "TERMINATION
+                              PENDING ..."} otherwise (retry it). A kill-switch-only stop is a 502.
   GET  /api/live/runs/<id>    a saved, verified rehearsal run (strict id; from the state dir) or 404
   GET  /artifacts/<file>      files under artifacts/ only (resolved path must stay inside; else 404)
 
@@ -18,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -52,11 +55,15 @@ class LabyrinthServer(ThreadingHTTPServer):
         self.stopping = threading.Event()
         super().__init__(addr, Handler)
 
-    def shutdown(self) -> None:
-        """Stop streams, terminate any GPU workers (never leave them billing), then stop serving."""
+    def shutdown(self, on_unconfirmed: Callable[[str], None] | None = None) -> bool:
+        """Terminate any GPU workers (never leave them billing), then stop the streams and stop serving.
+        -> whether every termination is confirmed. The API keeps answering while the workers are being
+        terminated — however long that takes — so /api/live/status goes on saying TERMINATE FAILED /
+        TERMINATION PENDING instead of timing out (a UI that cannot reach the API shows "replay")."""
+        confirmed = self.service.shutdown(on_unconfirmed)
         self.stopping.set()
-        self.service.shutdown()
         super().shutdown()
+        return confirmed
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -143,16 +150,19 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/live/terminate":
             confirmed, message = svc.terminate()
             return self._json(200 if confirmed else 502, {"ok": confirmed, "reason": message, "status": svc.status()})
+        def refuse(reason: str) -> None:  # every refusal: 409 with the reason and the current status
+            self._json(409, {"ok": False, "reason": f"launch refused: {reason}", "status": svc.status()})
+
         ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
         if ctype != "application/json":
-            return self._error(409, "launch refused: Content-Type must be application/json")
+            return refuse("Content-Type must be application/json")
         if err:
-            return self._error(409, f"launch refused: {err}")
+            return refuse(err)
         if "confirmCostUsd" not in body:
-            return self._error(409, "launch refused: body must be {\"confirmCostUsd\": <current slot estimate>}")
+            return refuse("body must be {\"confirmCostUsd\": <current slot estimate>}")
         accepted, reason = svc.launch(body["confirmCostUsd"])
         if not accepted:
-            return self._json(409, {"ok": False, "reason": f"launch refused: {reason}", "status": svc.status()})
+            return refuse(reason)
         return self._json(202, {"ok": True, "reason": reason, "status": svc.status()})
 
     def _refuse_method(self) -> None:

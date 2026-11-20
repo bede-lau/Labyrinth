@@ -8,6 +8,30 @@ importlib metadata) — no network, no `import modal`.
 
 Every Modal client call is bounded by CALL_TIMEOUT_S on this side, so a hung API call cannot keep
 the orchestrator from enforcing its hard timeout; a timed-out call raises and fails the worker.
+
+Termination invariant (money safety). `terminate(handle)` RETURNS — the only thing the orchestrator reports
+as "terminated" — in exactly one case: `FunctionCall.cancel(terminate_containers=True)` of the spawned call
+succeeded (in this call, or earlier for a spawn that arrived late). There is no other confirmation:
+
+  spawn outcome                        what terminate() does                       reported
+  call returned (in time or late)      kill-switch put, then cancel                terminated only if the cancel succeeded;
+                                                                                   else TERMINATE FAILED, retried
+  still in flight                      put; cancel queued for the late call        TERMINATION PENDING until it settles
+  failed client-side (fast or late)    put only: there is no call to cancel        TERMINATE FAILED, always
+  never sent (lookup / guard refusal)  nothing: launch() raised a plain error      not a launched worker
+
+The run-level kill switch is raised FIRST on every terminate, whatever the state of the call, and its result is
+kept on the handle (`abort_error`): a failed put is named in the pending / failed reason and is retried by
+every later terminate. It never replaces the cancel.
+
+Decision (review BE-4): a kill-switch-only stop is NEVER `ok: true`. When the spawn failed client-side the RPC
+may still have reached Modal, there is no FunctionCall to cancel, and a worker that started stops only if it
+reads the switch (modal_app._aborted treats a failed read as "not aborted"). This process cannot observe that,
+so it reports "kill switch raised, stop not confirmed" under TERMINATE FAILED (or, when even the put failed,
+"kill switch could not be set"): /api/live/terminate answers 502, no new launch is accepted, and the server
+and the rehearse CLI exit 2 with "NOT confirmed terminated". The operator checks the Modal dashboard,
+reconciles the ledger and restarts. No client-side spawn error is treated as proof that nothing was started:
+which ones are can only be established against a real Modal (see status.md), so none is assumed.
 """
 from __future__ import annotations
 
@@ -20,7 +44,14 @@ from pathlib import Path
 from typing import Any
 
 from . import budget_guard as guard
-from .orchestrator import Checkpoint, LaunchInFlight, TerminationPending, TransientBackendError
+from .orchestrator import (
+    KILL_SWITCH_ONLY,
+    Checkpoint,
+    LaunchInFlight,
+    TerminationPending,
+    TerminationUnconfirmed,
+    TransientBackendError,
+)
 
 APP_NAME = "labyrinth-gx"
 FUNCTION_NAMES = {"live": "gx_worker_live", "rehearsal": "gx_worker_rehearsal"}
@@ -32,7 +63,7 @@ CALL_TIMEOUT_S = 20.0
 LAUNCH_CALLS = 2     # Function.from_name, Function.spawn
 POLL_CALLS = 2       # FunctionCall.get, Dict.get
 TERMINATE_CALLS = 2  # Dict put (run kill switch), FunctionCall.cancel
-CANCEL_RETRIES = 4
+LATE_CANCEL_BACKOFF_S = (0.5, 1.0, 2.0)  # between the 1 + 3 cancel attempts for a spawn that arrived late
 
 
 def credentials_available(env: dict | None = None, home: Path | None = None) -> bool:
@@ -110,7 +141,8 @@ class ModalHandle:
     spawn_done: threading.Event = field(default_factory=threading.Event)
     spawn_error: BaseException | None = None
     cancel_requested: bool = False
-    cancelled: bool = False
+    cancelled: bool = False             # True only once FunctionCall.cancel succeeded: the one confirmation there is
+    abort_error: str | None = None      # result of the latest kill-switch put (None = raised); meaningful once terminated
     settled: tuple[bool, str | None] | None = None
     listeners: list = field(default_factory=list)
 
@@ -141,18 +173,33 @@ def _subscribe(h: ModalHandle, cb) -> None:
     cb(ok, err)
 
 
+def _no_call(h: ModalHandle) -> tuple[bool, str]:
+    """-> (kill switch raised, wording) for a spawn that ended with a client-side error: the RPC may have
+    reached Modal, there is no FunctionCall to cancel, so the stop can never be confirmed from here."""
+    e = h.spawn_error
+    what = f"the spawn failed client-side ({type(e).__name__}: {e}) after it may have reached Modal, there is no call to cancel"
+    if h.abort_error is None:
+        return True, f"{KILL_SWITCH_ONLY}: {what} and a worker that started stops only when it reads the switch"
+    return False, f"{what} and the run kill switch could not be set: {h.abort_error}"
+
+
 def _cancel_late(h: ModalHandle) -> None:
     """Runs in the spawn thread when a late FunctionCall arrives after a cancel was requested."""
     last = None
-    for attempt in range(CANCEL_RETRIES):
+    for delay in (0.0, *LATE_CANCEL_BACKOFF_S):
+        if delay:
+            threading.Event().wait(delay)
+        with h.lock:
+            done = h.cancelled  # a terminate() that ran meanwhile already cancelled the call
+        if done:
+            break
         try:
             _cancel(h.call)
-            _settle(h, True, None)
-            return
+            done = True
+            break
         except Exception as e:  # noqa: BLE001
             last = f"{type(e).__name__}: {e}"
-            threading.Event().wait(0.5 * 2 ** attempt)
-    _settle(h, False, f"late spawn could not be cancelled: {last}")
+    _settle(h, done, None if done else f"late spawn could not be cancelled: {last}")
 
 
 class ModalBackend:
@@ -187,8 +234,11 @@ class ModalBackend:
                 with h.lock:
                     h.spawn_error, cancel_now = e, h.cancel_requested
                     h.spawn_done.set()
+                    verdict = _no_call(h)[1]
                 if cancel_now:
-                    _settle(h, True, None)  # spawn failed: nothing was started
+                    # A late client-side error is no evidence that nothing was started, and the queued cancel has
+                    # no call to act on: never settle this as confirmed (the next terminate raises the switch again).
+                    _settle(h, False, verdict)
                 return
             with h.lock:
                 h.call, cancel_now = call, h.cancel_requested
@@ -200,11 +250,11 @@ class ModalBackend:
         if not h.spawn_done.wait(CALL_TIMEOUT_S):
             raise LaunchInFlight(f"Function.spawn did not return within {CALL_TIMEOUT_S:.0f} s", h)
         if h.spawn_error is not None:
-            # The RPC may have reached Modal before it failed client-side. Hand the handle to the orchestrator so
-            # that terminate() raises the run's kill switch for it (and reports loudly if even that fails).
+            # The RPC may have reached Modal before it failed client-side. Hand the handle to the orchestrator as a
+            # launched worker: terminate() raises the run's kill switch for it, and that stop is never confirmed.
             e = h.spawn_error
             raise LaunchInFlight(f"{type(e).__name__}: {e}", h, status="launch failed client-side ({}) and a worker may have "
-                                 "started; there is no call to cancel, so the run's kill switch is raised")
+                                 "started; there is no call to cancel, only the run's kill switch can stop it")
         return h
 
     def poll(self, h: ModalHandle) -> dict:
@@ -253,19 +303,26 @@ class ModalBackend:
             return f"{type(e).__name__}: {e}"
 
     def terminate(self, h: ModalHandle) -> None:
-        abort_error = self._set_abort()  # first, whatever the state of the call
+        """Returns only when the cancel of the spawned call succeeded (see the module docstring); otherwise
+        raises TerminationPending (spawn in flight), TerminationUnconfirmed (kill switch only) or the error of
+        the failed attempt."""
+        abort_error = self._set_abort()  # first, whatever the state of the call; every terminate retries it
         with h.lock:
+            h.abort_error = abort_error
             if h.cancelled:
                 return
             if not h.spawn_done.is_set():
                 h.cancel_requested = True
-                raise TerminationPending("spawn still in flight; it is cancelled the moment it returns",
+                switch = ("the run kill switch is raised" if abort_error is None else
+                          f"the run kill switch could NOT be set ({abort_error}); the next terminate retries it")
+                raise TerminationPending(f"spawn still in flight; it is cancelled the moment it returns; {switch}",
                                          lambda cb: _subscribe(h, cb))
             call = h.call
-        if call is None:  # spawn ended with an error client-side; the kill switch covers a worker that started anyway
-            if abort_error:
-                raise RuntimeError(f"spawn errored and the run kill switch could not be set: {abort_error}")
-            return
+            raised, verdict = _no_call(h) if call is None else (False, "")
+        if call is None:  # the spawn ended with a client-side error: nothing to cancel, so nothing to confirm
+            if raised:
+                raise TerminationUnconfirmed(verdict)
+            raise RuntimeError(verdict)  # the put failed: the orchestrator retries it with backoff
         _cancel(call)
         with h.lock:
             h.cancelled = True

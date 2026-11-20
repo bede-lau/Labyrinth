@@ -1,6 +1,7 @@
-// Forecast replay (task 03, F4–F5): Predict -> Reveal -> Update over eight 50-unit windows of the
-// archived stella bean trace. Observed means stay hidden until revealed; running MAE for persistence
-// and frozen; final computed vs PRD-claimed scores with the mismatch flag and the D-016 note.
+// Forecast replay (task 03, F4–F5). The final scores come first (DS-4): recomputed MAE beside the PRD
+// claim with the mismatch flag and the D-016 note. Then Predict -> Reveal -> Update over eight 50-unit
+// windows of the archived stella bean trace: observed means stay hidden until revealed, with a
+// running MAE for persistence and frozen.
 import { useRef, useState } from 'react';
 import {
   Callout,
@@ -10,13 +11,16 @@ import {
   Stat,
   StatusPill,
   Unit,
+  VERIFICATION_STATUS,
   formatNumber,
   formatWindow,
+  provenanceStatus,
 } from '../../design';
 import { useArtifact } from '../../lib/artifacts';
 import {
   INITIAL,
   advance,
+  mismatchedScores,
   nextAction,
   parseSampleAndHold,
   runningMae,
@@ -50,7 +54,12 @@ export function ForecastView() {
       </Panel>
     );
   }
-  return <ForecastBody a={state.data} />;
+  return (
+    <div className="fc-view">
+      <FinalScores a={state.data} />
+      {state.data.steps.length > 0 ? <Replay a={state.data} /> : <NoSteps a={state.data} />}
+    </div>
+  );
 }
 
 const STAGES = [
@@ -69,7 +78,101 @@ function Pending({ label, text }: { label: string; text: string }) {
   );
 }
 
-function ForecastBody({ a }: { a: ForecastArtifact }) {
+function FinalScores({ a }: { a: ForecastArtifact }) {
+  const n = a.steps.length;
+  const sah = parseSampleAndHold(a.fixtures.find((f) => f.note)?.note);
+  const persistenceFixture = a.fixtures.find((f) => f.id === 'mae-persistence');
+  const frozenFixture = a.fixtures.find((f) => f.id === 'mae-frozen');
+  const ordered = [
+    ...(persistenceFixture ? [persistenceFixture] : []),
+    ...(frozenFixture ? [frozenFixture] : []),
+    ...a.fixtures.filter((f) => f !== persistenceFixture && f !== frozenFixture),
+  ];
+  const mismatched = mismatchedScores(a);
+  const kind = provenanceStatus(a.provenance.kind);
+  const affected =
+    mismatched.length === 1
+      ? `${mismatched.length} of ${a.fixtures.length} scores is shown as a mismatch`
+      : `${mismatched.length} of ${a.fixtures.length} scores are shown as mismatches`;
+
+  return (
+    <Panel
+      eyebrow="Forecast replay"
+      title="Final scores: recomputed vs PRD claim"
+      subtitle={
+        n > 0
+          ? `MAE over all ${n} windows, at the PRD's printed precision.`
+          : "MAE as recorded in the artifact, at the PRD's printed precision."
+      }
+      status={
+        <div className="fc-badges">
+          {/* No live flag: an artifact is replayed evidence, its provenance can never earn the LIVE pill. */}
+          <StatusPill status={kind.status}>{kind.label}</StatusPill>
+          <StatusPill status={VERIFICATION_STATUS[a.provenance.verification.outcome]} />
+        </div>
+      }
+    >
+      <div className="fc-fixtures" data-testid="final-scores">
+        {ordered.map((f) => (
+          <FixtureCheck key={f.id} fixture={f} unit={FLUX_UNIT} />
+        ))}
+      </div>
+      {mismatched.length > 0 &&
+        (sah ? (
+          <Callout tone="warn" title="The PRD scores reproduce only under a different window-mean definition">
+            A time-weighted sample-and-hold window mean gives persistence{' '}
+            <span className="lab-num">
+              {sah.persistence[0]} → {sah.persistence[1]}
+            </span>{' '}
+            and frozen{' '}
+            <span className="lab-num">
+              {sah.frozen[0]} → {sah.frozen[1]}
+            </span>
+            , matching the PRD, but it breaks the archive fixture
+            {sah.archive ? (
+              <>
+                {' '}
+                (stella 300–400 = <span className="lab-num">{sah.archive.value}</span>, prints{' '}
+                <span className="lab-num">{sah.archive.printed}</span> vs PRD{' '}
+                <span className="lab-num">{sah.archive.claimed}</span>)
+              </>
+            ) : null}
+            . Labyrinth keeps one edge-interpolated definition everywhere (D-013, D-016), so {affected} rather than
+            tuned to the claim.
+          </Callout>
+        ) : (
+          <Callout tone="warn" title="The PRD scores do not reproduce with the stated method">
+            One window-mean definition is kept everywhere (D-013, D-016), so {affected} rather than tuned to the claim.
+          </Callout>
+        ))}
+    </Panel>
+  );
+}
+
+/** `steps: []` is schema-valid: say so instead of indexing into nothing. */
+function NoSteps({ a }: { a: ForecastArtifact }) {
+  return (
+    <Panel
+      eyebrow="Forecast replay"
+      title="Predict the next local mean of the stella bean flux"
+      subtitle={`Initialised on ${formatWindow(a.initWindow)}. Replayed archive data, not live.`}
+      status={
+        <div className="fc-badges">
+          <StatusPill status="replay">Replay · $0</StatusPill>
+          <ProvenanceBadge provenance={a.provenance} subject="forecast replay" />
+        </div>
+      }
+    >
+      <Callout tone="blocked" title="No forecast windows in artifacts/forecast.json">
+        The artifact lists no steps, so there is nothing to step through. Regenerate it with{' '}
+        <code className="lab-mono">python3 -m labyrinth_main.build_artifacts</code> (from{' '}
+        <code className="lab-mono">main/</code>).
+      </Callout>
+    </Panel>
+  );
+}
+
+function Replay({ a }: { a: ForecastArtifact }) {
   const [s, setS] = useState<ReplayState>(INITIAL);
   const primaryRef = useRef<HTMLButtonElement>(null);
   const n = a.steps.length;
@@ -78,9 +181,8 @@ function ForecastBody({ a }: { a: ForecastArtifact }) {
   const scored = scoredCount(s);
   const mae = runningMae(a.steps, scored);
   const vis = visibility(s, s.index);
-  const sah = parseSampleAndHold(a.fixtures.find((f) => f.note)?.note);
-  const persistenceFixture = a.fixtures.find((f) => f.id === 'mae-persistence');
-  const frozenFixture = a.fixtures.find((f) => f.id === 'mae-frozen');
+  const first = a.steps[0]!;
+  const last = a.steps[n - 1]!;
 
   const curWin = current ? formatWindow(current.window) : '';
   const buttonText =
@@ -105,202 +207,158 @@ function ForecastBody({ a }: { a: ForecastArtifact }) {
   const stageIndex = action === 'predict' ? 0 : action === 'reveal' ? 1 : action === 'update' ? 2 : 3;
 
   return (
-    <div className="fc-view">
-      <Panel
-        eyebrow="Forecast replay"
-        title="Predict the next 50-unit mean of the stella bean flux"
-        subtitle={`Initialised on ${formatWindow(a.initWindow)}; ${n} windows from ${formatWindow([a.steps[0]!.window[0], a.steps[n - 1]!.window[1]])}. Replayed archive data, not live.`}
-        status={
-          <div className="fc-badges">
-            <StatusPill status="replay">Replay · $0</StatusPill>
-            <ProvenanceBadge provenance={a.provenance} subject="forecast replay" />
-          </div>
-        }
-        footer={
-          <details className="fc-details">
-            <summary>Method (from the artifact)</summary>
-            <p>{a.method}</p>
-          </details>
-        }
-      >
-        <div className="fc-controls">
-          <ol className="fc-stages" aria-label="Replay stage">
-            {STAGES.map((st, i) => (
-              <li key={st.id} aria-current={i === stageIndex ? 'step' : undefined} data-done={i < stageIndex}>
-                <span className="fc-stages__n lab-num" aria-hidden="true">
-                  {i + 1}
-                </span>
-                {st.label}
-              </li>
-            ))}
-          </ol>
-          <div className="fc-buttons">
-            <button
-              ref={primaryRef}
-              type="button"
-              className="fc-btn fc-btn--primary"
-              onClick={() => setS((x) => advance(x, n))}
-              disabled={action === 'done'}
-            >
-              {buttonText}
-            </button>
-            <button
-              type="button"
-              className="fc-btn"
-              onClick={() => {
-                setS(INITIAL);
-                primaryRef.current?.focus();
-              }}
-              disabled={s.index === 0 && s.phase === 'ready'}
-            >
-              Reset
-            </button>
-          </div>
+    <Panel
+      eyebrow="Forecast replay"
+      title={`Predict the next ${formatNumber(a.windowWidth, 0)}-unit mean of the stella bean flux`}
+      subtitle={`Initialised on ${formatWindow(a.initWindow)}; ${n} windows from ${formatWindow([first.window[0], last.window[1]])}. Replayed archive data, not live.`}
+      status={
+        <div className="fc-badges">
+          <StatusPill status="replay">Replay · $0</StatusPill>
+          <ProvenanceBadge provenance={a.provenance} subject="forecast replay" />
         </div>
-        <p className="fc-live" role="status" aria-live="polite" data-testid="announce">
-          {announce}
-        </p>
+      }
+      footer={
+        <details className="fc-details">
+          <summary>Method (from the artifact)</summary>
+          <p>{a.method}</p>
+        </details>
+      }
+    >
+      <div className="fc-controls">
+        <ol className="fc-stages" aria-label="Replay stage">
+          {STAGES.map((st, i) => (
+            <li key={st.id} aria-current={i === stageIndex ? 'step' : undefined} data-done={i < stageIndex}>
+              <span className="fc-stages__n lab-num" aria-hidden="true">
+                {i + 1}
+              </span>
+              {st.label}
+            </li>
+          ))}
+        </ol>
+        <div className="fc-buttons">
+          <button
+            ref={primaryRef}
+            type="button"
+            className="fc-btn fc-btn--primary"
+            onClick={() => setS((x) => advance(x, n))}
+            disabled={action === 'done'}
+          >
+            {buttonText}
+          </button>
+          <button
+            type="button"
+            className="fc-btn"
+            onClick={() => {
+              setS(INITIAL);
+              primaryRef.current?.focus();
+            }}
+            disabled={s.index === 0 && s.phase === 'ready'}
+          >
+            Reset
+          </button>
+        </div>
+      </div>
+      <p className="fc-live" role="status" aria-live="polite" data-testid="announce">
+        {announce}
+      </p>
 
-        {current && action !== 'done' && (
-          <div className="fc-current" aria-label={`Current window t ${curWin}`} role="group">
-            {vis.forecasts ? (
-              <>
-                <Stat
-                  label="Persistence forecast"
-                  value={current.persistence}
-                  unit={FLUX_UNIT}
-                  decimals={MEAN_DP}
-                  window={current.window}
-                  windowUnit={TIME_UNIT}
-                />
-                <Stat
-                  label="Frozen forecast"
-                  value={current.frozen}
-                  unit={FLUX_UNIT}
-                  decimals={MEAN_DP}
-                  window={current.window}
-                  windowUnit={TIME_UNIT}
-                />
-              </>
-            ) : (
-              <>
-                <Pending label="Persistence forecast" text="Not predicted yet" />
-                <Pending label="Frozen forecast" text="Not predicted yet" />
-              </>
-            )}
-            {vis.observed ? (
+      {current && action !== 'done' && (
+        <div className="fc-current" aria-label={`Current window t ${curWin}`} role="group">
+          {vis.forecasts ? (
+            <>
               <Stat
-                label="Observed (archive)"
-                value={current.observed}
+                label="Persistence forecast"
+                value={current.persistence}
                 unit={FLUX_UNIT}
                 decimals={MEAN_DP}
                 window={current.window}
                 windowUnit={TIME_UNIT}
-                status={<StatusPill status="archive" />}
               />
-            ) : (
-              <Pending label="Observed (archive)" text="Hidden until revealed" />
-            )}
-          </div>
+              <Stat
+                label="Frozen forecast"
+                value={current.frozen}
+                unit={FLUX_UNIT}
+                decimals={MEAN_DP}
+                window={current.window}
+                windowUnit={TIME_UNIT}
+              />
+            </>
+          ) : (
+            <>
+              <Pending label="Persistence forecast" text="Not predicted yet" />
+              <Pending label="Frozen forecast" text="Not predicted yet" />
+            </>
+          )}
+          {vis.observed ? (
+            <Stat
+              label="Observed (archive)"
+              value={current.observed}
+              unit={FLUX_UNIT}
+              decimals={MEAN_DP}
+              window={current.window}
+              windowUnit={TIME_UNIT}
+              status={<StatusPill status="archive" />}
+            />
+          ) : (
+            <Pending label="Observed (archive)" text="Hidden until revealed" />
+          )}
+        </div>
+      )}
+
+      <div className="fc-mae" role="group" aria-label="Running mean absolute error">
+        {mae ? (
+          <>
+            <Stat label="Running MAE · persistence" value={mae.persistence} unit={FLUX_UNIT} decimals={ERR_DP} note={`after ${scored} of ${n} windows`} />
+            <Stat label="Running MAE · frozen" value={mae.frozen} unit={FLUX_UNIT} decimals={ERR_DP} note={`after ${scored} of ${n} windows`} />
+          </>
+        ) : (
+          <>
+            <Pending label="Running MAE · persistence" text="Not scored yet (first Update)" />
+            <Pending label="Running MAE · frozen" text="Not scored yet (first Update)" />
+          </>
         )}
+      </div>
 
-        <div className="fc-mae" role="group" aria-label="Running mean absolute error">
-          {mae ? (
-            <>
-              <Stat label="Running MAE · persistence" value={mae.persistence} unit={FLUX_UNIT} decimals={ERR_DP} note={`after ${scored} of ${n} windows`} />
-              <Stat label="Running MAE · frozen" value={mae.frozen} unit={FLUX_UNIT} decimals={ERR_DP} note={`after ${scored} of ${n} windows`} />
-            </>
-          ) : (
-            <>
-              <Pending label="Running MAE · persistence" text="Not scored yet (first Update)" />
-              <Pending label="Running MAE · frozen" text="Not scored yet (first Update)" />
-            </>
-          )}
-        </div>
-
-        <div className="fc-table-wrap" role="region" aria-label="Forecast steps table" tabIndex={0}>
-          <table className="fc-table">
-            <caption className="lab-visually-hidden">
-              Forecast steps: window, both forecasts, observed mean and absolute errors. Values appear as they are
-              predicted and revealed.
-            </caption>
-            <thead>
-              <tr>
-                <th scope="col">Window (t)</th>
-                <th scope="col" className="fc-num">Persistence</th>
-                <th scope="col" className="fc-num">Frozen</th>
-                <th scope="col" className="fc-num">Observed</th>
-                <th scope="col" className="fc-num">|err| persistence</th>
-                <th scope="col" className="fc-num">|err| frozen</th>
-              </tr>
-            </thead>
-            <tbody>
-              {a.steps.map((st, i) => {
-                const v = visibility(s, i);
-                const hiddenObs = v.forecasts && !v.observed;
-                return (
-                  <tr key={i} aria-current={i === s.index && action !== 'done' ? 'step' : undefined} data-testid={`step-${i}`}>
-                    <th scope="row" className="lab-num">{formatWindow(st.window)}</th>
-                    <td className="fc-num lab-num">{v.forecasts ? formatNumber(st.persistence, MEAN_DP) : '—'}</td>
-                    <td className="fc-num lab-num">{v.forecasts ? formatNumber(st.frozen, MEAN_DP) : '—'}</td>
-                    <td className="fc-num lab-num">{v.observed ? formatNumber(st.observed, MEAN_DP) : hiddenObs ? 'hidden' : '—'}</td>
-                    <td className="fc-num lab-num">{v.observed ? formatNumber(st.absErrPersistence, ERR_DP) : '—'}</td>
-                    <td className="fc-num lab-num">{v.observed ? formatNumber(st.absErrFrozen, ERR_DP) : '—'}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <p className="fc-note">
-          Means in <Unit unit={FLUX_UNIT} />. Persistence forecasts the mean of the previous completed window, computed
-          without look-ahead (its right edge is held at the last sample inside the window), so it can differ from that
-          window's revealed observed mean in the last digits. Frozen keeps the {formatWindow(a.initWindow)} initialisation
-          mean for every window.
-        </p>
-      </Panel>
-
-      <Panel
-        eyebrow="Forecast replay"
-        title="Final scores: recomputed vs PRD claim"
-        subtitle={`MAE over all ${n} windows, at the PRD's printed precision.`}
-        status={<StatusPill status="derived" />}
-      >
-        <div className="fc-fixtures">
-          {persistenceFixture && <FixtureCheck fixture={persistenceFixture} unit={FLUX_UNIT} />}
-          {frozenFixture && <FixtureCheck fixture={frozenFixture} unit={FLUX_UNIT} />}
-          {a.fixtures
-            .filter((f) => f !== persistenceFixture && f !== frozenFixture)
-            .map((f) => (
-              <FixtureCheck key={f.id} fixture={f} unit={FLUX_UNIT} />
-            ))}
-        </div>
-        <Callout tone="warn" title="The PRD scores reproduce only under a different window-mean definition">
-          {sah ? (
-            <>
-              A time-weighted sample-and-hold window mean gives persistence{' '}
-              <span className="lab-num">{sah.persistence[0]} → {sah.persistence[1]}</span> and frozen{' '}
-              <span className="lab-num">{sah.frozen[0]} → {sah.frozen[1]}</span>, matching the PRD, but it breaks the
-              archive fixture
-              {sah.archive ? (
-                <>
-                  {' '}
-                  (stella 300–400 = <span className="lab-num">{sah.archive.value}</span>, prints{' '}
-                  <span className="lab-num">{sah.archive.printed}</span> vs PRD{' '}
-                  <span className="lab-num">{sah.archive.claimed}</span>)
-                </>
-              ) : null}
-              . Labyrinth keeps one edge-interpolated definition everywhere (D-013, D-016), so these scores are shown as
-              mismatches rather than tuned to the claim.
-            </>
-          ) : (
-            <>
-              No single tested window-mean definition reproduces every PRD number; one definition is kept everywhere
-              (D-013, D-016).
-            </>
-          )}
-        </Callout>
-      </Panel>
-    </div>
+      <div className="fc-table-wrap" role="region" aria-label="Forecast steps table" tabIndex={0}>
+        <table className="fc-table">
+          <caption className="lab-visually-hidden">
+            Forecast steps: window, both forecasts, observed mean and absolute errors. Values appear as they are
+            predicted and revealed.
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">Window (t)</th>
+              <th scope="col" className="fc-num">Persistence</th>
+              <th scope="col" className="fc-num">Frozen</th>
+              <th scope="col" className="fc-num">Observed</th>
+              <th scope="col" className="fc-num">|err| persistence</th>
+              <th scope="col" className="fc-num">|err| frozen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {a.steps.map((st, i) => {
+              const v = visibility(s, i);
+              const hiddenObs = v.forecasts && !v.observed;
+              return (
+                <tr key={i} aria-current={i === s.index && action !== 'done' ? 'step' : undefined} data-testid={`step-${i}`}>
+                  <th scope="row" className="lab-num">{formatWindow(st.window)}</th>
+                  <td className="fc-num lab-num">{v.forecasts ? formatNumber(st.persistence, MEAN_DP) : '—'}</td>
+                  <td className="fc-num lab-num">{v.forecasts ? formatNumber(st.frozen, MEAN_DP) : '—'}</td>
+                  <td className="fc-num lab-num">{v.observed ? formatNumber(st.observed, MEAN_DP) : hiddenObs ? 'hidden' : '—'}</td>
+                  <td className="fc-num lab-num">{v.observed ? formatNumber(st.absErrPersistence, ERR_DP) : '—'}</td>
+                  <td className="fc-num lab-num">{v.observed ? formatNumber(st.absErrFrozen, ERR_DP) : '—'}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="fc-note" data-testid="forecast-note">
+        Means in <Unit unit={FLUX_UNIT} />. Persistence forecasts the mean of the previous completed window, computed
+        without look-ahead (its right edge is held at the last sample inside the window), so it can differ from that
+        window's revealed observed mean in the last digits. Frozen keeps the {formatWindow(a.initWindow)} initialisation
+        mean for every window.
+      </p>
+    </Panel>
   );
 }

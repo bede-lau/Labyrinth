@@ -76,7 +76,9 @@
   font-style: italic;
 }
 
-.fc-table-wrap { overflow-x: auto; margin-top: var(--lab-space-4); border: 1px solid var(--lab-color-border); border-radius: var(--lab-radius-md); }
+/* position: relative keeps the visually hidden caption inside the scrolling well (it is absolutely
+   positioned and would otherwise widen the page on narrow screens). */
+.fc-table-wrap { position: relative; overflow-x: auto; margin-top: var(--lab-space-4); border: 1px solid var(--lab-color-border); border-radius: var(--lab-radius-md); }
 .fc-table { width: 100%; border-collapse: collapse; font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); }
 .fc-table th, .fc-table td { padding: var(--lab-space-1) var(--lab-space-3); border-bottom: 1px solid var(--lab-color-border); text-align: left; white-space: nowrap; }
 .fc-table thead th {
@@ -95,5 +97,5 @@
 
 .fc-fixtures { display: flex; flex-direction: column; gap: var(--lab-space-2); }
 .fc-details { font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); }
-.fc-details summary { cursor: pointer; color: var(--lab-color-accent-text); width: max-content; }
+.fc-details summary { cursor: pointer; color: var(--lab-color-accent-text); width: max-content; min-height: 24px; line-height: 24px; }
 .fc-details p { margin-top: var(--lab-space-1); max-width: 90ch; }

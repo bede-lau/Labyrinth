@@ -16,10 +16,11 @@ Exit codes (decision D-003: a gate answers 0 or 2, nothing else):
      fed back to the agent
 The gate itself only ever exits 0 or 2. Anything else means the gate did not run at all: the
 shell could not be started (OSError), WSL is broken (wsl.exe exits 4294967295), bash could not
-find the script (127), the run was killed. That is an infrastructure failure, not a verdict:
-the launcher blocks once with 2 and the reason, and releases with 0 when Claude Code reports
-`stop_hook_active` (it already blocked once), so a machine without a working WSL cannot trap a
-session forever (review finding SC-12). A working gate can never reach that branch.
+find the script (127), the run was killed, or this launcher itself raised. That is an
+infrastructure failure, not a verdict: the launcher blocks once with 2 and the reason, and
+releases with 0 when Claude Code reports `stop_hook_active` (it already blocked once), so a
+machine without a working WSL cannot trap a session forever (review finding SC-12). A working
+gate can never reach that branch.
 """
 import json
 import os
@@ -44,12 +45,13 @@ def _infrastructure_failure(payload: bytes, reason: str) -> int:
 
 
 def main() -> int:
-    payload = sys.stdin.buffer.read()
+    payload = b""
     cmd = (["wsl.exe", "-e"] if os.name == "nt" else []) + INNER
     try:
+        payload = sys.stdin.buffer.read()
         proc = subprocess.run(cmd, cwd=ROOT, input=payload, check=False)
-    except OSError as exc:
-        return _infrastructure_failure(payload, f"cannot run {' '.join(cmd)}: {exc}")
+    except Exception as exc:  # OSError (no shell) or anything else: never Python's own exit 1
+        return _infrastructure_failure(payload, f"cannot run {' '.join(cmd)}: {exc!r}")
     if proc.returncode in (0, 2):
         return proc.returncode
     return _infrastructure_failure(payload, f"{' '.join(cmd)} exited {proc.returncode} (the gate only exits 0 or 2)")

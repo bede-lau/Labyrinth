@@ -9,10 +9,11 @@
 }
 .shell-skip:focus-visible { top: var(--lab-space-3); box-shadow: var(--lab-shadow-raised); }
 
+/* Header: kept short (DS-10). The question and the sub line use the full width instead of wrapping early. */
 .shell-header {
-  display: flex; justify-content: space-between; align-items: flex-start; gap: var(--lab-space-6);
+  display: flex; justify-content: space-between; align-items: flex-start; gap: var(--lab-space-3) var(--lab-space-6);
   flex-wrap: wrap;
-  padding: var(--lab-space-5) var(--lab-space-6) var(--lab-space-4);
+  padding: var(--lab-space-4) var(--lab-space-6) var(--lab-space-3);
   background: var(--lab-color-surface);
   border-bottom: 1px solid var(--lab-color-border);
 }
@@ -25,21 +26,53 @@
 .shell-header__question {
   font-size: var(--lab-font-size-xl); line-height: var(--lab-line-height-xl);
   font-weight: var(--lab-font-weight-bold); letter-spacing: -0.015em; color: var(--lab-color-text);
-  max-width: 60ch;
+  max-width: none;
 }
-.shell-header__sub { font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text-muted); max-width: 90ch; }
-.shell-header__controls { display: flex; flex-direction: column; align-items: flex-end; gap: var(--lab-space-2); }
-.shell-mode { display: flex; flex-direction: column; align-items: flex-end; gap: var(--lab-space-1); }
+.shell-header__sub { font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text-muted); max-width: none; }
+.shell-header__controls { display: flex; flex-direction: column; align-items: flex-end; gap: var(--lab-space-2); min-width: 0; }
+.shell-mode { display: flex; flex-direction: column; align-items: flex-end; gap: var(--lab-space-1); min-width: 0; }
 .shell-mode__pills { display: inline-flex; gap: var(--lab-space-1); flex-wrap: wrap; justify-content: flex-end; }
-.shell-mode__detail { font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-subtle); text-align: right; max-width: 36ch; }
+/* One line for the usual sentence; a long backend reason still wraps instead of widening the header. */
+.shell-mode__detail { font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-subtle); text-align: right; max-width: 64ch; overflow-wrap: anywhere; }
+.shell-mode--broken .shell-mode__detail { color: var(--lab-status-failed-fg); font-weight: var(--lab-font-weight-semibold); }
+
+/* Danger on every route: termination failed / pending, or a session lost mid-run. Loud on purpose (role=alert). */
+.shell-alert {
+  flex: 1 1 100%;
+  display: flex; gap: var(--lab-space-3); align-items: flex-start;
+  padding: var(--lab-space-3) var(--lab-space-4);
+  border: 2px solid var(--lab-status-failed-border);
+  border-radius: var(--lab-radius-md);
+  background: var(--lab-status-failed-bg);
+  color: var(--lab-status-failed-fg);
+}
+.shell-alert__icon { flex: none; margin-top: var(--lab-space-0-5); }
+.shell-alert__text { min-width: 0; display: flex; flex-direction: column; gap: var(--lab-space-1); }
+.shell-alert__title { font-size: var(--lab-font-size-lg); line-height: var(--lab-line-height-lg); font-weight: var(--lab-font-weight-bold); text-transform: uppercase; }
+.shell-alert__body, .shell-alert__action { font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text); overflow-wrap: anywhere; }
+.shell-alert__link { color: var(--lab-status-failed-fg); font-weight: var(--lab-font-weight-semibold); }
 
 .shell-nav {
   background: var(--lab-color-surface);
   border-bottom: 1px solid var(--lab-color-border);
   padding: 0 var(--lab-space-6);
-  overflow-x: auto;
 }
-.shell-nav__list { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--lab-space-1); }
+/* The tabs scroll sideways on narrow screens; a fade marks each edge that hides more tabs (DS-5). */
+.shell-nav__scroll { overflow-x: auto; scrollbar-width: none; }
+.shell-nav__scroll::-webkit-scrollbar { display: none; }
+.shell-nav__scroll[data-fade='start'] {
+  -webkit-mask-image: linear-gradient(to right, transparent, var(--lab-color-text) var(--lab-space-10));
+  mask-image: linear-gradient(to right, transparent, var(--lab-color-text) var(--lab-space-10));
+}
+.shell-nav__scroll[data-fade='end'] {
+  -webkit-mask-image: linear-gradient(to left, transparent, var(--lab-color-text) var(--lab-space-10));
+  mask-image: linear-gradient(to left, transparent, var(--lab-color-text) var(--lab-space-10));
+}
+.shell-nav__scroll[data-fade='both'] {
+  -webkit-mask-image: linear-gradient(to right, transparent, var(--lab-color-text) var(--lab-space-10), var(--lab-color-text) calc(100% - var(--lab-space-10)), transparent);
+  mask-image: linear-gradient(to right, transparent, var(--lab-color-text) var(--lab-space-10), var(--lab-color-text) calc(100% - var(--lab-space-10)), transparent);
+}
+.shell-nav__list { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--lab-space-1); width: max-content; }
 .shell-nav__link {
   display: flex; flex-direction: column; gap: 0;
   padding: var(--lab-space-2) var(--lab-space-3) var(--lab-space-2);
@@ -72,15 +105,38 @@
 .shell-legend__item { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: var(--lab-space-2); align-items: center; }
 .shell-legend__item dd { font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-muted); }
 
+/* Last-resort fallback of AppErrorBoundary: never a blank page. */
+.shell-crash {
+  max-width: 70ch; margin: var(--lab-space-12) auto; padding: var(--lab-space-5) var(--lab-space-6);
+  display: flex; flex-direction: column; gap: var(--lab-space-2);
+  border: 2px solid var(--lab-status-failed-border); border-radius: var(--lab-radius-lg);
+  background: var(--lab-color-surface); color: var(--lab-color-text);
+}
+.shell-crash__product {
+  font-size: var(--lab-font-size-2xs); line-height: var(--lab-line-height-2xs);
+  font-weight: var(--lab-font-weight-semibold); letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--lab-color-accent-text);
+}
+.shell-crash__title { font-size: var(--lab-font-size-xl); line-height: var(--lab-line-height-xl); font-weight: var(--lab-font-weight-bold); color: var(--lab-status-failed-fg); }
+.shell-crash__body { font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); overflow-wrap: anywhere; }
+.shell-crash__reload {
+  min-height: var(--lab-space-8); padding: var(--lab-space-1) var(--lab-space-4);
+  border: 1px solid var(--lab-color-accent); border-radius: var(--lab-radius-md);
+  background: var(--lab-color-accent); color: var(--lab-color-accent-fg);
+  font-size: var(--lab-font-size-sm); font-weight: var(--lab-font-weight-medium); cursor: pointer;
+}
+
 @media (max-width: 760px) {
-  .shell-header { padding: var(--lab-space-4); gap: var(--lab-space-3); }
+  .shell-header { padding: var(--lab-space-3) var(--lab-space-4); gap: var(--lab-space-2); }
   .shell-header__brand { flex-basis: 100%; }
   .shell-header__question { font-size: var(--lab-font-size-lg); line-height: var(--lab-line-height-lg); }
   .shell-header__sub { display: none; }
   .shell-header__controls { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; width: 100%; }
   .shell-mode { align-items: flex-start; }
   .shell-mode__pills { justify-content: flex-start; }
-  .shell-mode__detail { text-align: left; }
+  /* The sentence is in the indicator's accessible name and on Advance plasma; the pill alone fits a phone (DS-10). */
+  .shell-mode__detail { display: none; }
+  .shell-mode__detail--always { display: inline; text-align: left; }
   .shell-nav { padding: 0 var(--lab-space-2); }
   .shell-main { padding: var(--lab-space-4) var(--lab-space-3) var(--lab-space-6); }
   .shell-footer { padding: 0 var(--lab-space-3) var(--lab-space-6); }

@@ -1,43 +1,59 @@
 #!/usr/bin/env python3
 """Claude Code PostToolUse hook (Edit|Write|MultiEdit|Bash|PowerShell).
 
-Reads the hook JSON on stdin, checks the edited file against the main/renderer
-import ban, and exits 2 with the violation on stderr so the agent must fix it.
+Reads the hook JSON on stdin and checks the main/renderer boundary with scripts/check_boundaries.py:
+
+  Edit / Write / MultiEdit   the edited file, when it is under main/ or renderer/
+  Bash / PowerShell          the whole repo: shell edits (sed, heredocs, cp) bypass Edit/Write
+  anything it cannot read    the whole repo (malformed JSON, no file_path): fail closed, never a silent 0
+
+Exit codes: 0 = clean, 2 = violation or internal error, with the reason on stderr so the agent must fix
+it. Nothing else (decision D-003): an exception here must not surface as Python's exit 1, which Claude
+Code treats as non-blocking.
+
+The file path may arrive in any spelling of the checkout (D:\\repo\\..., /mnt/d/repo/...); it is
+mapped with the scanner's own pure-string logic, so the hook gives the same verdict under native Windows
+Python and under WSL (review finding SC-11).
 """
 import json
 import os
-import subprocess
 import sys
+import traceback
 from pathlib import Path
 
-ROOT = Path(os.environ.get("LABYRINTH_ROOT") or Path(__file__).resolve().parents[2]).resolve()
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-try:
-    payload = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)  # not our concern; never block on malformed hook input
-if payload.get("tool_name") in {"Bash", "PowerShell"}:
-    # Shell edits (sed, heredocs, cp) bypass Edit/Write; rescan the whole repo (fast, <1 s).
-    proc = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "check_boundaries.py")], capture_output=True, text=True, check=False)
-    if proc.returncode != 0:
-        sys.stderr.write(proc.stderr or proc.stdout)
-        sys.exit(2)
-    sys.exit(0)
-path = (payload.get("tool_input") or {}).get("file_path") or ""
-if not path:
-    sys.exit(0)
-p = Path(path)
-try:
-    rel = p.resolve().relative_to(ROOT)
-except ValueError:
-    sys.exit(0)
-if not rel.parts or rel.parts[0] not in {"main", "renderer"}:
-    sys.exit(0)
-proc = subprocess.run(
-    [sys.executable, str(Path(__file__).resolve().parents[1] / "check_boundaries.py"), str(p.resolve())],
-    capture_output=True, text=True, check=False,
-)
-if proc.returncode != 0:
-    sys.stderr.write(proc.stderr or proc.stdout)
-    sys.exit(2)
-sys.exit(0)
+
+def main() -> int:
+    import check_boundaries as cb  # honours LABYRINTH_ROOT (gate tests only)
+
+    try:
+        payload = json.loads(sys.stdin.buffer.read().decode("utf-8-sig"))  # tolerate a BOM (PowerShell pipes add one)
+    except Exception:
+        payload = None
+    if not isinstance(payload, dict):
+        return cb.run(None, cb.ROOT)
+    tool_input = payload.get("tool_input")
+    path = tool_input.get("file_path") if isinstance(tool_input, dict) else None
+    if payload.get("tool_name") in {"Bash", "PowerShell"} or not isinstance(path, str) or not path:
+        return cb.run(None, cb.ROOT)
+    root = str(cb.ROOT)
+    rel = cb.rel_of(path, root)
+    if rel is None:
+        rel = cb.rel_of(os.path.abspath(path), root)
+    if not rel or rel.split("/", 1)[0] not in cb.SIDES:
+        return 0  # outside main/ and renderer/: nothing to check
+    target = os.path.join(root, *rel.split("/"))
+    if not os.path.lexists(target):
+        return 0  # the edit removed the file
+    return cb.run([Path(target)], cb.ROOT)
+
+
+if __name__ == "__main__":
+    try:
+        code = main()
+    except Exception:
+        traceback.print_exc()
+        print("post_edit_boundary: internal error - the boundary was NOT verified. Exiting 2.", file=sys.stderr)
+        code = 2
+    sys.exit(0 if code == 0 else 2)

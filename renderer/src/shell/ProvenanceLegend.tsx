@@ -1,9 +1,13 @@
 import { STATUS_META, StatusPill, type StatusKind } from '../design';
 
-/** Groups of states the views use, in reading order. */
+/**
+ * Groups of states the views use, in reading order. They cover every provenance kind and every
+ * verification outcome of contracts/common.schema.json (App.test.tsx reads the enums from the schema);
+ * `live` is the one kind that is described in words below instead of being drawn.
+ */
 const GROUPS: { title: string; kinds: StatusKind[] }[] = [
   { title: 'Where a number comes from', kinds: ['replay', 'archive', 'derived', 'prd-reported', 'rehearsal'] },
-  { title: 'How far it is checked', kinds: ['passed', 'unverified', 'blocked', 'mismatch', 'failed'] },
+  { title: 'How far it is checked', kinds: ['passed', 'unverified', 'blocked', 'mismatch', 'failed', 'not-applicable'] },
 ];
 
 /** Global legend: every provenance and verification state, as pill + meaning (never colour alone). */

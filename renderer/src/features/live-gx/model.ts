@@ -1,17 +1,22 @@
 // Advance plasma (live GX) — pure mode/permission logic, clock tracking and playback series.
-import type { SeriesId, StatusKind } from '../../design';
-import type { LiveStatus, LiveState, LiveWorker } from '../../lib/liveStatus';
+// The danger rules and the mode -> pill mapping are shared with the header: lib/liveStatus.ts.
+import type { IconName, SeriesId, StatusKind } from '../../design';
+import {
+  fallbackCause,
+  isLive,
+  liveDanger,
+  modePills,
+  playableSavedRunId,
+  sessionMayBeBilling,
+  terminationProblem,
+  type LiveState,
+  type LiveWorker,
+  type SavedRun,
+  type TerminationProblem,
+} from '../../lib/liveStatus';
 
-/** TS mirror of contracts/live-run.schema.json (GET /api/live/runs/<savedRunId>). */
-export interface SavedRun {
-  savedRunId: string;
-  initVerified: boolean;
-  continuationVerified: boolean;
-  checks: { init: boolean; continuation: boolean; distinctDevices: boolean; overlap: boolean };
-  phases: LiveStatus[];
-}
-
-export const SAVED_RUN_ID = /^[A-Za-z0-9_.-]{1,80}$/;
+export { SAVED_RUN_ID } from '../../lib/liveStatus';
+export type { SavedRun } from '../../lib/liveStatus';
 
 /** A saved run may be played as "saved GX rehearsal run" only if every check passed (D-018). */
 export function savedRunQualified(run: SavedRun | null | undefined): boolean {
@@ -23,8 +28,7 @@ export function savedRunQualified(run: SavedRun | null | undefined): boolean {
 /** The saved run to fetch, or null: only when the API names one AND reports the service qualified. */
 export function savedRunToFetch(s: LiveState): string | null {
   if (s.status !== 'ready' || s.data.mode === 'live') return null;
-  const id = s.data.fallback.savedRunId;
-  return id && s.data.qualified === true && SAVED_RUN_ID.test(id) ? id : null;
+  return playableSavedRunId(s.data);
 }
 
 export interface Pill {
@@ -32,99 +36,183 @@ export interface Pill {
   text: string;
 }
 export interface ModeView {
-  /** DESIGN.md §5 mapping of the API mode to indicator pills. */
+  /** DESIGN.md §5 mapping of the API mode to indicator pills (danger first, never beside "Replay · $0"). */
   pills: Pill[];
   title: string;
-  tone: 'info' | 'warn';
+  tone: 'info' | 'warn' | 'danger';
+  icon: IconName;
   /** Replay is playing (true for every state except live). */
   replay: boolean;
 }
 
-export function modeView(s: LiveState): ModeView {
-  if (s.status === 'connecting') {
-    return { pills: [{ status: 'replay', text: 'Replay · $0' }], title: 'REPLAY — connecting to the live API…', tone: 'info', replay: true };
+/**
+ * The panel's state label. `localProblem` is a failed Terminate answered to this page: it is a danger
+ * state even if the status poll does not (yet) carry the marker.
+ */
+export function modeView(s: LiveState, localProblem: TerminationProblem | null = null): ModeView {
+  const danger = liveDanger(s);
+  const replay = !isLive(s);
+  let pills: Pill[] = modePills(s);
+  if (!danger && localProblem) pills = [{ status: 'failed', text: localProblem.marker }, ...pills.filter((p) => p.status !== 'replay')];
+  if (danger?.kind === 'connection-lost') {
+    return { pills, title: 'STATE UNKNOWN — the live API stopped answering during a session', tone: 'danger', icon: 'alert', replay };
   }
-  if (s.status === 'unreachable') {
-    return { pills: [{ status: 'replay', text: 'Replay · $0' }], title: 'REPLAY — live API unreachable', tone: 'warn', replay: true };
+  if (danger || localProblem) {
+    const mode = s.status === 'ready' ? `the API reports mode "${s.data.mode}"` : 'the API is not answering';
+    return { pills, title: `TERMINATION NOT CONFIRMED — ${mode}`, tone: 'danger', icon: 'alert', replay };
   }
+  if (s.status === 'connecting') return { pills, title: 'REPLAY — connecting to the live API…', tone: 'info', icon: 'replay', replay };
+  if (s.status === 'unreachable' && s.cause === 'stale') {
+    return { pills, title: 'CHECKING — the last status is too old to show', tone: 'warn', icon: 'replay', replay };
+  }
+  if (s.status === 'unreachable') return { pills, title: 'REPLAY — live API unreachable', tone: 'warn', icon: 'replay', replay };
   switch (s.data.mode) {
     case 'live':
-      return { pills: [{ status: 'live', text: 'LIVE · GPU 0 / GPU 1' }], title: 'LIVE — GX running on two GPUs', tone: 'info', replay: false };
+      return { pills, title: 'LIVE — GX running on two GPUs', tone: 'info', icon: 'live', replay };
     case 'fallback':
-      return {
-        pills: [
-          { status: 'failed', text: 'Worker failed' },
-          { status: 'replay', text: 'Playing saved run' },
-        ],
-        title: 'FALLBACK — a GX worker failed; playing saved evidence',
-        tone: 'warn',
-        replay: true,
-      };
+      return { pills, title: `FALLBACK — ${fallbackCause(s.data)}`, tone: 'warn', icon: 'alert', replay };
     case 'launching':
-      return { pills: [{ status: 'rehearsal', text: 'Launching…' }], title: 'LAUNCHING — not live until both workers report', tone: 'info', replay: true };
+      return { pills, title: 'LAUNCHING — not live until both workers report', tone: 'info', icon: 'rehearsal', replay };
     case 'unavailable':
-      return { pills: [{ status: 'replay', text: 'Replay · $0' }], title: 'REPLAY — live GX unavailable', tone: 'warn', replay: true };
+      return { pills, title: 'REPLAY — live GX unavailable', tone: 'warn', icon: 'replay', replay };
     case 'terminated':
-      return { pills: [{ status: 'replay', text: 'Replay · $0' }], title: 'REPLAY — last live session terminated', tone: 'info', replay: true };
+      return { pills, title: 'REPLAY — last live session terminated', tone: 'info', icon: 'replay', replay };
     case 'idle':
     default:
-      return { pills: [{ status: 'replay', text: 'Replay · $0' }], title: 'REPLAY — qualified and idle; nothing is running', tone: 'info', replay: true };
+      return s.data.workers.length > 0
+        ? { pills, title: 'REPLAY — the API reports idle while a session still lists workers', tone: 'warn', icon: 'replay', replay }
+        : { pills, title: 'REPLAY — qualified and idle; nothing is running', tone: 'info', icon: 'replay', replay };
   }
 }
 
-export function canLaunch(s: LiveState): boolean {
-  return s.status === 'ready' && s.data.mode === 'idle' && s.data.budget.slotFits === true;
+/** A snapshot counts as fresh only with a timestamp, for `freshForMs` after it arrived. */
+export function isFresh(s: LiveState, now: number): boolean {
+  return s.status === 'ready' && s.receivedAt !== undefined && s.freshForMs !== undefined && now - s.receivedAt <= s.freshForMs;
 }
 
-export function launchBlockedReason(s: LiveState): string | null {
-  if (canLaunch(s)) return null;
+/**
+ * L10: why Launch is not allowed right now, or null when it is. Allowed only for a fresh snapshot
+ * with mode "idle" and `budget.slotFits`, with no session left over and no launch already posted.
+ */
+export function launchBlockedReason(s: LiveState, now: number): string | null {
   if (s.status === 'connecting') return 'Waiting for /api/live/status.';
-  if (s.status === 'unreachable') return 'The live API is not reachable (static replay build).';
-  if (s.data.mode !== 'idle') return `Launch needs mode "idle"; the API reports "${s.data.mode}".`;
-  return 'The next slot does not fit under the budget ceiling.';
+  if (s.status === 'unreachable') {
+    if (s.cause === 'stale') return 'The last status is too old; waiting for a current one.';
+    return liveDanger(s)
+      ? 'The live API stopped answering; the session state is unknown.'
+      : 'The live API is not reachable (static replay build).';
+  }
+  const d = s.data;
+  if (d.mode !== 'idle') return `Launch needs mode "idle"; the API reports "${d.mode}".`;
+  if (terminationProblem(d)) return 'A termination is unconfirmed; GPUs may still be billing.';
+  if (d.workers.length > 0) return 'The API still lists workers from a session.';
+  if (d.budget.slotFits !== true) return 'The next slot does not fit under the budget ceiling.';
+  if (s.launchLocked) {
+    return 'A launch request was already sent from this page. Launch stays disabled until the API reports another mode (reload the page to ask again).';
+  }
+  if (!isFresh(s, now)) return 'The last status is not fresh; waiting for the next poll.';
+  return null;
 }
 
-export const TERMINATE_FAILED_PREFIX = 'TERMINATE FAILED';
-export function statusTerminateFailure(s: LiveState): string | null {
-  return s.status === 'ready' && s.data.reason.trim().startsWith(TERMINATE_FAILED_PREFIX) ? s.data.reason : null;
+export function canLaunch(s: LiveState, now: number): boolean {
+  return launchBlockedReason(s, now) === null;
 }
 
-export function canTerminate(s: LiveState, lastTerminateFailed: boolean): boolean {
-  if (s.status !== 'ready') return false;
-  return (
-    lastTerminateFailed ||
-    statusTerminateFailure(s) !== null ||
-    ['launching', 'live', 'fallback'].includes(s.data.mode) ||
-    s.data.workers.length > 0
-  );
+/** What this page itself knows beyond the status poll. */
+export interface LocalSessionFlags {
+  /** The last Terminate sent from here was not confirmed. */
+  terminateFailed: boolean;
+  /** A launch was posted from here and neither refused nor followed by a confirmed terminate. */
+  launchUnconfirmed: boolean;
+}
+
+/**
+ * Terminate must stay available whenever a session may still be billing: the last valid snapshot was
+ * not a clean idle one (also after the API stopped answering), a Terminate failed, or a launch is unconfirmed.
+ */
+export function canTerminate(s: LiveState, local: LocalSessionFlags): boolean {
+  if (local.terminateFailed || local.launchUnconfirmed) return true;
+  if (s.status === 'ready') return sessionMayBeBilling(s.data);
+  if (s.status === 'unreachable') return s.lastKnown !== undefined && sessionMayBeBilling(s.lastKnown.data);
+  return false;
 }
 
 /* ---- sim clocks ------------------------------------------------------------------------ */
+export interface ClockReading {
+  simTime: number | null;
+  /** When the status carrying this reading arrived (ms). */
+  at: number;
+}
 export interface ClockTrack {
-  latest: number | null;
-  previous: number | null;
+  latest: ClockReading;
+  previous: ClockReading | null;
 }
 export type Clocks = Record<number, ClockTrack>;
 
-/** Idempotent per snapshot: a clock "advances" when its latest distinct simTime exceeds the previous one. */
-export function trackClocks(prev: Clocks, workers: readonly LiveWorker[]): Clocks {
+/**
+ * Record one reading per worker for the snapshot that arrived at `at`. Every new snapshot is a new
+ * reading, also when the clock did not move — that is how a stalled solver is seen. The same snapshot
+ * (same `at`) processed twice stays one reading.
+ */
+export function trackClocks(prev: Clocks, workers: readonly LiveWorker[], at: number): Clocks {
   const next: Clocks = {};
   for (const w of workers) {
     const p = prev[w.gpuIndex];
-    if (!p) next[w.gpuIndex] = { latest: w.simTime, previous: null };
-    else if (w.simTime === p.latest) next[w.gpuIndex] = p;
-    else next[w.gpuIndex] = { latest: w.simTime, previous: p.latest };
+    next[w.gpuIndex] = p && p.latest.at === at ? p : { latest: { simTime: w.simTime, at }, previous: p ? p.latest : null };
   }
   return next;
 }
 
-export function clockAdvance(c: ClockTrack | undefined): number | null {
-  if (!c || c.latest === null || c.previous === null) return null;
-  return c.latest - c.previous;
+/** Clock change between the last two timestamped readings, or null when there are not two usable ones. */
+export function clockAdvance(c: ClockTrack | undefined): { delta: number; overMs: number } | null {
+  if (!c || !c.previous || c.latest.simTime === null || c.previous.simTime === null) return null;
+  const overMs = c.latest.at - c.previous.at;
+  return overMs > 0 ? { delta: c.latest.simTime - c.previous.simTime, overMs } : null;
 }
 
 /** PRD: GPU 0 advances the bean tube, GPU 1 the triangular tube. */
 export const EXPECTED_TUBE: Record<0 | 1, LiveWorker['tube']> = { 0: 'bean', 1: 'triangular' };
+
+export interface OverlapClaim {
+  /** A live session with two workers in state `running` and distinct, non-empty device IDs in the same status reading. */
+  concurrent: boolean;
+  /** Both device IDs are reported and equal. Never true while an ID is still missing. */
+  sameDevice: boolean;
+  text: string;
+}
+
+/**
+ * `live` = the API reports mode "live" right now. Outside a live session the worker states are only
+ * the last ones reported (after a fallback a terminated worker can still read "running"), so they
+ * prove nothing about execution.
+ */
+export function overlapClaim(workers: readonly LiveWorker[], live: boolean): OverlapClaim {
+  if (workers.length !== 2) {
+    return { concurrent: false, sameDevice: false, text: `Concurrent execution not shown: ${workers.length} of 2 workers reported.` };
+  }
+  const ids = workers.map((w) => w.deviceId.trim());
+  const missing = workers.filter((_, i) => ids[i] === '').map((w) => `GPU ${w.gpuIndex}`);
+  const running = workers.filter((w) => w.state === 'running').length;
+  const sameDevice = missing.length === 0 && ids[0] === ids[1];
+  const warning = sameDevice ? ' Warning: both workers report the same device ID.' : '';
+  if (!live) {
+    return {
+      concurrent: false,
+      sameDevice,
+      text: `Concurrent execution not shown: the session is not live, and the states above are the last ones each worker reported.${warning}`,
+    };
+  }
+  if (running < 2) return { concurrent: false, sameDevice, text: `Concurrent execution not shown: ${running} of 2 workers running.${warning}` };
+  if (missing.length > 0) {
+    return { concurrent: false, sameDevice, text: `Concurrent execution not shown: device ID not reported yet by ${missing.join(' and ')}.` };
+  }
+  if (sameDevice) return { concurrent: false, sameDevice, text: `Concurrent execution not shown.${warning}` };
+  return {
+    concurrent: true,
+    sameDevice,
+    text: 'Both solvers are executing concurrently on separate devices. Basis: both workers report state "running" with distinct device IDs in this status reading.',
+  };
+}
 
 /* ---- playback -------------------------------------------------------------------------- */
 export interface PlaySeries {

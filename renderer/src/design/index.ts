@@ -13,7 +13,13 @@ export { Panel, type PanelProps } from './components/Panel';
 export { Stat, type StatProps } from './components/Stat';
 export { StatusPill, type StatusPillProps } from './components/StatusPill';
 export { ProvenanceBadge, type ProvenanceBadgeProps } from './components/ProvenanceBadge';
-export { FixtureCheck, fixtureOutcome, type FixtureCheckProps, type FixtureOutcome } from './components/FixtureCheck';
+export {
+  FixtureCheck,
+  fixtureOutcome,
+  type FixtureBasis,
+  type FixtureCheckProps,
+  type FixtureOutcome,
+} from './components/FixtureCheck';
 export {
   SegmentedControl,
   type SegmentedControlProps,

@@ -1,7 +1,7 @@
 // Status semantics: every state has colour (tokens) + icon + text. Never colour alone.
 import type { CalloutTone, StatusKind } from './tokens';
 import type { IconName } from './components/Icon';
-import type { VerificationOutcome } from './types';
+import type { ProvenanceKind, VerificationOutcome } from './types';
 
 export interface StatusMeta {
   /** Visible text. */
@@ -52,6 +52,35 @@ export const VERIFICATION_STATUS: Record<VerificationOutcome, StatusKind> = {
   blocked: 'blocked',
   'not-applicable': 'not-applicable',
 };
+
+/** How a provenance record is shown: the status whose colours and icon it takes, and its words. */
+export interface ProvenancePresentation {
+  status: StatusKind;
+  label: string;
+  icon: IconName;
+  description: string;
+}
+
+/**
+ * The status a provenance `kind` is drawn with.
+ *
+ * LIVE cannot be produced from provenance alone. A record of kind `live` read from an artifact or a
+ * saved run says how the numbers were made, not that a worker is running now, so it is shown as
+ * saved evidence ("Recorded run", the replay treatment). It takes the live treatment only when
+ * `live` is true, and `live` must come from the live-status path (`/api/live/status` reporting
+ * mode "live"), never from the record itself. The flag has no effect on any other kind.
+ */
+export function provenanceStatus(kind: ProvenanceKind, live = false): ProvenancePresentation {
+  if (kind === 'live' && live !== true)
+    return {
+      status: 'replay',
+      label: 'Recorded run',
+      icon: STATUS_META.replay.icon,
+      description: 'Produced by a GX worker in an earlier session and read back from a saved record. Nothing is running now.',
+    };
+  const meta = STATUS_META[kind];
+  return { status: kind, label: meta.label, icon: meta.icon, description: meta.description };
+}
 
 export const CALLOUT_META: Record<CalloutTone, { icon: IconName; spoken: string }> = {
   info: { icon: 'info', spoken: 'Note' },

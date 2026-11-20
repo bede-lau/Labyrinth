@@ -1,10 +1,12 @@
-/* Spatial parallelism. Tokens only. Rank identity uses two CVD-checked series colours plus shape
+/* Spatial parallelism. Tokens only. The two MPI ranks are drawn in neutral ink, not in series colours:
+   cobalt and ochre mean stella and GENE everywhere else in the app, and this GENE-X case is neither.
+   Rank identity is carried by tone (strong ink / mid slate), line style (solid / dashed arc), shape
    (rank 0 circles, rank 1 squares) and text, so colour is never the only channel. */
 .sp-layout { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: var(--lab-space-4); align-items: start; }
 .sp-layout__side { display: flex; flex-direction: column; gap: var(--lab-space-4); min-width: 0; }
 
-.sp-rank--0 { --rank: var(--lab-series-stella); }
-.sp-rank--1 { --rank: var(--lab-series-gene); }
+.sp-rank--0 { --rank: var(--lab-color-text); --rank-dash: none; }
+.sp-rank--1 { --rank: var(--lab-color-border-strong); --rank-dash: 2 12; }
 
 .sp-geometry-label {
   display: inline-flex; align-items: center; gap: var(--lab-space-1);
@@ -17,7 +19,7 @@
 .sp-ring { margin: var(--lab-space-3) 0 var(--lab-space-4); }
 .sp-ring__svg { display: block; width: 100%; max-width: 680px; height: auto; margin: 0 auto; }
 .sp-ring__track { fill: none; stroke: var(--lab-color-border); stroke-width: 1; }
-.sp-ring__arc { fill: none; stroke: var(--rank); stroke-width: 8; stroke-linecap: round; }
+.sp-ring__arc { fill: none; stroke: var(--rank); stroke-width: 8; stroke-linecap: round; stroke-dasharray: var(--rank-dash); }
 .sp-ring__spoke { stroke: var(--lab-color-border-strong); stroke-width: 1.25; stroke-dasharray: 2 3; }
 .sp-ring__arrow { fill: none; stroke: var(--lab-color-text-muted); stroke-width: 1.5; }
 .sp-ring__head { fill: var(--lab-color-text-muted); }
@@ -39,21 +41,27 @@
 .sp-timing__fill {
   display: block; height: 100%;
   background: var(--lab-color-accent-subtle);
-  border: 1px dashed var(--lab-color-accent);
+  border: 1px solid var(--lab-color-accent);
   border-radius: var(--lab-radius-xs);
 }
+/* Dashed = not backed by data in this repo (DESIGN §5): the outline follows the artifact's provenance kind. */
+.sp-timing[data-kind='prd-reported'] .sp-timing__fill { border-style: dashed; }
 .sp-small { margin-top: var(--lab-space-2); font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-subtle); }
+/* The speedup fixture row measures itself against this wrapper (a ~450 px side card), not the viewport. */
+.sp-fixture { container-type: inline-size; }
 
-.sp-tally { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--lab-space-4); flex-wrap: wrap; }
-.sp-tally__runs { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--lab-space-1); }
+.sp-tally { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--lab-space-2) var(--lab-space-4); flex-wrap: wrap; }
+.sp-tally__runs { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--lab-space-1); }
 .sp-tally__run {
   display: inline-flex; align-items: center; gap: 2px;
   height: 24px; padding: 0 var(--lab-space-2);
-  border: 1px dashed var(--lab-color-border-strong); border-radius: var(--lab-radius-sm);
+  border: 1px solid var(--lab-color-border-strong); border-radius: var(--lab-radius-sm);
   font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); font-variant-numeric: tabular-nums;
 }
 /* PRD-reported passes: neutral and dashed, never the green 'Verified' treatment (verification is blocked). */
+.sp-tally[data-kind='prd-reported'] .sp-tally__run { border-style: dashed; }
 .sp-tally__run--pass { color: var(--lab-color-text); }
+.sp-tally__fail { flex-basis: 100%; margin-top: 0; color: var(--lab-status-mismatch-fg); }
 
 .sp-ring--compact .sp-ring__boundary { font-size: var(--lab-font-size-xs); }
 .sp-ring--compact .sp-node__label { font-size: var(--lab-font-size-md); }
