@@ -30,7 +30,7 @@
         "nTheta": { "type": "integer", "minimum": 8 },
         "nPhi": { "type": "integer", "minimum": 8 },
         "positions": {
-          "description": "Flat [x0,y0,z0,x1,...] in metres, row-major over (phi, theta); length 3*nTheta*nPhi.",
+          "description": "Flat [x0,y0,z0,x1,...] in metres, row-major over (phi, theta); length 3*nTheta*nPhi. Periodic in both indices with NO duplicated seam row/column: consumers must wrap indices (phi nPhi-1 -> 0, theta nTheta-1 -> 0) when triangulating.",
           "type": "array",
           "items": { "type": "number" }
         },
