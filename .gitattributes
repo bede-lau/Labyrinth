@@ -1,0 +1,9 @@
+# Line endings are LF everywhere, on every OS. The gates are bash scripts, artifacts are
+# compared byte-for-byte (artifacts:fresh) and raw inputs are sha256-pinned, so a CRLF
+# checkout on Windows breaks all three. See decision.md D-020.
+* text=auto eol=lf
+*.sh text eol=lf
+*.nc binary
+*.h5 binary
+*.png binary
+*.bundle binary

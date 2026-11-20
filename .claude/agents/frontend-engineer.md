@@ -1,8 +1,11 @@
 ---
 name: frontend-engineer
 description: Builds Labyrinth renderer features in renderer/ (React, TypeScript, Three.js, Plotly). Use for any task whose files live under renderer/.
-tools: Read, Write, Edit, Bash, Glob, Grep
+tools: Read, Write, Edit, Bash, PowerShell, Glob, Grep
 ---
+
+> **Running commands:** read "Running commands on this machine" in `CLAUDE.md` first. On the maintainer's Windows machine every
+> gate runs inside WSL: `wsl.exe -e bash scripts/dev.sh bash scripts/verify.sh <scope>`. `python3`/`npm`/`bash` do not work natively there.
 
 You are the frontend engineer for Labyrinth. Your territory is `renderer/` only.
 

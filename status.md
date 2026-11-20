@@ -1,8 +1,17 @@
 # Labyrinth · status
 
 > **Single source of truth for handoff. Read this first, then `interface.md`, `architecture.md`, `decision.md`.**
-> Last updated: 2026-11-20 by the orchestrator, at the user's request to stop the build stage and hand over.
-> Branch `claude/focused-cori-6s5ucw`. **Not pushed** (GitHub App has no write access — see Blockers). A `git bundle` of the branch was produced as a fallback.
+> Last updated: 2026-11-20 by the maintainer (Claude Code in the owner's checkout `D:\Labyrinth`, Windows + WSL), resuming after the hand-over.
+> Branch **`main`**, pushed to `github.com/bede-lau/Labyrinth` (D-021). `claude/focused-cori-6s5ucw` on GitHub is the hand-over snapshot (`f0ca8e6`).
+> **Environment changed:** every command runs inside WSL through `scripts/dev.sh` — see CLAUDE.md "Running commands on this machine" and D-020.
+
+## 0. Resume log (newest first — if a session dies, the next agent continues from the top entry)
+
+- **2026-11-20, session 2 (maintainer).** Pushed the hand-over branch, fast-forwarded `main`. Fixed the Windows checkout (LF line endings,
+  WSL toolchain, cross-platform hooks, `scripts/dev.sh`, `setup-dev.sh`, `probe-copy.sh`; D-020/D-021). `verify.sh all` green in WSL.
+  **In flight (wave 1, all agents re-dispatchable from §4):** backend-engineer on §4.1 (live-GX safety tests); verifiers on the frontend
+  halves of 01, 02, 03+04, 05+09 and on 08; reviewers on `renderer/src/{shell,features}` and on 00 scaffold + the D-020 scripts.
+  Not started: §4.3 design review with screenshots; 06/07 re-review and re-verify (wait for §4.1).
 
 ## 1. Where the build stands (one paragraph)
 
@@ -61,7 +70,7 @@ Frontend outcome → test coverage: every ID A1–A5, G7–G10, S5–S6, T8–T1
 
 | Blocker | Impact | Action |
 |---|---|---|
-| **GitHub push → 403** ("Claude doesn't have GitHub access to bede-lau/Labyrinth") | all work exists only in this container + the bundle | Install/reconnect the Claude GitHub App with write access (https://claude.ai/connect-github), then `git push -u origin claude/focused-cori-6s5ucw`. The GitHub connector can *read* the repo (branch `main` only exists) but cannot carry a 209-file / 5 MB push (3 binaries) |
+| ~~GitHub push → 403~~ **resolved 2026-11-20** | — | The owner signed in through Git Credential Manager; the maintainer pushes to `main` with the git bundled in GitHub Desktop (`%LOCALAPPDATA%\GitHubDesktop\app-*\resources\app\git\cmd\git.exe`; `git` is not on the Windows PATH) |
 | 129 saved stella samples at ρ 0.8 | PRD acceptance for "Locate the tubes" stays BLOCKED (D-007) | provide the stella `.geometry`/`.out.nc` holding them; add to `data/raw/`, pin sha256, turn the blocked check into a real comparison, tighten the schema |
 | Modal credentials + GX rehearsal | live mode stays `unavailable`; fallback plays archive | follow "Live rehearsal runbook" below |
 | Dommaschk GENE-X checkpoints | spatial replay stays prd-reported/blocked | provide the checkpoints |
@@ -77,9 +86,14 @@ Unverified against an installed modal 1.6.4: `cancel(terminate_containers=True)`
 ## 7. How to resume
 
 ```
-pip install -r main/requirements.txt && npm --prefix renderer ci
-bash scripts/verify.sh            # must exit 0 before you start (it did at the last code commit)
+# Windows checkout (this machine): everything runs in WSL, from the repo root
+wsl.exe -e bash scripts/setup-dev.sh                        # once; user-local toolchain, no sudo
+wsl.exe -e bash scripts/dev.sh bash scripts/verify.sh all   # must exit 0 before you start (≈2.5 min)
+# Linux / CI
+pip install -r main/requirements.txt && npm --prefix renderer ci && bash scripts/verify.sh
 ```
+- **Parallel agents share one working tree.** Engineers own disjoint folders; verifiers/reviewers never mutate the tree — they
+  mutate a copy from `scripts/probe-copy.sh <name>`. Only the maintainer runs `verify.sh all` as the final word, commits and pushes.
 - **Agents** (`.claude/agents/`): `backend-engineer` (main/), `frontend-engineer` (renderer/), `design-lead` (design system + screenshot review), `verifier` (adversarial, writes VERIFY.md, never fixes), `reviewer` (read-only diff review). The loop that worked: engineer → `verify.sh <scope>` until exit 0 → verifier → reviewer → fix round → re-verify.
 - **Always give a verifier an isolated probe plan** (own code, mutation tests on copies, real output) — every FAIL so far was found that way (13 boundary bypasses, a spoofable DONE gate, a wrong "PRD error", a 40 % stderr bias, an orphaned-GPU path).
 - **Usage limits:** two limit hits killed all background agents mid-run. Agents' transcripts do not survive a *new* session — re-dispatch from §4 briefs, not from memory.

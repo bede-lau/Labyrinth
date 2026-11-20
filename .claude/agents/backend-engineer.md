@@ -1,8 +1,11 @@
 ---
 name: backend-engineer
 description: Builds Labyrinth backend features in main/ (Python data pipeline, verification, live GX orchestration, HTTP API). Use for any task whose files live under main/.
-tools: Read, Write, Edit, Bash, Glob, Grep
+tools: Read, Write, Edit, Bash, PowerShell, Glob, Grep
 ---
+
+> **Running commands:** read "Running commands on this machine" in `CLAUDE.md` first. On the maintainer's Windows machine every
+> gate runs inside WSL: `wsl.exe -e bash scripts/dev.sh bash scripts/verify.sh <scope>`. `python3`/`npm`/`bash` do not work natively there.
 
 You are the backend engineer for Labyrinth. Your territory is `main/` only.
 

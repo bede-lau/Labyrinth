@@ -54,6 +54,102 @@ def test_post_edit_hook_exits_2_on_violation_and_0_when_clean(tmp_path):
     assert run(hook, input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "x"}}), env=env).returncode == 0
 
 
+def test_post_edit_hook_rescans_on_powershell_edits(tmp_path):
+    # On the Windows checkout shell edits arrive as tool_name "PowerShell", not "Bash" (D-020).
+    root = tmp_path.resolve()
+    for sub in ("renderer/src", "main/labyrinth_main"):
+        (root / sub).mkdir(parents=True)
+    bad = root / "renderer/src/bad.ts"
+    bad.write_text("import x from '../../main/labyrinth_main/foo';\n")
+    (root / "renderer/src/good.ts").write_text("import React from 'react';\n")
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "LABYRINTH_ROOT": str(root)}
+    hook = [sys.executable, str(ROOT / "scripts/hooks/post_edit_boundary.py")]
+    payload = json.dumps({"tool_name": "PowerShell", "tool_input": {"command": "x"}})
+    assert run(hook, input=payload, env=env).returncode == 2
+    bad.unlink()
+    assert run(hook, input=payload, env=env).returncode == 0
+
+
+def test_dev_wrapper_needs_a_command_and_passes_exit_codes_through():
+    r = run(["bash", "scripts/dev.sh"])
+    assert r.returncode == 2 and "expected a command" in r.stderr
+    assert run(["bash", "scripts/dev.sh", "true"]).returncode == 0
+    assert run(["bash", "scripts/dev.sh", "bash", "-c", "exit 2"]).returncode == 2
+    assert run(["bash", "scripts/dev.sh", "bash", "-c", "echo hi"]).stdout == "hi\n"
+
+
+def test_dev_wrapper_puts_the_local_toolchain_first_on_path(tmp_path):
+    for sub in ("venv/bin", "node/bin"):
+        (tmp_path / sub).mkdir(parents=True)
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LABYRINTH_TOOLS": str(tmp_path)}
+    r = run(["bash", "scripts/dev.sh", "bash", "-c", 'echo "$PATH"'], env=env)
+    assert r.stdout.strip() == f"{tmp_path}/node/bin:{tmp_path}/venv/bin:/usr/bin:/bin"
+
+
+def _stop_launcher(tmp_path, verify_cmd):
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "LABYRINTH_VERIFY_CMD": verify_cmd, "LABYRINTH_TOOLS": str(tmp_path / "none"),
+           "LABYRINTH_STATE_DIR": str(tmp_path), "LABYRINTH_MAX_STOP_BLOCKS": "5", "HOME": str(tmp_path)}
+    return run([sys.executable, "scripts/hooks/stop_launcher.py"], input=json.dumps({"session_id": "launcher"}), env=env)
+
+
+def test_stop_launcher_blocks_with_2_and_passes_with_0(tmp_path):
+    r = _stop_launcher(tmp_path, "echo STAGE-FAILED; exit 2")
+    assert r.returncode == 2 and "FAILED (exit 2)" in r.stderr and "STAGE-FAILED" in r.stderr
+    assert _stop_launcher(tmp_path, "exit 1").returncode == 2  # any failure is 2, never another code
+    assert _stop_launcher(tmp_path, "true").returncode == 0
+
+
+def test_stop_launcher_without_a_shell_blocks_once_then_releases(tmp_path, monkeypatch):
+    import importlib.util
+    import io
+    spec = importlib.util.spec_from_file_location("stop_launcher", ROOT / "scripts/hooks/stop_launcher.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    def no_shell(*_a, **_k):
+        raise FileNotFoundError("wsl.exe")
+
+    monkeypatch.setattr(mod.subprocess, "run", no_shell)
+
+    def call(payload):
+        monkeypatch.setattr(mod.sys, "stdin", io.TextIOWrapper(io.BytesIO(payload)))
+        return mod.main()
+
+    assert call(b'{"session_id":"x"}') == 2
+    assert call(b'{"session_id":"x","stop_hook_active":true}') == 0
+    assert call(b"not json") == 2
+
+
+def test_setup_and_env_scripts_never_leave_the_tools_dir_or_use_sudo():
+    text = (ROOT / "scripts/setup-dev.sh").read_text()
+    assert "sudo" not in text.replace("no sudo", "").replace("without sudo", "")
+    assert "UV_NO_MODIFY_PATH=1" in text and "sha256sum -c" in text
+
+
+def test_probe_copy_is_isolated_and_rejects_dangerous_names(tmp_path):
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LABYRINTH_PROBE_DIR": str(tmp_path / "probes")}
+    for bad in ([], ["a", "b"], [".."], ["."], ["a/b"], ["-rf"], [""]):
+        assert run(["bash", "scripts/probe-copy.sh", *bad], env=env).returncode == 2, bad
+    r = run(["bash", "scripts/probe-copy.sh", "t1"], env=env)
+    assert r.returncode == 0, r.stderr
+    copy = Path(r.stdout.strip())
+    assert copy == tmp_path / "probes" / "t1"
+    assert (copy / "scripts/verify.sh").read_bytes() == (ROOT / "scripts/verify.sh").read_bytes()
+    assert not (copy / ".git").exists()
+    (copy / "status.md").write_text("mutated\n")  # mutating the copy must not touch the real tree
+    assert (ROOT / "status.md").read_text() != "mutated\n"
+    nm = copy / "renderer/node_modules"
+    assert not nm.exists() or nm.is_symlink()
+
+
+def test_text_files_are_lf_only():
+    # A CRLF checkout breaks bash gates, artifacts:fresh byte equality and sha256 pins (D-020).
+    attrs = (ROOT / ".gitattributes").read_text()
+    assert "* text=auto eol=lf" in attrs
+    for rel in ("scripts/verify.sh", "scripts/dev.sh", "scripts/hooks/stop_verify.sh", "artifacts/manifest.json"):
+        assert b"\r\n" not in (ROOT / rel).read_bytes(), rel
+
+
 def test_verify_rejects_bad_invocations_with_2():
     for args in (["nope"], [""], ["main", "extra"]):
         assert run(["bash", "scripts/verify.sh", *args]).returncode == 2, args
