@@ -6,14 +6,14 @@
 ## Where things stand
 | Task | Owner | State | Verify | Review | Notes |
 |---|---|---|---|---|---|
-| 00 scaffold | orchestrator | VERIFYING | run 1 FAIL (13 boundary bypasses, spoofable DONE gate) → fixed in 408ce44; re-verify running | — | boundary, verify loop, hooks, contracts, raw data, docs |
-| 01 geometry | backend-engineer / frontend-engineer | IN-PROGRESS: backend fix round (reviewer CHANGES REQUESTED: provenance outcome must be `blocked` while acceptance-129 is blocked; float-noise snap; pin stella float64 reference; parse test_2 .in; real G4 tests; Newton fallback); frontend TODO | backend PASS (tasks/01-geometry/VERIFY.md) | CHANGES REQUESTED (1 major, 6 minor) | frontend must show `validation.acceptance129` as BLOCKED, not provenance outcome |
-| 02 transport | backend-engineer / frontend-engineer | IN-PROGRESS: backend T1–T7 built (all 4 PRD archive means reproduce, D-013); frontend TODO | backend verifier running | data reviewer running | stella trace has 8 duplicate restart samples (dropped, recorded) |
-| 03 forecast | backend-engineer / frontend-engineer | IN-PROGRESS: backend F1–F3 built; frontend TODO | backend verifier running | data reviewer running | MAE 0.0440/0.0418 vs PRD 0.0444/0.0423 — no definition reproduces (D-008) |
-| 04 budget | backend-engineer / frontend-engineer | IN-PROGRESS: backend B1–B5 built; frontend TODO | backend verifier running | data reviewer running | half-up cent rounding per item (PRD convention) |
-| 05 spatial | backend-engineer / frontend-engineer | IN-PROGRESS: backend S1–S4 built; frontend TODO | backend verifier running | data reviewer running | prd-reported; checkpoints not in repo → blocked |
-| 06 live-gx | backend-engineer / frontend-engineer | IN-PROGRESS: backend L1–L8 built (UNREHEARSED); frontend TODO | backend verifier running | live reviewer running | guard: slot $2.65, rehearsal $7.73, plan $26.21 (D-015) |
-| 07 server | backend-engineer | VERIFYING: H1–H6 built | verifier running | live reviewer running | loopback-only, no CORS → UI uses Vite proxy |
+| 00 scaffold | orchestrator | VERIFYING | run1 FAIL (13 bypasses) → run2 FAIL (absolute paths N1, verdict parse N9) → fixed 86a5142; run 3 running | — | |
+| 01 geometry | backend-engineer / frontend-engineer | IN-PROGRESS: backend cleared (verifier PASS + reviewer APPROVE after fix round; float64 stella match 2.9e-13); frontend TODO | backend PASS | backend APPROVE | UI must show acceptance-129 BLOCKED |
+| 02 transport | backend-engineer / frontend-engineer | IN-PROGRESS: backend fix round (reviewer blockers: small-N stderr, stationarity over-rejection, no equivalence margin in compare) | backend PASS | CHANGES REQUESTED | stella vs GENE disagree on 1500–1893.8 (z≈−9): UI must not imply they agree |
+| 03 forecast | backend-engineer / frontend-engineer | IN-PROGRESS: backend fix round (note: sample-and-hold reproduces PRD MAE, breaks 2.55) | backend FAIL (premise) | CHANGES REQUESTED | D-016 pending |
+| 04 budget | backend-engineer / frontend-engineer | IN-PROGRESS: backend minors in fix round | backend PASS | CHANGES REQUESTED (minor) | range fixtures: never render midpoint as a PRD figure |
+| 05 spatial | backend-engineer / frontend-engineer | IN-PROGRESS: backend minors in fix round | backend PASS | CHANGES REQUESTED (minor) | |
+| 06 live-gx | backend-engineer / frontend-engineer | IN-PROGRESS: backend fix round (B1 Ctrl-C leaves GPUs running; M1 Modal cap vs guard; M2–M6; L3 malformed poll) | backend FAIL (L3) | CHANGES REQUESTED | UNREHEARSED |
+| 07 server | backend-engineer | VERIFYING: fix round (SIGINT/SIGTERM shutdown, terminate result) | PASS | CHANGES REQUESTED (via 06) | |
 | 08 design system | design-lead | IN-PROGRESS (resumed after usage limit; tokens.css/tokens.ts agreement test failing mid-work) | — | — | |
 | 09 app shell | frontend-engineer | TODO | — | — | |
 
