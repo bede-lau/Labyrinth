@@ -43,6 +43,8 @@ def main() -> int:
             v = t.parent / "VERIFY.md"
             body = re.sub(r"^(```|~~~).*?^\1", "", v.read_text(), flags=re.M | re.S) if v.exists() else ""  # ignore fenced output
             verdicts = re.findall(r"^Verdict:[ \t]*(PASS|FAIL)\b(?![ \t]*\|).*$", body, re.M)  # not the 'PASS | FAIL' template
+            if re.search(r"not yet built|not verified yet|backend[- ]only|backend half", body, re.I):
+                errors.append(f"{rel}: Status DONE but {v.relative_to(ROOT)} covers only part of the task (mentions an unverified half)")
             if not verdicts or verdicts[-1] != "PASS":
                 errors.append(f"{rel}: Status DONE but {v.relative_to(ROOT)} has no final 'Verdict: PASS' line (outside code fences) from the verifier")
     if errors:

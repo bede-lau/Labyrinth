@@ -1,202 +1,138 @@
 # Verify: 03-forecast (backend half F1–F3 only)
-Verifier run: 2026-11-19/20, commit 76b1908 at start, fcf812d at end (HEAD moved because other agents committed;
-the forecast files did not change during the run) + working tree. The forecast files are uncommitted:
+Verifier run: 2026-11-20, commit 4696675 + working tree. The forecast files are uncommitted:
 `main/labyrinth_main/features/forecast/{model,artifact}.py`, `main/tests/test_forecast.py`,
-`artifacts/forecast.json`, and the shared `main/labyrinth_main/features/transport/stats.py`.
-Every mutation ran on a copy under
+`artifacts/forecast.json`, and the shared `main/labyrinth_main/features/transport/stats.py`. None of them changed
+while the probes ran (byte-compared at the end). Every mutation ran on a copy under
 `/tmp/claude-0/-home-user-Labyrinth/7ab7c93d-a99a-5137-bbf3-e77ff0f80ade/scratchpad/v03/repo`. The verifier
-wrote nothing in the repo except this file. `git status` changed during the run only because of other agents'
-files (`data/raw/README.md`, `common/paths.py`, `tests/test_common.py`, `tasks/00-scaffold/VERIFY.md`,
-`data/raw/stella_test2_vmec_geometry.out.nc`).
+wrote only this file. `git status` changed during the run only in other agents' `renderer/src/features/{live-gx,spatial,transport}` files.
 
-**Scope.** This file covers the backend only. The frontend outcomes F4–F5 are **not yet built**
-(`renderer/src/features/forecast/` does not exist), so they were not verified. **Task 03 stays not-DONE until
-the frontend half is verified as well, whatever this verdict says.**
+**Scope.** This file covers the backend only. Frontend outcomes F4–F5 are **not verified**: files exist in
+`renderer/src/features/forecast/`, but another engineer is still building them. **Task 03 stays not-DONE
+until F4–F5 are verified as well, whatever this verdict says.**
+
+## History
+- **Run 1 (2026-11-19, 76b1908 → fcf812d): FAIL.**
+  - (a) `verify.sh all` exited 2. The cause was `renderer/src/design` (typecheck, then 2 tests), not forecast.
+  - (b) A reproduction hunt over 4,765 definitions refuted the F3/D-008 premise ("no tested definition
+    reproduces both"). A time-weighted sample-and-hold mean gives 0.044418 / 0.042332 → 0.0444 / 0.0423, but
+    stella 300–400 = 2.5569 → "2.56" ≠ PRD 2.55.
+  - (c) There was a small look-ahead: the forecaster's window mean interpolated Q at b using the first sample after b.
+- **Fix round:** D-016 added and TASK.md F3 reworded. The fixture note was rewritten. Forecasts now use
+  `window_mean(..., right_edge="hold")`. `METHOD` states that the persistence forecast can differ from the
+  previous revealed observation by about 1e-4. A test documents the sample-and-hold result.
+- **Run 2 (this run): PASS.** Every Run 1 finding is resolved. Details below.
 
 ## Outcomes
 | # | Expected outcome | Test | Independent probe | Result |
 |---|---|---|---|---|
-| F1 | Eight steps over [1500,1550) … [1850,1900), stella bean, initialised on [1450,1500) | `test_F1_eight_50_unit_steps_…`: checks the exact window list, the init window, the trace id, provenance coverage 1450–1900 and that the window integrals add up | My own h5py read of `compared/test5/stella` (1441 raw samples, 8 duplicate (t,Q) pairs dropped, 1433 left). The artifact has 8 windows at the right edges, init [1450,1500], traceId `stella-bean` | PASS |
-| F2 | Persistence (previous completed window) and frozen (init mean) forecasts, with per-step absolute errors, MAE and an exact `method` | `test_F2_persistence_and_frozen_…`: recomputes every step from `window_mean`, pins MAE to 0.04400 / 0.04179 (±5e-6), checks phrases in `method`, and checks that a constant signal gives MAE 0 | My own edge-interpolated integral gives init 2.2298025 and MAE **0.04399776 / 0.04179437**, the same as the artifact (largest per-step difference 4.9e-7, from the artifact's 7-significant-figure rounding). Mutations: obs[3]+0.01 → F2 (and F3) fail; persistence = current obs (look-ahead) → F2 fails; frozen updated each step → F2 fails. No look-ahead at window level: the forecast for step k is `prev` = the observation of window k−1, assigned before window k's observation (`model.py` `run`). One small sample-level leak exists (Finding 2) | PASS |
-| F3 | Fixtures claimed 0.0444 / 0.0423 vs computed ≈0.0440 / 0.0418 under D-013; "no tested definition reproduces both claims — expected mismatch"; the artifact shows it | `test_F3_prd_mae_fixtures_reported_as_mismatch`: claimed values, `matches is False` on both, the note names D-008, the alternate values appear in the note, outcome `failed`. Mutation: setting the claimed values to the computed ones → F3 fails | The artifact behaves as specified: `matches:false` ×2, `verification.outcome: "failed"`, and the note lists both alternates (half-open sample mean 0.04467/0.04186; sample-span trapezoid 0.04404/0.04156). **But the premise does not hold up.** A single, reasonable definition reproduces **both** PRD scores on the exact stated windows: the time-weighted mean of the sample-and-hold (zero-order-hold, "previous value") interpolant. It gives 0.044418 → **0.0444** and 0.042332 → **0.0423** (Finding 1) | **FAIL**: the F3 statement "no tested definition reproduces both", and its basis in D-008/D-013, are refuted by the probe |
-| gate | `bash scripts/verify.sh all` exits 0 | — | Exit **2** on both runs. The failing stages are in `renderer/src/design/` (other agents' concurrent work), not in forecast files. `verify.sh main` exits 0 | **FAIL** (not attributable to forecast) |
-| boundary | `scripts/check_boundaries.py` | — | `boundary: OK (82 files scanned)`, exit 0 | PASS |
+| F1 | Eight steps over [1500,1550) … [1850,1900), stella bean, initialised on [1450,1500) | `test_F1_eight_50_unit_steps_…`: checks the exact window list, the init window, the trace id, provenance coverage 1450–1900 and the partition of the integrals | Own h5py read (1441 raw → 1433 after dropping 8 duplicate (t,Q) pairs). The artifact has 8 windows at the right edges and init [1450,1500] | PASS |
+| F2 | Persistence (previous completed window) and frozen (init mean) forecasts, with per-step absolute errors, MAE and an exact `method` | `test_F2_…`: recomputes each step (observed = interpolated edges, forecasts = held right edge), pins MAE 0.043968 / 0.041794 (±5e-7), checks `method` phrases including "last sample <= b", checks that changing the first sample after a window leaves that window's forecast alone, and that a constant signal gives MAE 0 | Own implementation gives MAE **0.04396792 / 0.04179437**, the same as the artifact (largest per-step difference 4.9e-7, from 7-significant-figure storage). Causality on the real trace: randomly scrambling **all** samples t > b (±100σ) leaves every forecast for steps ≤ k bit-identical, for all 8 window ends, while the observed mean of step k does change. The forecast differs from the previous revealed observation by at most 1.331e-4, matching METHOD's "about 1e-4". Mutations: observed shift → fail; edge back to interpolate → fail; persistence = previous observation → fail; persistence = current window → fail | PASS |
+| F3 | Claimed 0.0444 / 0.0423 vs computed (D-013) ≈0.0440 / 0.0418, expected mismatch shown; note states that sample-and-hold reproduces both but breaks 2.55 (D-016) | `test_F3_prd_mae_fixtures_reported_as_mismatch` (claimed values, `matches is False` ×2, outcome `failed`, note contents and values); `test_F3_sample_and_hold_reproduces_…` (0.044418 / 0.042332, round-trip to the PRD values, stella 300–400 → 2.56, only that fixture misses) | Artifact: `matches:false` ×2, `verification.outcome: "failed"`. The note says the sample-and-hold mean "reproduces BOTH PRD scores (persistence 0.044418 → 0.0444, frozen 0.042332 → 0.0423) but gives stella 300–400 = 2.5569 (prints 2.56, PRD 2.55)". It also lists the half-open, sample-span and look-ahead alternates. My own sample-and-hold implementation gives 0.044418 / 0.042332 and stella 300–400 = 2.5569, which agrees. Mutations: claimed set to computed → fail; the 2.55 miss removed from the note → fail | PASS |
+| gate | `bash scripts/verify.sh all` exits 0 | — | First run exit 2: 1 test in `renderer/src/features/spatial/SpatialView.test.tsx`, a concurrent spatial frontend edit, not forecast. Re-run: **exit 0**, all 11 stages pass | PASS |
+| boundary | `scripts/check_boundaries.py` | — | `boundary: OK (139 files scanned)` | PASS |
 
 ## Real output
 ```
-$ bash scripts/verify.sh all          # run 1, HEAD 76b1908
-━━━ [main:tests] $ python3 -m pytest -q main/tests
-65 passed in 6.07s
-━━━ [artifacts:fresh] $ python3 scripts/validate_artifacts.py --check-fresh
-artifacts: fresh (byte-identical rebuild)
-━━━ [renderer:typecheck] $ npm --prefix renderer run -s typecheck
-src/design/components/Panel.tsx(2,8): error TS2882: Cannot find module or type declarations for side-effect import of './components.css'.
-src/design/components/ProvenanceBadge.tsx(7,8): error TS2882: ...
-src/design/components/Stat.tsx(4,8): error TS2882: ...
-src/design/components/StatusPill.tsx(5,8): error TS2882: ...
-  FAIL  renderer:typecheck (2s)
-verify.sh: FAILED — fix the stages above and re-run. Exiting 2.
-EXIT=2
-
-$ bash scripts/verify.sh all          # run 2, HEAD fcf812d
-66 passed in 6.06s
- FAIL  src/design/color.test.ts > CVD simulation matrices > every row sums to ~1, so neutrals stay neutral
- FAIL  src/design/palette.test.ts > |B| colormap — light theme > lightness strictly increases and every step is visible under protanopia (vienot1999)
-      Tests  2 failed | 443 passed (445)
-  PASS  renderer:typecheck (3s)
-  FAIL  renderer:tests (3s)
-verify.sh: FAILED — fix the stages above and re-run. Exiting 2.
-EXIT=2
-
-$ bash scripts/verify.sh main
-  PASS  boundary:self-test / boundary:scan / scripts:tests / main:lint / main:tests / artifacts:schema / artifacts:fresh
-verify.sh: all stages passed.
-EXIT_MAIN=0
-
 $ python3 -m pytest -v -p no:cacheprovider main/tests/test_forecast.py
-main/tests/test_forecast.py::test_F1_eight_50_unit_steps_from_1500_to_1900_initialised_on_1450_1500 PASSED [ 33%]
-main/tests/test_forecast.py::test_F2_persistence_and_frozen_forecasts_errors_and_mae PASSED [ 66%]
-main/tests/test_forecast.py::test_F3_prd_mae_fixtures_reported_as_mismatch PASSED [100%]
-3 passed in 0.11s
+main/tests/test_forecast.py::test_F1_eight_50_unit_steps_from_1500_to_1900_initialised_on_1450_1500 PASSED [ 25%]
+main/tests/test_forecast.py::test_F2_persistence_and_frozen_forecasts_errors_and_mae PASSED [ 50%]
+main/tests/test_forecast.py::test_F3_prd_mae_fixtures_reported_as_mismatch PASSED [ 75%]
+main/tests/test_forecast.py::test_F3_sample_and_hold_reproduces_prd_mae_but_not_stella_300_400 PASSED [100%]
+============================== 4 passed in 0.08s ===============================
+
+$ bash scripts/verify.sh all        # first attempt
+ FAIL  src/features/spatial/SpatialView.test.tsx > S5 ring of 6 toroidal planes coloured by rank, exchange arrows both ways, CPU field-solve node, "Dommaschk geometry — not W7-X"
+      Tests  1 failed | 575 passed (576)
+  FAIL  renderer:tests (8s)          (all other 10 stages PASS)
+verify.sh: FAILED — fix the stages above and re-run. Exiting 2.
+EXIT=2
+
+$ bash scripts/verify.sh all        # re-run, HEAD 4696675
+105 passed in 27.86s
+      Tests  576 passed (576)
+  PASS  boundary:self-test (0s)
+  PASS  boundary:scan (0s)
+  PASS  docs:handoff (0s)
+  PASS  scripts:tests (1s)
+  PASS  main:lint (0s)
+  PASS  main:tests (29s)
+  PASS  artifacts:schema (0s)
+  PASS  artifacts:fresh (0s)
+  PASS  renderer:typecheck (4s)
+  PASS  renderer:tests (7s)
+  PASS  renderer:build (2s)
+verify.sh: all stages passed.
+EXIT=0
 
 $ python3 scripts/check_boundaries.py
-boundary: OK (82 files scanned)
+boundary: OK (139 files scanned)
 
-$ python3 probe.py        # independent h5py probe, own dedupe + own edge-interpolated integral
-raw stella n 1441 range 0.0 2074.7
-deduped n 1433 dropped 8
-init 2.2298025
-obs ['2.2156788', '2.1976051', '2.3244255', '2.2831617', '2.2856761', '2.2424219', '2.1748455', '2.2132008']
-MAE persistence 0.04399776 frozen 0.04179437
-artifact mae {'frozen': 0.04179437, 'persistence': 0.04399776}
-max |obs-artifact| 4.643460500552976e-07
-max |pers-artifact| 4.947574003821842e-07
-frozen all init: True
-mae-persistence claimed 0.0444 computed 0.04399776 matches False
-mae-frozen claimed 0.0423 computed 0.04179437 matches False
-verification outcome: failed
-
-$ python3 hunt.py         # reproduction hunt: 4765 definitions
-total definitions tested: 4765
-HITS (both round to 0.0444 and 0.0423): 3
-   ('stella left rnd=None persist to1900', 0.04441811739804735, 0.042331754336687955)
-   ('stella span persist shift +2.00', 0.044357637850052645, 0.042308938694072595)
-   ('stella left persist shift +0.00', 0.04441811739804735, 0.042331754336687955)   # same as the first hit
-persistence-only hits: 20  frozen-only hits: 14
-  (P = persistence rounds to 0.0444, F = frozen rounds to 0.0423)
-  -- stella edge rnd=None persist to1900                          pers 0.04400 frozen 0.04179
-  -- stella edge rnd=3 persist to1900                             pers 0.04388 frozen 0.04162
-  -- stella edge rnd=2 persist to1900                             pers 0.04500 frozen 0.04125
-  -- stella span rnd=None persist to1900                          pers 0.04404 frozen 0.04156
-  -- stella sm_ho rnd=None persist to1900                         pers 0.04467 frozen 0.04186
-  P- stella sm_ho rnd=None expanding to1900                       pers 0.04438 frozen 0.04186
-  -- stella sm_ho rnd=3 persist to1900                            pers 0.04450 frozen 0.04187
-  -- stella med_ho rnd=None persist to1900                        pers 0.04810 frozen 0.07002
-  PF stella left rnd=None persist to1900                          pers 0.04442 frozen 0.04233
-  -- stella right rnd=None persist to1900                         pers 0.04365 frozen 0.04127
-  -- stella uniform rnd=None persist to1900                       pers 0.04430 frozen 0.04216
-  -- stella edge rnd=None persist to1950                          pers 0.05472 frozen 0.05092
-  -- GENE edge rnd=None persist to1900                            pers 0.04417 frozen 0.02825
-  P- GENE sm_ho rnd=None persist to1900                           pers 0.04444 frozen 0.02847
-  -- stella edge persist init-as-step(init 1400-1450, 9 steps)    pers 0.05053 frozen 0.09180
-  -- stella edge persist 9-divisor(init err 0)                    pers 0.03911 frozen 0.03715
-  -- stella edge persist 7 steps 1500-1850                        pers 0.04480 frozen 0.04539
-  -- stella raw-with-dups sm_ho                                   pers 0.04467 frozen 0.04186
-
-$ python3 zoh.py          # the hit, checked with two independent implementations
-ZOH fine-grid            init 2.23472 obs [2.2155 2.1958 2.3234 2.2835 2.2856 2.2441 2.1751 2.2115] MAE pers 0.044418 -> 0.0444  frozen 0.042332 -> 0.0423
-ZOH exact                init 2.23472 obs [2.2155 2.1958 2.3234 2.2835 2.2856 2.2441 2.1751 2.2115] MAE pers 0.044418 -> 0.0444  frozen 0.042332 -> 0.0423
-dt-weighted unclipped    init 2.22847 ... MAE pers 0.044039 -> 0.0440  frozen 0.041858 -> 0.0419
-edge-interp (artifact)   init 2.22980 ... MAE pers 0.043998 -> 0.0440  frozen 0.041794 -> 0.0418
---- PRD archive means under ZOH vs edge-interp (PRD: stella 1500-1900 2.242, GENE 1500-1893.765 2.474, 300-400 stella 2.55 GENE 2.68)
-  stella 1500-1900     ZOH 2.2418  edge 2.2421
-  GENE 1500-1893.765   ZOH 2.4739  edge 2.4739
-  stella 300-400       ZOH 2.5569  edge 2.5545
-  GENE 300-400         ZOH 2.6763  edge 2.6751
---- ZOH sensitivity to small grid shifts (persistence, frozen)
-  shift -0.10: 0.04450 0.04241
-  shift +0.00: 0.04442 0.04233
-  shift +0.10: 0.04434 0.04225
-
-$ python3 leak.py         # edge interpolation at window end b reads the first sample after b
-window [1450,1500]: last sample <=b 1498.8, first sample >b used by edge interp 1500.3
-window [1500,1550]: last sample <=b 1549.5, first sample >b used by edge interp 1550.9
+$ python3 probe2.py      # own h5py read, own dedupe, own integrals
+raw 1441 dedup 1433
+one-sided: init(hold) 2.2296875  MAE pers 0.04396792 frozen 0.04179437
+max |forecast_k - observed_{k-1}| = 1.331e-04  |init hold - init interp| = 1.150e-04
+artifact mae {'frozen': 0.04179437, 'persistence': 0.04396792}
+max|obs-art| 4.643460500552976e-07 max|pers-art| 4.887642091055966e-07 max|frozen-art| 4.6477261728128383e-07
+mae-persistence 0.0444 0.04396792 matches False
+mae-frozen 0.0423 0.04179437 matches False
+outcome failed
+NOTE: Computed with the stated method and the time-weighted edge-interpolated window mean (D-013), forecasts held at the right edge (no look-ahead); not tuned to the PRD (D-008); the MAE fixtures do not match. A time-weighted sample-and-hold (zero-order hold, edge-clipped) window mean reproduces BOTH PRD scores (persistence 0.044418 → 0.0444, frozen 0.042332 → 0.0423) but gives stella 300–400 = 2.5569 (prints 2.56, PRD 2.55) for the transport fixtures, so no single tested definition reproduces all six PRD numbers. D-013 is kept for every window mean. Other definitions (persistence / frozen MAE): sample mean, half-open windows a<=t<b: 0.044667 / 0.041857; sample-span trapezoid (samples a<=t<=b, divided by t_last-t_first): 0.044037 / 0.041556; edge-interpolated for forecasts too (one-sample look-ahead): 0.043998 / 0.041794. Removing the look-ahead changes the MAE from 0.043998 / 0.041794 to 0.043968 / 0.041794.
+same note both: True
+ZOH (own impl): pers 0.044418 frozen 0.042332; stella 300-400 2.5569
+perturb Q at t=1500.3 (+100): forecasts for steps 0..0 unchanged: True; observed step 0 changes: True
+perturb Q at t=1550.9 (+100): forecasts for steps 0..1 unchanged: True; observed step 1 changes: True
 ...
-artifact (edge interp at b uses sample after b): MAE pers 0.043998 frozen 0.041794
-causal forecast (held value at b): MAE pers 0.043968 frozen 0.041794; max |forecast change| 1.33e-04
+perturb Q at t=1850.4 (+100): forecasts for steps 0..7 unchanged: True; observed step 7 changes: True
 
-# Mutations (copy only; each reverted before the next)
-=== M1 shift obs[3] +0.01
-E           assert 2.2931616808403232 == 2.2831616808403234 ± 2.3e-12
+$ python3 probe3.py      # scramble ALL samples after each window end
+all samples t>1500 scrambled: forecasts for steps 0..0 bit-identical: True
+all samples t>1550 scrambled: forecasts for steps 0..1 bit-identical: True
+...
+all samples t>1850 scrambled: forecasts for steps 0..7 bit-identical: True
+ALL CAUSAL: True
+
+# Mutations (copy only; each reverted; baseline and restored both "4 passed")
+=== M1 observed mean of [1650,1700] +0.01
 FAILED tests/test_forecast.py::test_F2_persistence_and_frozen_forecasts_errors_and_mae
 FAILED tests/test_forecast.py::test_F3_prd_mae_fixtures_reported_as_mismatch
-2 failed, 1 passed in 0.11s
-=== M2 look-ahead persistence=obs
+FAILED tests/test_forecast.py::test_F3_sample_and_hold_reproduces_prd_mae_but_not_stella_300_400
+3 failed, 1 passed in 0.12s
+=== M2 forecaster edge back to interpolate (look-ahead)
 FAILED tests/test_forecast.py::test_F2_persistence_and_frozen_forecasts_errors_and_mae
-1 failed, 2 passed in 0.10s
-=== M3 frozen updated
+1 failed, 3 passed in 0.13s
+=== M3 persistence = previous revealed observation (interpolated)
 FAILED tests/test_forecast.py::test_F2_persistence_and_frozen_forecasts_errors_and_mae
-1 failed, 2 passed in 0.10s
-=== M4 claimed set to computed (hide mismatch)
+1 failed, 3 passed in 0.15s
+=== M4 persistence = current window (gross look-ahead)
 FAILED tests/test_forecast.py::test_F2_persistence_and_frozen_forecasts_errors_and_mae
+1 failed, 3 passed in 0.19s
+=== M5 claimed set to computed (hide mismatch)
 FAILED tests/test_forecast.py::test_F3_prd_mae_fixtures_reported_as_mismatch
-2 failed, 1 passed in 0.15s
-=== M5 on-disk JSON observed[3] edited
-ARTIFACT ERROR: artifacts/forecast.json: stale or non-deterministic — regenerate with `cd main && python3 -m labyrinth_main.build_artifacts`
+1 failed, 3 passed in 0.11s
+=== M6 note drops the 2.55 break
+FAILED tests/test_forecast.py::test_F3_prd_mae_fixtures_reported_as_mismatch
+1 failed, 3 passed in 0.12s
+=== restored
+4 passed in 0.11s
 ```
-(M5: in the scratch copy, `manifest.json` also reports stale both before and after the edit. That comes from the
-copy, which does not include the whole repo. Only the `forecast.json` line is caused by the mutation.)
+For Run 1's reproduction-hunt tables (4,765 definitions) and its two-implementation sample-and-hold check, see
+the History section and D-016. The scripts are `hunt.py` and `zoh.py` in the scratch folder above.
 
 ## Findings
-1. **The PRD forecast scores are reproducible. The mismatch comes from a choice of definition, not an error in
-   the PRD (high; it decides the premise of F3).** Take the stated method exactly: init [1450,1500], 8 windows
-   [1500+50k, 1550+50k], persistence = previous completed window, frozen = init mean, MAE over the 8 steps.
-   Use as the local mean the time-weighted mean of the **sample-and-hold** interpolant: each sample's Q holds
-   until the next sample, so it is a left-Riemann ∫Q dt/(b−a) clipped at the window edges. The result is
-   **0.044418 → 0.0444** and **0.042332 → 0.0423**. Both PRD values reproduce, and two independent
-   implementations agree. The frozen value sits 1.8e-5 below the rounding boundary 0.04235, and a grid shift
-   of ±0.1 breaks the match. The same definition also gives 2.242, 2.474 and 2.68 for the PRD archive means,
-   but stella 300–400 = 2.5569 → "2.56", not the PRD's "2.55". So no single definition reproduces all six PRD
-   numbers: D-013 (edge-interpolated) gets the four archive means, and sample-and-hold gets both forecast
-   scores plus 3 of the 4 archive means. The one other "hit" in the hunt (sample-span trapezoid with the whole
-   grid shifted +2.0) is not a reasonable reading. Readings that do **not** reproduce both:
-   edge-interpolated, sample-span, half-open / closed sample means, medians, right-Riemann, uniform
-   resampling, rounding observations to 2 or 3 decimals first, an expanding-mean forecaster (persistence
-   0.04438 hits, frozen 0.04186 does not), 9 windows to 1950, the init window counted as a step or as a
-   ninth zero, 7 steps, GENE (frozen ≈0.028), and keeping the restart duplicates.
-   Consequences, each a decision for the orchestrator, not a code fix the verifier can make:
-   - The F3 wording in `tasks/03-forecast/TASK.md` ("no tested definition reproduces both claims") is false.
-   - The D-008 and D-013 Consequences in `decision.md` ("still do not reproduce under any tested definition")
-     are false.
-   - The fixture note in `artifacts/forecast.json` (built at `main/labyrinth_main/features/forecast/artifact.py:33-38`)
-     is literally true for the two variants it lists ("none reproduces both"). Read alone, it still implies
-     the PRD numbers cannot be reproduced. It should name the sample-and-hold definition that does reproduce
-     them, so that the displayed mismatch reads as "D-013 single definition chosen over the PRD's apparent
-     sample-and-hold mean".
-   Keeping D-013 and showing `matches:false` stays honest. Switching the forecast to sample-and-hold to hit
-   the numbers would break D-013's single-definition rule and the D-008 "do not tune" rule. Either way, the
-   decision records must be corrected.
-2. **Small sample-level look-ahead in persistence forecasts (low).** `transport/stats.py` `window_mean`
-   interpolates Q at the window end b using the first sample after b (for example 1550.9 for the window
-   ending at 1550; `stats.py:126-127`). So the forecast for step k reads the first sample of window k, which
-   had not happened yet at forecast time. The effect is at most 1.33e-4 on a forecast and 3e-5 on the
-   persistence MAE (0.043998 vs 0.043968 with the value held at b), which does not change the printed
-   0.0440. The window-level ordering is correct: the forecast for k uses only windows < k. Mutation M2 shows
-   the test catches real look-ahead. Fix by documenting it in `model.METHOD` or by using a causal
-   end-edge value for forecasts.
-3. **Test independence (info).** F1 and F2 recompute expected values with the same shared `window_mean`
-   (`main/tests/test_forecast.py:7,31-41`), so a bug in `stats.py` would pass both. The hard-coded anchors
-   0.04400 / 0.04179 (`test_forecast.py:44-45`) and this verifier's own implementation cover that gap. The
-   tests are not tautological: mutations M1–M4 all fail.
-4. **Precision (info).** The artifact stores 7 significant figures (`observed` etc.), so values re-derived
-   from the JSON differ from full precision by up to 5e-7. That is harmless at 4-decimal fixtures.
-5. **Gate (blocking, not forecast's fault).** `verify.sh all` exits 2. Run 1 failed on a typecheck error in
-   `renderer/src/design/components/*.tsx` (missing `./components.css` declaration). Run 2 failed on 2 tests in
-   `renderer/src/design/color.test.ts` and `renderer/src/design/palette.test.ts`. Both are design-lead's
-   concurrent work. No forecast file is involved, and `verify.sh main` exits 0.
+1. **Resolved (Run 1 b).** D-016, TASK.md F3 and the fixture note now state the sample-and-hold result, with
+   values, and its 2.55 miss. The computed values stay `matches:false` and the outcome stays `failed`, so
+   nothing is hidden or tuned. The product-owner question (switch the forecast alone to sample-and-hold?)
+   stays open in D-016.
+2. **Resolved (Run 1 c).** Forecasts use only samples ≤ b. This is shown on the real trace by scrambling all
+   later samples, and the test (`main/tests/test_forecast.py`, F2 causality block) catches the look-ahead
+   coming back (M2).
+3. **Info: frozen MAE did not change when the init edge became held.** It is 0.04179437 both ways, even
+   though the init mean moved by 1.15e-4. This is a coincidence of the data, not a bug: 4 of the 8 observed
+   means lie above the init mean and 4 below, so a small shift of the init mean cancels in the MAE.
+4. **Info: test independence.** F1 and F2 recompute expected values with the shared `window_mean`. The pinned
+   anchors (0.043968 / 0.041794 at ±5e-7) and this verifier's own implementation cover a shared bug.
+   Mutations M1–M6 all fail, so the tests are not tautological.
+5. **Info: the gate went red once** because of `renderer/src/features/spatial/SpatialView.test.tsx`, which
+   another agent was editing at the time. It was green on the re-run. No forecast file was involved.
 
-To turn this into PASS (backend): `verify.sh all` must exit 0, and the orchestrator must correct the F3
-premise, D-008/D-013 and the fixture note in light of Finding 1. Task 03 stays not-DONE until F4–F5
-(frontend) are built and verified.
-
-Verdict: FAIL
+Verdict: PASS

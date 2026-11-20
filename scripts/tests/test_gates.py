@@ -108,6 +108,8 @@ def test_docs_gate_requires_final_verdict_line(tmp_path):
     assert _docs_tree(tmp_path / "h", "DONE", "Verdict: PASS — all outcomes hold\n") == 0
     assert _docs_tree(tmp_path / "i", "DONE", "Verdict: PASS | FAIL\n") == 2
     assert _docs_tree(tmp_path / "j", "DONE", "x\n~~~\nVerdict: PASS\n~~~\n") == 2
+    assert _docs_tree(tmp_path / "k", "DONE", "F4–F5 not yet built\nVerdict: PASS\n") == 2
+    assert _docs_tree(tmp_path / "l", "VERIFYING", "backend half only\nVerdict: PASS\n") == 0
 
 
 def test_docs_gate_status_parsing_is_not_bypassable(tmp_path):
