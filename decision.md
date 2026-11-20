@@ -131,6 +131,11 @@ otherwise disagree / inconclusive / no claim).
 GENE on 1500–1893.765 is "no claim". This is the honest answer for these trace lengths, and it is what
 the PRD's "claim saturated agreement only for a covered stationary window with sampling uncertainty"
 implies. A live GX run would need a longer covered window than the archive's 100-unit PRD windows.
+**Why not lower the N_eff threshold.** Reviewer Monte-Carlo: at N=277/τ=11 samples the gate opens in ~6.7%
+of runs, and coverage *given* a claim is only 62.5% — the estimator opens exactly when it has underestimated
+τ. Conditional coverage reaches 88% at N≈600 and 94% at N≈1000, so a live run needs roughly 3–5× the archive's
+τ-normalised window length before any saturated-agreement claim. Indicative stationarity verdicts are
+serialised as `null` (undecidable), never `true`.
 
 ## D-018 · Saved rehearsal runs have a contract
 `contracts/live-run.schema.json` describes `GET /api/live/runs/<savedRunId>`; phases are live-status
