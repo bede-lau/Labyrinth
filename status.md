@@ -22,6 +22,14 @@ States: TODO → IN-PROGRESS → VERIFYING → DONE (needs VERIFY.md `Verdict: P
 ## Interruption log
 - 2026-11-20: account usage limit (429) killed 8 background agents mid-run (design-lead, 6 verifiers/reviewers). All resumed after reset via SendMessage with their context. If this happens again and you are a NEW session: the agents' transcripts are gone — re-dispatch each in-flight row above with the matching `.claude/agents/*.md` and its TASK.md.
 
+- 2026-11-20 (second hit, resets 07:40 UTC): usage limit killed the frontend wave and the backend re-verification round mid-run. In flight when killed — resume each (same session: SendMessage "continue"; new session: re-dispatch with the agent file + brief):
+  - frontend A (`frontend-engineer`): 09 shell A1–A5, 01 geometry G7–G10, 05 spatial S5–S6. Barely started.
+  - frontend B (`frontend-engineer`): 02 transport T8–T12, 03 forecast F4–F5, 04 budget B6–B7, 06 live L9–L10.
+  - verifier 02 transport (re-verify after stats/compare rewrite, D-017); verifier 03 forecast (re-verify, D-016); verifier 06+07 (re-verify after live fix round, D-018).
+  - reviewer data backends (re-review fix round); reviewer live+server (re-review fix round).
+  - Not yet started: verifier + reviewer for 08 design system; reviewer for 00 scaffold; design-lead screenshot review of the full app.
+  - Uncommitted on purpose: backend feature code (all of main/labyrinth_main/features/*, server/, main/tests/*), renderer/src/design/*, artifacts/*. `verify.sh all` was green before the hit. Commit backend + artifacts together once re-review approves (manifest spans all features).
+
 ## Execution plan
 1. Wave 1 (parallel): backend geometry · backend data (transport, forecast, budget, spatial) · backend live (live_gx, server) · design-lead (design system).
 2. Wave 2 (parallel, after wave 1 artifacts + design system): frontend shell+geometry+spatial · frontend transport+forecast+budget+live.
