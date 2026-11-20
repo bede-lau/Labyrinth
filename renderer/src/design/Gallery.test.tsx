@@ -99,6 +99,32 @@ test('the gallery shows the states this round added: arithmetic basis, a clamped
   expect(container.querySelector('.lab-prov [data-status="live"]')).toBeNull();
 });
 
+// design-r1-R6: /#gallery renders without the app shell and never asks /api/live/status, so it cannot
+// know that $0 is true. It shows no global mode indicator; the replay pill appears only as a specimen.
+test('the gallery claims no mode: no "Replay · $0" and no status pill in its header', () => {
+  const { container } = render(<Gallery />);
+  expect(screen.queryByText('Replay · $0')).toBeNull();
+  const header = container.querySelector('.gal-header') as HTMLElement;
+  expect(header).not.toBeNull();
+  expect(header.querySelector('.lab-pill')).toBeNull();
+  expect(header.textContent).not.toContain('$0');
+  // the replay treatment is still shown, in the status list, as a labelled specimen
+  expect(container.querySelector('.gal-status [data-status="replay"]')).not.toBeNull();
+});
+
+// design-r1-R9: the children of role="img" are presentational, and Plotly puts focusable modebar
+// buttons inside the element it draws into. The chart is named on its figure instead.
+test('the specimen chart is a named figure; the element Plotly draws into is not role="img"', async () => {
+  const { container } = render(<Gallery />);
+  await waitFor(() => expect(plotly.react).toHaveBeenCalled());
+  const [el] = plotly.react.mock.calls.at(-1) as [HTMLElement];
+  expect(el).toHaveClass('gal-chart');
+  expect(el.closest('[role="img"]')).toBeNull();
+  const figure = screen.getByRole('figure', { name: /^Specimen chart: synthetic heat-flux traces/ });
+  expect(figure).toContainElement(el);
+  expect(container.querySelectorAll('[role="img"] .gal-chart, .gal-chart[role="img"]')).toHaveLength(0);
+});
+
 test('without WebGL the scene says so', async () => {
   render(<Gallery />);
   expect(await screen.findByRole('note', { name: 'Warning: WebGL unavailable' })).toHaveTextContent('no WebGL in jsdom');

@@ -54,6 +54,9 @@
 .bg-guard { display: flex; flex-direction: column; gap: var(--lab-space-1); }
 .bg-fits { display: flex; align-items: center; gap: var(--lab-space-1); margin-top: var(--lab-space-2); font-size: var(--lab-font-size-sm); color: var(--lab-status-passed-fg); }
 .bg-fits[data-fits='false'] { color: var(--lab-status-blocked-fg); }
+/* A total above the ceiling fills the bar; the right edge marks the overflow, and the text below says by how much. */
+.bg-bar--over { border-right: 3px solid var(--lab-status-failed-fg); }
+.bg-over { margin-top: var(--lab-space-1); font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-status-failed-fg); }
 
 /* PRD vs guard comparison. Money columns align right so the figures can be read down a column. */
 .bg-compare { container-type: inline-size; margin-top: var(--lab-space-4); border: 1px solid var(--lab-color-border); border-radius: var(--lab-radius-md); overflow: hidden; }

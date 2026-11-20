@@ -398,6 +398,23 @@ test('G10 honesty labels: both checks named above the fold, provenance badge, re
   expect(screen.getByRole('region', { name: /Cross-section at ζ = 0°/ }).querySelector('[data-status="live"]')).toBeNull();
 });
 
+test('FF-6 the scene footer links the equilibrium source only when it is a web address; a repository path is named, not linked', async () => {
+  const g = geometryFixture();
+  serve(g);
+  const first = render(<GeometryView />);
+  const scene = await screen.findByRole('region', { name: /Field lines on the ρ = 0\.8 flux surface/ });
+  expect(within(scene).getByRole('link', { name: 'VMEC' })).toHaveAttribute('href', 'https://example.org/vmec');
+  first.unmount();
+
+  serve({ ...g, equilibrium: { ...g.equilibrium, source: { ...g.equilibrium.source, label: 'VMEC wout', url: 'data/raw/wout_w7x_kjm.nc' } } });
+  render(<GeometryView />);
+  const scene2 = await screen.findByRole('region', { name: /Field lines on the ρ = 0\.8 flux surface/ });
+  expect(within(scene2).queryByRole('link', { name: /VMEC/ })).toBeNull();
+  expect(document.querySelectorAll('a[href="data/raw/wout_w7x_kjm.nc"]')).toHaveLength(0);
+  expect(within(scene2).getByTestId('equilibrium-source')).toHaveTextContent('VMEC wout data/raw/wout_w7x_kjm.nc');
+  expect(scene2).toHaveTextContent(/Equilibrium: VMEC wout data\/raw\/wout_w7x_kjm\.nc sha256 /);
+});
+
 test('FB-5 the float64 check is validation.float64Reference: its numbers, its verdict, its source; the prose is not read', async () => {
   const g = geometryFixture();
   // Prose that the old parser read, now contradicting the field: the field wins, the prose is never parsed.

@@ -13,10 +13,13 @@
 #
 # Exit codes: the command's own; 2 if invoked without a command.
 set -uo pipefail
-TOOLS="${LABYRINTH_TOOLS:-$HOME/.local/share/labyrinth}"
-[[ -d "$TOOLS/venv/bin" ]] && PATH="$TOOLS/venv/bin:$PATH"
-[[ -d "$TOOLS/node/bin" ]] && PATH="$TOOLS/node/bin:$PATH"
-[[ -d "$TOOLS/bin" ]] && PATH="$TOOLS/bin:$PATH"
+# No HOME and no LABYRINTH_TOOLS: no local toolchain to add, and never `set -u`'s exit 1 (review finding RV-G20).
+TOOLS="${LABYRINTH_TOOLS:-${HOME:+$HOME/.local/share/labyrinth}}"
+if [[ -n "$TOOLS" ]]; then
+  [[ -d "$TOOLS/venv/bin" ]] && PATH="$TOOLS/venv/bin:$PATH"
+  [[ -d "$TOOLS/node/bin" ]] && PATH="$TOOLS/node/bin:$PATH"
+  [[ -d "$TOOLS/bin" ]] && PATH="$TOOLS/bin:$PATH"
+fi
 export PATH
 # Several agents run the renderer suite in one tree at the same time. Uncapped, each run forks one
 # jsdom worker per core and the workers time out starting ("Failed to start forks worker"), which

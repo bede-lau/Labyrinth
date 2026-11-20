@@ -204,6 +204,8 @@ deployed consumer exists and the renderer and artifacts always ship together):
    `slotEstimateUsd`, `rehearsalEstimateUsd`, `slotHardTimeoutS`, `rehearsalHardTimeoutS`, `plannedTotalUsd`, `assumptions` (string).
    The renderer drops its D-015 constants and still compares against the live snapshot's estimate when a backend is reachable.
 6. `live-run.schema.json` gets top-level `additionalProperties: false`.
+7. (Follow-up, review round.) Saved-run ids in `live-run.schema.json` and `live-status.schema.json` `fallback.savedRunId` match what the
+   server creates and serves: `^(rehearsal|live)-[0-9a-f]{12}$` (was `^[A-Za-z0-9_.-]{1,80}$` and unchecked).
 **Consequences.** `interface.md` §10's list becomes empty except the known PRD-side mismatches. Every producer and consumer test changes
 with the contract (interface.md §9). The 129-sample acceptance can no longer be marked passed by an artifact alone.
 

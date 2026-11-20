@@ -57,6 +57,7 @@ LIVE_GX = REPO_ROOT / "main" / "labyrinth_main" / "features" / "live_gx"
 SQRT2 = math.sqrt(2.0)
 FAILED_LABEL = f"Worker failed. {NO_REHEARSAL_LABEL}"
 TIMEOUT_LABEL = f"Hard timeout reached. {NO_REHEARSAL_LABEL}"
+BEAN_ONLY = "GPU 0 (bean) terminated; GPU 1 (triangular) never launched"  # a stop where only bean's spawn was sent
 
 
 # ---------------------------------------------------------------- helpers
@@ -357,6 +358,23 @@ def test_L3_transient_poll_errors_are_tolerated_then_fail():
     _, snaps = run_session(Flaky({"bean": 3}, steps=50))
     assert snaps[-1]["mode"] == "fallback" and "3 times in a row" in snaps[-1]["workers"][0]["error"]
 
+    # "in a row" (review be-live-r2-2, mutant M61): a good poll resets the count, so errors spread over a session
+    # never add up to a failure — two, a good poll, two more, and the session still ends `terminated`
+    class Spread(FakeBackend):
+        def __init__(self, script, **kw):
+            super().__init__(**kw)
+            self.script = list(script)  # bean's polls, in order: "x" = a transient error, "ok" = a normal report
+
+        def poll(self, w):
+            if w.tube == "bean" and self.script and self.script.pop(0) == "x":
+                raise TransientBackendError("client call timed out")
+            return super().poll(w)
+
+    backend = Spread(["x", "x", "ok", "x", "x"], steps=50)  # bean is still running when the script ends
+    _, snaps = run_session(backend)
+    assert backend.script == [] and snaps[-1]["mode"] == "terminated", snaps[-1]["reason"]
+    assert all(w["error"] is None for w in snaps[-1]["workers"])
+
 
 def test_L3_cold_start_longer_than_checkpoint_margin_still_ends_cleanly(tmp_path):
     """Scaled clock: startup budget 0.4, execution budget 0.6, checkpoint margin 0.15 (orchestrator hard
@@ -463,9 +481,21 @@ def test_L5_rehearsal_verifies_init_then_continuation_from_restart_file_time(tmp
         v = phase["provenance"]["verification"]
         assert phase["provenance"]["kind"] == "rehearsal" and v["outcome"] == "passed"
         assert "UNREHEARSED" not in v["details"] and rec["savedRunId"] in v["details"]
+        assert v["details"].endswith(orchestrator.COMPARISON_NOT_COMPUTED)  # cross-RX-2: the archive check is not done
     assert service.LedgerStore(tmp_path / "ledger.json").load() == guard.Ledger(8.10, est, False)
     svc = service.LiveService(state_dir=tmp_path, availability_check=available)
     assert svc.status()["qualified"] is True
+
+
+def test_L5_qualified_live_provenance_says_the_archive_comparison_is_not_computed():
+    """cross-RX-2: the PRD's live-vs-archive transport comparison (window means on 200–300 and 300–400, coverage,
+    the saturated-agreement gate) is not computed yet, so the live provenance must say so instead of pointing the
+    reader at Check transport as if the comparison were there."""
+    v = Orchestrator(FakeBackend(), hard_timeout_s=60).snapshot(BUDGET, qualified=True)["provenance"]["verification"]
+    assert v["outcome"] == "not-applicable" and v["details"].endswith(orchestrator.COMPARISON_NOT_COMPUTED)
+    assert "compare with archived evidence" not in v["details"]
+    for words in ("NOT computed", "200–300", "300–400", "coverage", "saturated-agreement"):
+        assert words in orchestrator.COMPARISON_NOT_COMPUTED, words
 
 
 def test_L5_checkpoint_time_misreported_as_last_sample_fails_continuation(tmp_path):
@@ -880,7 +910,7 @@ def test_L6_shutdown_during_in_flight_launch_is_unconfirmed_until_cancelled(stub
     assert svc.launch(guard.slot_estimate_usd())[0] is False
     assert svc._run.wait_terminated(3.0)
     assert stub_modal.spawned[0].cancel_kwargs == {"terminate_containers": True}
-    assert svc.terminate() == (True, "Workers terminated.")
+    assert svc.terminate() == (True, f"{BEAN_ONLY}.")  # triangular's spawn was never sent: never "Workers terminated."
 
 
 def _modal_app_namespace(*names: str, **module_globals) -> dict:
@@ -1071,9 +1101,10 @@ def test_L6_rehearse_cli_signal_during_in_flight_spawn_never_loses_its_handle(si
     code, out, err = cli.finish()
     assert code == 2, out + err
     assert cli.log() == ["spawn-sent bean", "spawn-returned bean", KILL_SWITCH, CANCEL_BEAN]  # and triangular never spawned
-    assert ("phase 1: workers terminated. Stopped on request; GPU 0 (bean) terminated; GPU 1 (triangular) never launched."
-            in out) and "NOT confirmed" not in out + err
-    assert "Rehearsal interrupted; nothing qualified." in out and out.rstrip().endswith("Rehearsal did NOT pass; workers terminated.")
+    # what was terminated is worded from the worker records, on every line (review RV7-3): never "workers terminated"
+    assert f"phase 1: {BEAN_ONLY}. Stopped on request; {BEAN_ONLY}." in out and "NOT confirmed" not in out + err
+    assert "Rehearsal interrupted; nothing qualified." in out and out.rstrip().endswith(f"Rehearsal did NOT pass; {BEAN_ONLY}.")
+    assert "workers terminated" not in out
     assert not (cli.state / "qualification.json").exists()
     # the reservation stays pending and unreconciled: a human reconciles before the next allocation
     assert service.LedgerStore(cli.state / "ledger.json").load() == guard.Ledger(8.10, guard.rehearsal_estimate_usd(), False)
@@ -1095,8 +1126,8 @@ def test_L6_rehearse_cli_signal_then_late_spawn_is_cancelled_on_arrival(sig, reh
     code, out, err = cli.finish()
     assert code == 2, out + err
     assert cli.log() == ["spawn-sent bean", KILL_SWITCH, "spawn-returned bean", CANCEL_BEAN]
-    assert "phase 1: workers terminated." in out and "NOT confirmed" not in out + err
-    assert out.rstrip().endswith("Rehearsal did NOT pass; workers terminated.")
+    assert f"phase 1: {BEAN_ONLY}." in out and "NOT confirmed" not in out + err
+    assert out.rstrip().endswith(f"Rehearsal did NOT pass; {BEAN_ONLY}.") and "workers terminated" not in out
     assert not (cli.state / "qualification.json").exists()
 
 
@@ -1125,7 +1156,7 @@ def test_L6_rehearse_cli_exit_code_survives_stop_signals_after_its_last_line(reh
     cli.release()
     code, out, err = cli.finish()
     assert code == 2, (code, out, err)
-    assert out.rstrip().endswith("Rehearsal did NOT pass; workers terminated.") and "Traceback" not in err
+    assert out.rstrip().endswith(f"Rehearsal did NOT pass; {BEAN_ONLY}.") and "Traceback" not in err
 
 
 def test_L6_rehearsal_stop_request_reserves_and_launches_nothing_further(tmp_path):
@@ -1342,12 +1373,13 @@ def deploy(make_function, *, is_local=True, gx_ref="0123abc"):
     os.environ.pop("LABYRINTH_GX_REF", None)
     if gx_ref:
         os.environ["LABYRINTH_GX_REF"] = gx_ref
-    error = None
+    error, constants = None, {}
     try:
-        runpy.run_module("labyrinth_main.features.live_gx.modal_app", run_name="modal_app_under_test")
+        g = runpy.run_module("labyrinth_main.features.live_gx.modal_app", run_name="modal_app_under_test")
+        constants = {k: g[k] for k in ("POLL_S", "GX_STOP_WAIT_S", "FINALIZE_S", "CHECKPOINT_MARGIN_S") if k in g}
     except BaseException as e:
         error = [type(e).__name__, str(e)]
-    return {"error": error, "registered": registered, "dicts": dicts, "volumes": volumes}
+    return {"error": error, "registered": registered, "dicts": dicts, "volumes": volumes, "constants": constants}
 
 print(json.dumps({
     "accepting": deploy(accepting),
@@ -1361,13 +1393,19 @@ print(json.dumps({
 """
 
 
-def test_L8_modal_app_refuses_to_deploy_when_startup_timeout_is_not_accepted():
-    """Executes modal_app.py in a subprocess against a stub `modal` (the real package is never needed)."""
+@pytest.fixture(scope="module")
+def modal_app_deploys() -> dict:
+    """modal_app.py executed in a subprocess against a stub `modal` (the real package is never needed), once per
+    stub variant -> {variant: {error, registered, dicts, volumes, constants}}."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("MODAL_")}
     proc = subprocess.run([sys.executable, "-c", MODAL_APP_HARNESS], cwd=REPO_ROOT / "main", env=env, capture_output=True,
                           text=True, timeout=120)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    r = json.loads(proc.stdout.splitlines()[-1])
+    return json.loads(proc.stdout.splitlines()[-1])
+
+
+def test_L8_modal_app_refuses_to_deploy_when_startup_timeout_is_not_accepted(modal_app_deploys):
+    r = modal_app_deploys
     names = set(modal_backend.FUNCTION_NAMES.values())
     ok = r["accepting"]
     assert ok["error"] is None and set(ok["registered"]) == names
@@ -1387,6 +1425,30 @@ def test_L8_modal_app_refuses_to_deploy_when_startup_timeout_is_not_accepted():
     # and a deploy without a pinned GX commit is refused as well
     assert r["no-gx-ref"]["error"][0] == "RuntimeError" and "LABYRINTH_GX_REF" in r["no-gx-ref"]["error"][1]
     assert r["no-gx-ref"]["registered"] == {}
+
+
+def test_L8_a_worker_whose_cold_start_used_the_whole_startup_budget_reports_done_before_the_hard_timeout(modal_app_deploys):
+    """Review RV7-8. The orchestrator's hard timeout (planned_call_s) runs from just before the FIRST spawn; a worker's
+    execution budget from ITS container start. With every client call at its bound, the later worker's spawn is sent
+    after bean's lookup + spawn and its own lookup; its cold start takes the whole startup budget; it notices its
+    deadline up to one loop period late, waits for GX to stop, copies and commits the checkpoint; and the
+    orchestrator sees `done` only on its next poll round. All of that must fit before the hard timeout fires, and
+    GX must still run the PRD's 15-minute slot. (The old 60 s margin covered only the checkpoint copy.)"""
+    c = modal_app_deploys["accepting"]["constants"]
+    per_call, tubes = modal_backend.CALL_TIMEOUT_S, len(orchestrator.TUBES)
+    spawn_lag = (tubes * modal_backend.LAUNCH_CALLS - 1) * per_call
+    report_lag = service.POLL_INTERVAL_S + tubes * modal_backend.POLL_CALLS * per_call
+    for kind in ("live", "rehearsal"):
+        gx_stopped = spawn_lag + guard.modal_startup_timeout_s() + guard.modal_timeout_s(kind) - c["CHECKPOINT_MARGIN_S"] + c["POLL_S"]
+        seen_done = gx_stopped + c["GX_STOP_WAIT_S"] + c["FINALIZE_S"] + report_lag
+        assert seen_done <= guard.planned_call_s(kind), (kind, seen_done, guard.planned_call_s(kind))
+    assert guard.modal_timeout_s("live") - c["CHECKPOINT_MARGIN_S"] >= pricing.LIVE_SLOT_MIN * 60  # 958 s >= 900 s
+    assert (c["POLL_S"], c["GX_STOP_WAIT_S"], c["FINALIZE_S"], c["CHECKPOINT_MARGIN_S"]) == (10, 30, 60, 242)
+    # the worker really uses them: its deadline subtracts the whole margin, and GX gets exactly the stop wait counted
+    worker = next(n for n in ast.parse((LIVE_GX / "modal_app.py").read_text()).body if isinstance(n, ast.FunctionDef) and n.name == "_worker")
+    src = ast.unparse(worker)
+    assert "deadline = wall_start + hard_timeout_s - CHECKPOINT_MARGIN_S" in src and "proc.wait(timeout=GX_STOP_WAIT_S)" in src
+    assert "sleep(POLL_S)" in src
 
 
 # ---------------------------------------------------------------- L6 · run-level kill switch progress["<run_id>/abort"]
@@ -1432,7 +1494,7 @@ def gx_container(tmp_path, monkeypatch):
         ns = _modal_app_namespace(
             "_aborted", "_restart_time", "_worker", progress=progress, abort_key=modal_backend.abort_key,
             checkpoints=types.SimpleNamespace(reload=lambda: None, commit=lambda: None), RESUME_FILE=gx_input.RESUME_FILE,
-            CHECKPOINT_MARGIN_S=60, POLL_S=0.02, WORK_ROOT=str(tmp_path / "work"), CKPT_MOUNT=str(tmp_path / "ckpt"),
+            CHECKPOINT_MARGIN_S=60, POLL_S=0.02, GX_STOP_WAIT_S=30, WORK_ROOT=str(tmp_path / "work"), CKPT_MOUNT=str(tmp_path / "ckpt"),
             GX_REVISION_FILE=str(tmp_path / "REVISION"), _read_flux=read_flux)
         return ns["_worker"]
 
@@ -1972,6 +2034,7 @@ def _assert_reported(mode: str, reason: str, state: str, says: str = "") -> None
         assert TERMINATE_FAILED not in reason and "TERMINATION PENDING" not in reason, reason
         # "workers terminated." or, when only bean was spawned, "GPU 0 (bean) terminated; GPU 1 (triangular) never launched."
         assert mode in ("terminated", "fallback", "idle") and "terminated" in reason, (mode, reason)
+        assert ("workers terminated" in reason) != (BEAN_ONLY in reason), reason  # exactly one of the two wordings
         return
     assert reason.startswith(f"{state}: GPU 0 (bean) "), reason
     assert mode in ("launching", "live", "fallback"), mode  # never `terminated`, never back to idle
@@ -1981,6 +2044,12 @@ def _assert_reported(mode: str, reason: str, state: str, says: str = "") -> None
 
 def _pending_says(put: str) -> str:
     return "the run kill switch is raised" if put == "ok" else "the run kill switch could NOT be set (ConnectionError: Dict unreachable)"
+
+
+def _stopped(cell: _Cell) -> str:
+    """What a confirmed stop of this cell terminated, as every surface words it: both spawns answered, or only bean's
+    was sent (triangular is never spawned after a launch that did not complete)."""
+    return "workers terminated" if cell.launch == SPAWNED else BEAN_ONLY
 
 
 @pytest.fixture(scope="module")
@@ -2113,7 +2182,8 @@ def _matrix_server(key, cell: _Cell, stub: _MatrixModal, state: Path, monkeypatc
         assert (code, body["ok"]) == ((200, True) if expected == CONFIRMED else (502, False)), body
         _assert_reported(body["status"]["mode"], body["status"]["reason"], expected, says)
         if expected == CONFIRMED:
-            assert body["reason"] == "Workers terminated."
+            stopped = _stopped(cell)
+            assert body["reason"] == f"{stopped[0].upper()}{stopped[1:]}."  # never "Workers terminated." for bean alone
         else:
             _assert_reported(body["status"]["mode"], body["reason"], expected, says)
 
@@ -2148,7 +2218,7 @@ def _matrix_server(key, cell: _Cell, stub: _MatrixModal, state: Path, monkeypatc
     assert stub.log == calls
     last = out.rstrip().splitlines()[-1]
     if cell.final == CONFIRMED:
-        assert code == 0 and last == "Labyrinth API stopped; workers terminated."
+        assert code == 0 and last == f"Labyrinth API stopped; {_stopped(cell)}."
         assert "not confirmed" not in (out + err).lower()
     else:  # exit 2, announced before the final line with the reason
         assert code == 2 and last == "Labyrinth API stopped; workers NOT confirmed terminated — check Modal."
@@ -2193,8 +2263,8 @@ def _matrix_rehearse_cli(key, cell: _Cell, stub: _MatrixModal, state: Path, monk
     says = cell.says_after_retry if cell.final != TERMINATE_PENDING else _pending_says(put)
     waiting = "phase 1: termination not confirmed yet — check the Modal dashboard now; waiting up to"
     if cell.final == CONFIRMED:
-        assert "phase 1: workers terminated. " in out and "NOT confirmed" not in out + err
-        assert out.rstrip().endswith("Rehearsal did NOT pass; workers terminated.")
+        assert f"phase 1: {_stopped(cell)}. " in out and "NOT confirmed" not in out + err
+        assert out.rstrip().endswith(f"Rehearsal did NOT pass; {_stopped(cell)}.")
     else:
         line = f"phase 1: NOT confirmed terminated — check Modal dashboard. {cell.final}: GPU 0 (bean) "
         assert line in out and line in err and says in out
@@ -2437,6 +2507,7 @@ LEDGER_STATES = {  # ledger.json as found on disk -> both entrypoints must refus
     "reconciled: \"true\"": '{"billedUsd": 8.1, "pendingUsd": 0.0, "reconciled": "true"}',
     "reconciled: 1": '{"billedUsd": 8.1, "pendingUsd": 0.0, "reconciled": 1}',
     "reconciled: [true]": '{"billedUsd": 8.1, "pendingUsd": 0.0, "reconciled": [true]}',
+    "nested too deep to parse": "[" * 100_000 + "]" * 100_000,  # json.loads raises RecursionError (review RV7-5)
 }
 
 
@@ -2463,6 +2534,56 @@ def test_L1_both_entrypoints_refuse_every_ledger_that_is_not_reconciled_with_roo
     assert not accepted and reason.startswith("Budget guard refused"), reason
     assert built == [] and (path.read_text() if path.exists() else None) == ledger
     assert sorted(p.name for p in state.iterdir()) == sorted(["qualification.json", "runs"] + (["ledger.json"] if ledger else []))
+
+
+UNUSABLE_LEDGERS = {  # every LEDGER_STATES entry whose amounts cannot be read, plus amounts that are not usable
+    **{k: LEDGER_STATES[k] for k in ("truncated", "a list", "a key missing", "amounts as strings", "nested too deep to parse")},
+    "negative pending": '{"billedUsd": 33.0, "pendingUsd": -1, "reconciled": true}',
+    "overflowing billed": '{"billedUsd": 1e999, "pendingUsd": 0.0, "reconciled": true}',
+    "NaN pending": '{"billedUsd": 8.1, "pendingUsd": NaN, "reconciled": true}',
+}
+
+
+@pytest.mark.parametrize("gate", ["idle", "unavailable"])
+@pytest.mark.parametrize("ledger", UNUSABLE_LEDGERS.values(), ids=UNUSABLE_LEDGERS.keys())
+def test_L1_an_unusable_ledger_is_reported_as_the_whole_budget_spent_never_as_zero(ledger, gate, qualified_template, tmp_path,
+                                                                                   validator):
+    """cross-RX-7 / be-live-r3-2 (honesty): amounts the guard could not read are never published as billed $0.00 +
+    pending $0.00. The snapshot reports the conservative case (billed = the ceiling, nothing left, no slot, hard
+    timeout 0) and its reason says why, in every gate mode."""
+    state = tmp_path / "state"
+    shutil.copytree(qualified_template, state)
+    (state / "ledger.json").write_text(ledger)
+    check = available if gate == "idle" else (lambda: (False, "test: no Modal credentials."))
+    st = service.LiveService(state_dir=state, availability_check=check).status()
+    assert_valid(validator, st)
+    assert st["mode"] == gate
+    ceiling = pricing.CEILING_USD
+    assert st["budget"] == {"ceilingUsd": ceiling, "billedUsd": ceiling, "pendingUsd": 0.0,
+                            "slotEstimateUsd": guard.slot_estimate_usd(), "slotFits": False, "hardTimeoutS": 0}
+    assert "Budget guard refused: ledger.json is unusable" in st["reason"] and "not read from the ledger" in st["reason"]
+    assert st["reason"].count("Budget guard refused") == 1
+
+
+def test_L6_rehearse_cli_last_line_is_worded_over_every_phase(tmp_path, monkeypatch, capsys):
+    """be-live-r3-3: phase 1 launches and terminates both GPUs; phase 2's triangular launch fails with nothing sent.
+    The phase-2 line names bean only, but the last line covers every phase: both GPUs were launched and terminated."""
+    monkeypatch.setenv("LABYRINTH_STATE_DIR", str(tmp_path))
+    write_ledger(tmp_path)
+    backends, store = [], {}
+
+    def factory(run_id, timeout):
+        fail = {"triangular"} if run_id.endswith("-cont") else set()
+        backends.append(FakeBackend(steps=3, dt_raw=10.0, restart_store=store, fail_launch=fail))
+        return backends[-1]
+
+    code = rehearse.main(["--confirm-cost-usd", str(guard.rehearsal_estimate_usd())], availability_check=available,
+                         backend_factory=factory, poll_interval_s=0.005)
+    out, _ = capsys.readouterr()
+    assert code == 2 and len(backends) == 2 and [len(b.workers) for b in backends] == [2, 1]
+    assert "phase 1: workers terminated." in out and f"phase 2: {BEAN_ONLY}." in out
+    assert out.rstrip().splitlines()[-1] == "Rehearsal did NOT pass; workers terminated."
+    assert service.load_qualification(tmp_path) is None
 
 
 @pytest.mark.parametrize("entrypoint", ["live", "rehearsal"])
@@ -2631,6 +2752,12 @@ def test_L5_qualification_checks_fail_in_the_failing_direction(tmp_path):
     sequential = _reports(bean={"wall_start": 1000.0, "wall_end": 1001.0}, triangular={"wall_start": 1002.0, "wall_end": 1003.0})
     ok, rec, phases = _qualification_rehearsal(tmp_path / "b", [sequential, sequential])
     assert not ok and rec["checks"] == {"init": True, "continuation": True, "distinctDevices": True, "overlap": False}
+    # review RV7-7 (mutant M53): a worker that never reports a device ID has no device — an empty ID is not the
+    # second distinct device
+    blank = _reports(bean={"device_id": ""})
+    ok, rec, phases = _qualification_rehearsal(tmp_path / "e", [blank, blank])
+    assert not ok and rec["checks"] == {"init": True, "continuation": True, "distinctDevices": False, "overlap": True}
+    assert [w["deviceId"] for w in rec["phases"][0]["workers"]][0] == ""
 
     # R07: the continuation reports a sample AT the checkpoint and its clock never moves beyond it
     class Stalled(FakeBackend):
@@ -2710,3 +2837,273 @@ def test_L8_deployed_functions_cap_the_execution_budget_they_are_given():
             del calls[:]
             ns[name](tube="bean", gpu_index=0, progress_key="r/bean", input_toml="#", checkpoint_ref=None, hard_timeout_s=asked)
             assert calls[0]["hard_timeout_s"] == given, (name, asked)
+
+
+# ---------------------------------------------------------------- review round 2 (RV7-*, be-live-r2-*)
+class _LateSpawn:
+    """TEST-ONLY backend: bean's spawn RPC outlives launch() (LaunchInFlight), so every cancel is queued
+    (TerminationPending) until the late call arrives. The cancels the backend sends on its arrival fail — the queued
+    cancel settles as FAILED — and a fresh terminate afterwards reaches the call, whose cancel then succeeds."""
+
+    def __init__(self):
+        self.arrived, self.listeners, self.calls = False, [], []
+
+    def launch(self, tube, gpu_index, checkpoint):
+        raise LaunchInFlight("Function.spawn did not return within 20 s", tube)
+
+    def poll(self, handle):
+        raise AssertionError("never polled: no launch completed")
+
+    def terminate(self, handle):
+        if not self.arrived:
+            self.calls.append("queued")
+            raise TerminationPending("spawn still in flight; it is cancelled the moment it returns", self.listeners.append)
+        self.calls.append("cancel ok")
+
+    def arrive_and_fail_the_late_cancels(self) -> None:
+        self.arrived = True
+        for settle in self.listeners:
+            settle(False, "late spawn could not be cancelled: ConnectionError: Modal API unreachable")
+
+
+@pytest.mark.parametrize("settles", ["during-the-wait", "before-the-wait"])
+@pytest.mark.parametrize("surface", ["terminate", "shutdown", "server-entrypoint"])
+def test_L6_a_queued_cancel_that_settles_as_failed_gets_one_more_round(surface, settles, qualified_template, tmp_path,
+                                                                       monkeypatch, capsys):
+    """Review RV7-1 (mutant M32): a shutdown or POST /api/live/terminate while bean's spawn RPC is in flight. The late
+    call arrives and the backend's own cancels of it fail. One more terminate round then reaches the call: confirmed,
+    exit 0 — not exit 2 with the A100 billing until Modal's timeout. Whether it settles while the call waits for it,
+    or already while the call is saying that the stop is unconfirmed (before any wait)."""
+    state = tmp_path / "state"
+    shutil.copytree(qualified_template, state)
+    write_ledger(state)
+    backend, warned = _LateSpawn(), []
+    svc = service.LiveService(state_dir=state, availability_check=available, poll_interval_s=0.005, join_timeout_s=10.0,
+                              confirm_wait_s=10.0, backend_factory=lambda rid, t: backend)
+
+    def warn(reason: str) -> None:  # on_unconfirmed: called before anything is waited for
+        warned.append(reason)
+        if settles == "before-the-wait":
+            backend.arrive_and_fail_the_late_cancels()
+
+    if settles == "during-the-wait":
+        real_wait = Orchestrator.wait_terminated
+
+        def waiting(self, timeout_s):
+            threading.Timer(0.05, backend.arrive_and_fail_the_late_cancels).start()
+            return real_wait(self, timeout_s)
+
+        monkeypatch.setattr(Orchestrator, "wait_terminated", waiting)
+
+    def session_failed_with_its_cancel_queued() -> None:
+        _until(lambda: svc._thread is not None and not svc._thread.is_alive(), "the session's end")
+        assert svc.status()["reason"].startswith(TERMINATE_PENDING) and backend.calls == ["queued"]
+
+    if surface == "server-entrypoint":
+        say = server_main._warn_unconfirmed
+        monkeypatch.setattr(server_main, "_warn_unconfirmed", lambda reason: (say(reason), warn(reason)))
+
+        def operator(port: int) -> None:
+            assert _http(port, "POST", "/api/live/launch", {"confirmCostUsd": guard.slot_estimate_usd()})[0] == 202
+            session_failed_with_its_cancel_queued()
+
+        code = _serve_until_ctrl_c(svc, operator, monkeypatch)
+        out, err = capsys.readouterr()
+        assert code == 0 and out.rstrip().splitlines()[-1] == f"Labyrinth API stopped; {BEAN_ONLY}.", out + err
+        assert f"Termination not confirmed yet — check the Modal dashboard now. {TERMINATE_PENDING}" in err
+    else:
+        assert svc.launch(guard.slot_estimate_usd())[0]
+        session_failed_with_its_cancel_queued()
+        if surface == "terminate":
+            assert svc.terminate(on_unconfirmed=warn) == (True, f"{BEAN_ONLY}.")
+        else:
+            assert svc.shutdown(warn) is True
+    # the session's round and this call's own round queued the cancel; it settled as failed; one more round cancels
+    assert backend.calls == ["queued", "queued", "cancel ok"]
+    assert len(warned) == 1 and warned[0].startswith(TERMINATE_PENDING)
+    assert svc._run.termination_confirmed and svc.status()["reason"].endswith(f"{BEAN_ONLY}.")
+
+
+def test_L6_rehearse_gives_a_queued_cancel_that_already_settled_as_failed_one_more_round(capsys):
+    """Review RV7-1, the rehearse CLI's side: the phase's queued cancel settled as failed between the phase's own round
+    and terminate_phases() (nothing is pending any more, so nothing is waited for). The late call exists now: one
+    more round cancels it, instead of exit 2 with the GPU billing."""
+    backend = _LateSpawn()
+    phase = Orchestrator(backend, hard_timeout_s=60, kind="rehearsal", retry_sleep=lambda s: None)
+    phase.run(poll_interval_s=0.005)
+    assert backend.calls == ["queued"] and phase.termination_pending
+    backend.arrive_and_fail_the_late_cancels()
+    assert not phase.termination_pending and phase.queued_cancel_failed
+    assert rehearse.terminate_phases([phase], confirm_wait_s=10.0) is True
+    out = capsys.readouterr().out
+    assert backend.calls == ["queued", "cancel ok"] and f"phase 1: {BEAN_ONLY}." in out and "waiting up to" not in out
+
+
+def test_L6_a_settled_queued_cancel_buys_one_more_round_not_one_per_later_call(qualified_template, tmp_path, monkeypatch):
+    """The extra round answers ONE settle: once it has called the backend for that worker, a later terminate (the
+    operator's retry) runs its single round again, not two."""
+    monkeypatch.setattr(orchestrator, "TERMINATE_BACKOFF_S", (0.0,) * len(TERMINATE_BACKOFF_S))
+    state = tmp_path / "state"
+    shutil.copytree(qualified_template, state)
+    write_ledger(state)
+
+    class StillFailing(_LateSpawn):  # TEST-ONLY: the late call arrives, and every cancel of it keeps failing
+        def terminate(self, handle):
+            if not self.arrived:
+                return super().terminate(handle)
+            self.calls.append("cancel FAILED")
+            raise ConnectionError("Modal API unreachable")
+
+    backend = StillFailing()
+    svc = service.LiveService(state_dir=state, availability_check=available, poll_interval_s=0.005, join_timeout_s=10.0,
+                              confirm_wait_s=10.0, backend_factory=lambda rid, t: backend)
+    assert svc.launch(guard.slot_estimate_usd())[0]
+    svc._thread.join(10)
+    confirmed, reason = svc.terminate(on_unconfirmed=lambda r: backend.arrived or backend.arrive_and_fail_the_late_cancels())
+    assert not confirmed and backend.calls == ["queued", "queued", *["cancel FAILED"] * ATTEMPTS], backend.calls
+    assert reason.startswith(f"{TERMINATE_FAILED}: GPU 0 (bean) terminate unconfirmed after {ATTEMPTS} attempts")
+    del backend.calls[:]
+    assert svc.terminate()[0] is False and backend.calls == ["cancel FAILED"] * ATTEMPTS  # one round, as for any retry
+
+
+def test_L6_one_terminate_call_runs_at_most_two_rounds_after_its_join_and_the_bound_says_so(qualified_template, tmp_path, monkeypatch):
+    """Review be-live-r2-3. The operator's terminate arrives while the session's fallback round is in progress
+    (triangular's spawn in flight, bean's cancel failing). That round is not "for this stop", so the call joins it,
+    runs its own round, and — the queued cancel having settled as failed — one more: two full rounds after the join.
+    The documented bound is therefore join_timeout_s + 2 x TERMINATE_ROUND_S + wait, not join + wait."""
+    monkeypatch.setattr(orchestrator, "TERMINATE_BACKOFF_S", (0.0,) * len(TERMINATE_BACKOFF_S))
+    state = tmp_path / "state"
+    shutil.copytree(qualified_template, state)
+    write_ledger(state)
+    in_round, call_began = threading.Event(), threading.Event()
+
+    class Backend(_LateSpawn):  # TEST-ONLY: bean's spawn answers, triangular's is in flight; bean's cancel always fails
+        def request_stop(self):  # the orchestrator forwards the operator's stop: terminate() has begun
+            call_began.set()
+
+        def launch(self, tube, gpu_index, checkpoint):
+            return tube if tube == "bean" else super().launch(tube, gpu_index, checkpoint)
+
+        def terminate(self, handle):
+            if handle == "triangular":
+                return super().terminate(handle)
+            self.calls.append("bean FAILED")
+            if not in_round.is_set():  # the fallback round's first cancel: hold it until the operator's call began
+                in_round.set()
+                assert call_began.wait(10)
+            raise ConnectionError("Modal API unreachable")
+
+    backend = Backend()
+    svc = service.LiveService(state_dir=state, availability_check=available, poll_interval_s=0.005, join_timeout_s=10.0,
+                              confirm_wait_s=10.0, backend_factory=lambda rid, t: backend)
+    assert svc.launch(guard.slot_estimate_usd())[0]
+    assert in_round.wait(10)
+    confirmed, reason = svc.terminate(on_unconfirmed=lambda r: backend.arrive_and_fail_the_late_cancels())
+    assert not confirmed and reason.startswith(f"{TERMINATE_FAILED}: GPU 0 (bean) terminate unconfirmed after {ATTEMPTS} attempts")
+    rounds = [c for c in backend.calls if c != "bean FAILED"]
+    assert svc._run.terminate_rounds == 3 and rounds == ["queued", "queued", "cancel ok"]  # the session's + two in the call
+    assert backend.calls.count("bean FAILED") == 3 * ATTEMPTS
+    assert svc._run.workers[1].terminated and not svc._run.workers[0].terminated
+    join, round_s = service.WORST_CASE_STOP_S + 10.0, service.TERMINATE_ROUND_S
+    assert service.terminate_bound_s(join, 5.0) == join + 2 * round_s + 5.0 == 1319.5  # POST /api/live/terminate
+    assert service.terminate_bound_s(join, join) == 1814.0                                # the shutdown waits join_timeout_s
+    doc = " ".join(service.__doc__.split())
+    assert "join_timeout_s + 2 x TERMINATE_ROUND_S + wait: 1319.5 s for POST /api/live/terminate" in doc and "1814 s" in doc
+
+
+def test_L6_a_failed_cancel_outranks_a_pending_one_in_the_reason():
+    """Review RV7-7 (mutant M30): bean's cancel is queued while triangular's failed hard. The session may be billing
+    on a worker nothing is going to stop, so the reason leads with TERMINATE FAILED, not TERMINATION PENDING."""
+    class Mixed(FakeBackend):
+        def __init__(self, triangular_fails: bool, **kw):
+            super().__init__(**kw)
+            self.triangular_fails = triangular_fails
+
+        def terminate(self, w):
+            if w.tube == "bean":
+                raise TerminationPending("spawn still in flight", lambda settle: None)
+            if self.triangular_fails:
+                raise ConnectionError("Modal API unreachable")
+            super().terminate(w)
+
+    orch, _ = run_session(Mixed(True, steps=3))
+    assert orch.reason.startswith(f"{TERMINATE_FAILED}: GPU 0 (bean) termination pending: spawn still in flight; "
+                                  f"GPU 1 (triangular) terminate unconfirmed after {ATTEMPTS} attempts"), orch.reason
+    orch, _ = run_session(Mixed(False, steps=3))  # only the queued cancel is open: pending, as before
+    assert orch.reason.startswith(f"{TERMINATE_PENDING}: GPU 0 (bean) termination pending"), orch.reason
+
+
+def test_L6_the_service_remembers_which_gpus_earlier_sessions_launched(tmp_path):
+    """Review RV7-7 (mutant M23) and RV7-3. The server's exit line covers every session the process ran: a later
+    session that launched nothing does not make it forget the GPU an earlier one launched (and terminated) — and
+    the words come from the worker records: only bean was launched, so never "workers terminated"."""
+    qualify(tmp_path)
+    est = guard.slot_estimate_usd()
+    sessions = [FakeBackend(steps=3, fail_launch={"triangular"}), FakeBackend(fail_launch={"bean"})]
+    svc = service.LiveService(state_dir=tmp_path, availability_check=available, poll_interval_s=0.005,
+                              backend_factory=lambda rid, t: sessions.pop(0))
+    assert (svc.launched_any, svc.stopped) == (False, "nothing was launched")
+    assert svc.launch(est)[0]
+    svc._thread.join(10)
+    assert svc.terminate() == (True, f"{BEAN_ONLY}.")  # not "Workers terminated.": triangular was never spawned
+    reason = svc.status()["reason"]  # the fallback is shown until the next launch
+    assert reason.startswith("GPU 1 (triangular) worker failed: launch failed") and reason.endswith(f". {BEAN_ONLY}."), reason
+    write_ledger(tmp_path, billed=8.10 + est)  # a human reconciled the first reservation
+    assert svc.launch(est)[0]
+    svc._thread.join(10)
+    assert svc._run.launched_any is False and svc.terminate() == (True, "Nothing was launched.")
+    assert (svc.launched_any, svc.stopped) == (True, BEAN_ONLY)  # ... the first session's bean
+
+
+@pytest.mark.parametrize("field", ["simulation time", "flux sample"])
+def test_L2_a_report_that_overflows_archive_units_is_malformed_and_every_snapshot_serialises(field, validator):
+    """Review RV7-4: a finite raw time above ~1.27e308 becomes inf once multiplied by sqrt(2). Stored, it made every
+    status answer (and the 202 of the launch itself) fail for the rest of the session; it is a malformed report."""
+    rec = orchestrator.WorkerRecord(0, "bean")
+    fine = {"state": "running", "sim_time_raw": 1.2e308, "new_samples_raw": [[1.2e308, 1.0e308]]}
+    assert orchestrator.apply_poll(rec, fine, 0.0) is None and math.isfinite(rec.sim_time) and math.isfinite(rec.samples[0]["t"])
+    huge = ({"sim_time_raw": 1.5e308, "new_samples_raw": []} if field == "simulation time"
+            else {"sim_time_raw": None, "new_samples_raw": [[1.5e308, 1.0]]})
+    rec = orchestrator.WorkerRecord(0, "bean")
+    assert "overflows archive units" in orchestrator.apply_poll(rec, {"state": "running", **huge}, 0.0)
+    assert (rec.sim_time, rec.sim_time_raw, rec.samples, rec.state) == (None, None, [], "pending")  # nothing applied
+
+    class Huge(FakeBackend):
+        def poll(self, w):
+            return {**super().poll(w), **huge}
+
+    orch, snaps = run_session(Huge(steps=10**6, step_wall_s=0.01))
+    final = snaps[-1]
+    assert final["mode"] == "fallback" and "overflows archive units" in final["workers"][0]["error"]
+    for snap in snaps:
+        json.dumps(snap, allow_nan=False)  # raises ValueError on inf / nan
+        assert_valid(validator, snap)
+
+
+@pytest.mark.parametrize("pending,recorded", [(0.0, 2.65), (8.1, 10.75), (0.005, 2.66), (0.0049, 2.66), (1.234, 3.89), (2.675, 5.33)])
+def test_L1_a_reservation_is_recorded_rounded_up_to_the_cent(pending, recorded):
+    """Review RV7-6: Python's round() took up to half a cent off a pending amount with sub-cent digits; the ledger
+    never records less than was reserved."""
+    reserved = guard.Ledger(8.10, pending, True).reserve(guard.slot_estimate_usd())
+    assert reserved == guard.Ledger(8.10, recorded, False) and reserved.pending >= pending + guard.slot_estimate_usd()
+
+
+def test_L1_state_files_nested_too_deep_to_parse_read_as_unusable_and_never_raise(qualified_template, tmp_path):
+    """Review RV7-5: json.loads raises RecursionError (not ValueError) on deep nesting. Such a qualification.json or
+    saved run made status(), launch, the SSE stream and /api/live/runs/<id> answer nothing; now the file is unusable."""
+    deep = "[" * 100_000 + "]" * 100_000
+    state = tmp_path / "state"
+    shutil.copytree(qualified_template, state)
+    write_ledger(state)
+    saved = service.load_qualification(state)["savedRunId"]
+    built: list = []
+    svc = service.LiveService(state_dir=state, availability_check=available, backend_factory=lambda rid, t: built.append(rid))
+    (state / "runs" / f"{saved}.json").write_text(deep)
+    assert service.load_saved_run(state, saved) is None and svc.saved_run(saved) is None  # -> 404
+    assert service.load_qualification(state) is None and svc.status()["mode"] == "unavailable"  # it names that run
+    assert svc.launch(guard.slot_estimate_usd())[0] is False and built == []
+    (state / "qualification.json").write_text(deep)
+    assert service.load_qualification(state) is None
+    st = svc.status()
+    assert st["mode"] == "unavailable" and st["reason"].startswith("Not qualified") and st["qualified"] is False
+    assert svc.launch(guard.slot_estimate_usd()) == (False, st["reason"]) and built == []

@@ -35,11 +35,11 @@
       "required": ["slotEstimateUsd", "rehearsalEstimateUsd", "slotHardTimeoutS", "rehearsalHardTimeoutS", "plannedTotalUsd", "assumptions"],
       "additionalProperties": false,
       "properties": {
-        "slotEstimateUsd": { "type": "number", "description": "Guard estimate for one live slot, rounded up to the cent." },
-        "rehearsalEstimateUsd": { "type": "number", "description": "Guard estimate for one rehearsal allocation (two launches), rounded up to the cent." },
-        "slotHardTimeoutS": { "type": "integer", "description": "Hard timeout the guard sets for the live slot at its place in the plan." },
-        "rehearsalHardTimeoutS": { "type": "integer", "description": "Hard timeout the guard sets for a rehearsal allocation (the lower of the two in the plan)." },
-        "plannedTotalUsd": { "type": "number", "description": "postedUsd + 2 x rehearsalEstimateUsd + slotEstimateUsd." },
+        "slotEstimateUsd": { "type": "number", "minimum": 0, "description": "Guard estimate for one live slot, rounded up to the cent." },
+        "rehearsalEstimateUsd": { "type": "number", "minimum": 0, "description": "Guard estimate for one rehearsal allocation (two launches), rounded up to the cent." },
+        "slotHardTimeoutS": { "type": "integer", "minimum": 0, "description": "Hard timeout the guard sets for the live slot at its place in the plan (cut to what the ceiling leaves; 0 when nothing is left)." },
+        "rehearsalHardTimeoutS": { "type": "integer", "minimum": 0, "description": "Hard timeout the guard sets for a rehearsal allocation (the lower of the two in the plan; cut to what the ceiling leaves, 0 when nothing is left)." },
+        "plannedTotalUsd": { "type": "number", "minimum": 0, "description": "postedUsd + 2 x rehearsalEstimateUsd + slotEstimateUsd." },
         "assumptions": { "type": "string", "description": "The guard's allowances (not PRD numbers) and whether every step fits the ceiling." }
       }
     }

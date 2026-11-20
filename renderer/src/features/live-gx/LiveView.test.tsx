@@ -2,12 +2,23 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { LiveState, LiveStatus, LiveWorker, SavedRun } from '../../lib/liveStatus';
+import { liveStatusStore, type LiveState, type LiveStatus, type LiveWorker, type SavedRun } from '../../lib/liveStatus';
 import { LiveView } from './LiveView';
-import { canLaunch, canTerminate, clockAdvance, overlapClaim, provenanceIsLive, savedRunQualified, trackClocks } from './model';
+import { canLaunch, canTerminate, clockAdvance, launchBlockedReason, overlapClaim, provenanceIsLive, savedRunQualified, trackClocks } from './model';
 
 const plotly = vi.hoisted(() => ({ react: vi.fn(), purge: vi.fn() }));
 vi.mock('plotly.js-dist-min', () => ({ default: plotly }));
+// `crash.playback` makes the replay player throw while rendering (FE2-1: a data-dependent part fails).
+const crash = vi.hoisted(() => ({ playback: false }));
+vi.mock('./Playback', async (importOriginal) => {
+  const real = await importOriginal<typeof import('./Playback')>();
+  return {
+    Playback: (props: Parameters<typeof real.Playback>[0]) => {
+      if (crash.playback) throw new Error("Cannot read properties of undefined (reading 'length')");
+      return <real.Playback {...props} />;
+    },
+  };
+});
 
 const TRANSPORT = readFileSync(resolve(__dirname, '../../../../artifacts/transport.json'), 'utf8');
 
@@ -70,6 +81,7 @@ function answer(a: Answer): Promise<Response> | Response {
 
 beforeEach(() => {
   plotly.react.mockClear();
+  crash.playback = false;
   server = {
     status: null,
     launch: { code: 202, body: { ok: true, reason: 'Launched live-abc; $2.65 reserved as pending.' } },
@@ -489,9 +501,11 @@ test.each([
   ['mode unavailable', status('unavailable'), /Launch needs mode "idle"; the API reports "unavailable"/],
   ['mode launching', status('launching'), /the API reports "launching"/],
   ['mode live', liveNow(), /the API reports "live"/],
-  ['mode fallback', status('fallback'), /the API reports "fallback"/],
+  ['mode fallback while a termination is unconfirmed', status('fallback', { qualified: true, reason: `${PENDING}: GPU 1 (triangular). GPU 0 (bean) worker failed.` }), /termination is unconfirmed/],
+  ['mode fallback while a requested stop is unconfirmed', status('fallback', { qualified: true, reason: 'Stop requested; terminating workers — not confirmed yet. GPU 0 (bean) worker failed.' }), /termination is unconfirmed/],
+  ['mode fallback and the service is not qualified', status('fallback', { qualified: false }), /needs a qualified service/],
   ['mode terminated', status('terminated'), /the API reports "terminated"/],
-  ['idle but the slot does not fit', status('idle', { budget: { ...status('idle').budget, slotFits: false } }), /does not fit under the budget ceiling/],
+  ['idle but the budget guard refuses the slot', status('idle', { budget: { ...status('idle').budget, slotFits: false } }), /The budget guard refuses this slot/],
   ['idle but a termination is unconfirmed', status('idle', { reason: `${PENDING}: GPU 0 (bean).` }), /termination is unconfirmed/],
   ['idle but a kill-switch-only stop is unconfirmed', status('idle', { reason: 'GPU 0 (bean) kill switch raised, stop not confirmed: no call to cancel.' }), /termination is unconfirmed/],
   ['idle but a requested stop is unconfirmed', status('idle', { reason: 'Stop requested; terminating workers — not confirmed yet. Ready.' }), /termination is unconfirmed/],
@@ -530,9 +544,17 @@ test('L10 Launch is enabled only for mode idle with budget.slotFits on a fresh s
   expect(canLaunch(ready(idle, { launchLocked: true }), at)).toBe(false); // a launch was already posted
   expect(canLaunch(ready({ ...idle, budget: { ...idle.budget, slotFits: false } }), at)).toBe(false);
   expect(canLaunch(ready({ ...idle, budget: { ...idle.budget, slotFits: 'true' as unknown as boolean } }), at)).toBe(false);
-  for (const mode of ['unavailable', 'launching', 'live', 'fallback', 'terminated'] as const) {
-    expect(canLaunch(ready(status(mode)), at)).toBe(false);
+  for (const mode of ['unavailable', 'launching', 'live', 'terminated'] as const) {
+    expect(canLaunch(ready(status(mode, { qualified: true })), at)).toBe(false);
   }
+  // cross-RX-4: a settled fallback (no termination or stop marker) of a qualified service, under the guard's approval.
+  const settled = status('fallback', { qualified: true, reason: 'GPU 0 (bean) worker failed: CUDA error. Other worker terminated.', workers: [worker(0, 4, 1, { state: 'failed' }), worker(1, 9, 2, { state: 'done' })] });
+  expect(canLaunch(ready(settled), at)).toBe(true);
+  expect(canLaunch(ready(settled), at + 5_501)).toBe(false); // stale
+  expect(canLaunch(ready({ ...settled, qualified: false }), at)).toBe(false);
+  expect(canLaunch(ready({ ...settled, budget: { ...settled.budget, slotFits: false } }), at)).toBe(false);
+  expect(canLaunch(ready({ ...settled, reason: `${FAILED}: GPU 0 (bean). ${settled.reason}` }), at)).toBe(false);
+  expect(canLaunch(ready(settled, { launchLocked: true, launchPhase: 'accepted' }), at)).toBe(false);
   expect(canLaunch({ status: 'unreachable', message: 'x', lastKnown: { data: idle, receivedAt: at } }, at)).toBe(false);
   expect(canLaunch({ status: 'connecting' }, at)).toBe(false);
 });
@@ -616,7 +638,7 @@ test('L10 while a launch request is in flight Launch stays disabled, even when t
   await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^Confirm launch/ }));
   // Another session's life passes on the backend: launching (releases the lock), then a clean idle again.
   server.status = status('launching', { qualified: true });
-  await waitFor(() => expect(screen.getByTestId('mode-banner')).toHaveTextContent(/^LAUNCHING/));
+  await waitFor(() => expect(screen.getByTestId('mode-banner')).toHaveTextContent(/^LAUNCHING — not live until both workers report/));
   server.status = idle;
   await waitFor(() => expect(screen.getByTestId('mode-banner')).toHaveTextContent('REPLAY — qualified and idle'));
   await settle(120);
@@ -701,10 +723,10 @@ test('L10 FA-4 after a 409 Launch stays disabled while the snapshots do not allo
   await user.click(launchButton());
   await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^Confirm launch/ }));
   expect(await screen.findByText(/^Launch refused: The ledger could not be updated/)).toBeInTheDocument();
-  await waitFor(() => expect(screen.getByTestId('budget-line')).toHaveTextContent('slot does NOT fit'));
+  await waitFor(() => expect(screen.getByTestId('budget-line')).toHaveTextContent('next slot refused by the budget guard'));
   await settle(150);
   expect(launchButton()).toBeDisabled();
-  expect(screen.getByText(/^Launch disabled:/)).toHaveTextContent(/does not fit under the budget ceiling/);
+  expect(screen.getByText(/^Launch disabled:/)).toHaveTextContent(/The budget guard refuses this slot/);
   server.status = idle;
   await waitFor(() => expect(launchButton()).toBeEnabled());
   expect(postsTo('/api/live/launch')).toHaveLength(1);
@@ -780,7 +802,7 @@ test('L10 the confirmation closes itself when launching stops being allowed or t
   expect(screen.getByRole('dialog')).toBeInTheDocument();
   server.status = { ...idle, budget: { ...idle.budget, pendingUsd: 30, slotFits: false } };
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  expect(screen.getByRole('status', { name: 'Launch confirmation closed' })).toHaveTextContent(/does not fit under the budget ceiling/);
+  expect(screen.getByRole('status', { name: 'Launch confirmation closed' })).toHaveTextContent(/The budget guard refuses this slot/);
   expect(launchButton()).toBeDisabled();
 
   // 2. Allowed again, then the estimate changes under the open dialog: the shown cost is no longer the cost.
@@ -813,8 +835,10 @@ test('L10 Terminate POSTs and a failed termination (ok:false) shows a loud TERMI
   expectDangerPrimitive(alert, FAILED);
   expect(pillList()).toEqual(['billing-risk:TERMINATE FAILED', 'live:LIVE · GPU 0 / GPU 1']);
   expect(server.posts.map((p) => p.url)).toEqual(['/api/live/terminate']);
-  // Retry is offered and succeeds -> confirmation, alert cleared.
+  // Retry is offered and succeeds -> confirmation, alert cleared. (The status read after it shows the ended
+  // session: a later snapshot that still reported live would make "Terminate confirmed" false, FE2-2.)
   server.terminate = { code: 200, body: { ok: true, reason: 'Workers terminated.' } };
+  server.status = status('terminated', { qualified: true, reason: 'Stopped on request; workers terminated.' });
   await user.click(within(alert).getByRole('button', { name: 'Retry terminate' }));
   expect(await screen.findByText('Terminate confirmed: Workers terminated.')).toBeInTheDocument();
   expect(screen.queryByRole('alert', { name: /^Danger:/ })).toBeNull();
@@ -868,4 +892,264 @@ test('L10 Terminate is never disabled while a session may be billing, not even w
   expect(canTerminate({ status: 'unreachable', message: 'x' }, none)).toBe(false);
   expect(canTerminate({ status: 'unreachable', message: 'x', lastKnown: { data: status('idle'), receivedAt: at } }, none)).toBe(false);
   expect(canTerminate({ status: 'connecting' }, none)).toBe(false);
+});
+
+/* ============================== fix round 1 (fe-live) ========================================= */
+
+const SETTLED_FALLBACK = () =>
+  status('fallback', {
+    qualified: true,
+    reason: 'GPU 0 (bean) worker failed: CUDA error. Other worker terminated.',
+    workers: [worker(0, 40, 2, { state: 'failed', error: 'CUDA error' }), worker(1, 80, 5, { state: 'running' })],
+    fallback: { active: true, label: 'Worker failed. No qualified GX rehearsal recorded — showing archived stella/GENE evidence', savedRunId: null },
+  });
+const IDLE_AFTER_STOP = () =>
+  status('idle', { qualified: true, reason: 'Last session ended: Stopped on request; workers terminated. Qualified. Launch requires explicit confirmation of the slot cost.' });
+const PENDING_WORKERS = () => [worker(0, 0, 0, { state: 'pending', deviceId: '', simTime: null as unknown as number }), worker(1, 0, 0, { state: 'pending', deviceId: '', simTime: null as unknown as number })];
+
+test('cross-RX-4 after a settled fallback (every termination confirmed) Launch is allowed again and the fallback label stays', async () => {
+  const user = userEvent.setup();
+  server.status = SETTLED_FALLBACK();
+  // The 202 carries the new session's snapshot: still mode "idle", with its pending workers (orchestrator.py:282).
+  server.launch = { code: 202, body: { ok: true, reason: 'Launched live-abc; $2.65 reserved as pending.', status: status('idle', { qualified: true, workers: PENDING_WORKERS() }) } };
+  render(<LiveView pollMs={60_000} autoPlay={false} />);
+  expect(await screen.findByText('FALLBACK — Worker failed')).toBeInTheDocument();
+  await waitFor(() => expect(launchButton()).toBeEnabled());
+  expect(screen.queryByText(/^Launch disabled:/)).toBeNull();
+  expect(pillList()).toEqual(['failed:Worker failed', 'replay:Replay · $0']);
+  expect(screen.getByTestId('mode-banner')).toHaveTextContent('Worker failed. No qualified GX rehearsal recorded');
+  await user.click(launchButton());
+  const dialog = screen.getByRole('dialog', { name: 'Launch a live GX slot?' });
+  await user.click(within(dialog).getByRole('button', { name: 'Confirm launch — $2.65' }));
+  await waitFor(() => expect(postsTo('/api/live/launch')).toHaveLength(1));
+  expect(JSON.parse(String(postsTo('/api/live/launch')[0]!.init.body))).toEqual({ confirmCostUsd: 2.65 });
+  expect(await screen.findByText(/^Launch accepted:/)).toBeInTheDocument();
+  // The new session lists workers while it reads idle: Launch stays disabled, Terminate is available.
+  await waitFor(() => expect(launchButton()).toBeDisabled());
+  expect(screen.getByRole('button', { name: 'Terminate' })).toBeEnabled();
+  expect(pillList()).toEqual(['rehearsal:Launching…']);
+
+  // A fallback whose termination is not confirmed stays blocked (the marker is the backend's word for it).
+  expect(launchBlockedReason({ status: 'ready', data: { ...SETTLED_FALLBACK(), reason: `${PENDING}: GPU 1 (triangular). GPU 0 (bean) worker failed.` }, receivedAt: 1, freshForMs: 10 }, 1)).toMatch(/termination is unconfirmed/);
+});
+
+test('cross-RX-5 a guard refusal reads as the guard refusing the slot and quotes its clause; it is not called a ceiling fit', async () => {
+  const clause = "Budget guard refused: ledger not reconciled (billed $1.00, pending $0.00). Check both against Modal's usage page and record them before any allocation.";
+  server.status = status('idle', {
+    qualified: true,
+    reason: `Qualified. Launch requires explicit confirmation of the slot cost. ${clause}`,
+    budget: { ceilingUsd: 40, billedUsd: 1, pendingUsd: 0, slotEstimateUsd: 2.65, slotFits: false, hardTimeoutS: 1500 },
+  });
+  render(<LiveView pollMs={60_000} autoPlay={false} />);
+  await waitFor(() => expect(screen.getByTestId('budget-line')).toHaveTextContent('next slot refused by the budget guard'));
+  expect(launchButton()).toBeDisabled();
+  const why = screen.getByText(/^Launch disabled:/);
+  expect(why).toHaveTextContent(`Launch disabled: The budget guard refuses this slot: "${clause}"`);
+  expect(why).not.toHaveTextContent(/fit/);
+  expect(screen.getByTestId('budget-line')).not.toHaveTextContent(/fit/);
+  // Without a clause in the reason, the refusal is still the guard's, never a ceiling claim.
+  const bare = status('idle', { qualified: true, reason: 'Qualified.', budget: { ...status('idle').budget, slotFits: false } });
+  expect(launchBlockedReason({ status: 'ready', data: bare, receivedAt: 1, freshForMs: 10 }, 1)).toBe('The budget guard refuses this slot (the API gives no reason).');
+});
+
+test.each([
+  ['launching', status('launching', { qualified: true, reason: 'Launching GX workers (live); hard timeout 1500 s.', workers: PENDING_WORKERS() }), 'rehearsal:Launching…'],
+  ['idle (the 202 snapshot)', status('idle', { qualified: true, workers: PENDING_WORKERS() }), 'rehearsal:Launching…'],
+  ['terminated', status('terminated', { workers: [worker(0, 9, 1, { state: 'done' }), worker(1, 9, 1, { state: 'done' })] }), 'not-applicable:terminated'],
+  ['fallback', SETTLED_FALLBACK(), 'failed:Worker failed'],
+] as const)('cross-RX-10 the Workers panel never wears the replay pill while workers are listed: mode %s', async (_name, s, pill) => {
+  server.status = s;
+  render(<LiveView pollMs={60_000} autoPlay={false} />);
+  const panel = await screen.findByRole('region', { name: `Workers (${s.mode}, not live)` });
+  const pills = [...panel.querySelectorAll<HTMLElement>('.lab-panel__header .lab-pill')].map((p) => `${p.dataset.status}:${p.textContent}`);
+  expect(pills).toEqual([pill]);
+});
+
+test('cross-RX-11 the archive replay subtitle says why no GX run plays: none recorded, could not be loaded, or not qualified', async () => {
+  const replaySubtitle = async () => {
+    const region = await screen.findByRole('region', { name: 'Replay: archived stella and GENE bean traces' });
+    return region.querySelector('.lab-panel__subtitle')?.textContent ?? '';
+  };
+  const named = status('idle', { qualified: true, reason: 'Qualified.', fallback: { active: false, label: '', savedRunId: SAVED.savedRunId } });
+
+  // 1. A qualified saved run is named, and GET /api/live/runs/<id> fails.
+  server.status = named;
+  server.savedRun = { savedRunId: SAVED.savedRunId, initVerified: true };
+  const a = render(<LiveView pollMs={60_000} autoPlay={false} />);
+  expect(await screen.findByRole('note', { name: new RegExp(`Saved run ${SAVED.savedRunId} could not be loaded`) })).toBeInTheDocument();
+  expect(await replaySubtitle()).toBe(`Saved evidence played back at $0. No GX run is shown: none is live, and saved run ${SAVED.savedRunId} could not be loaded.`);
+  a.unmount();
+
+  // 2. The run is served but did not pass every check.
+  server.savedRun = { ...SAVED, checks: { ...SAVED.checks, overlap: false } };
+  const b = render(<LiveView pollMs={60_000} autoPlay={false} />);
+  expect(await screen.findByRole('note', { name: new RegExp(`Saved run ${SAVED.savedRunId} did not pass every check`) })).toBeInTheDocument();
+  expect(await replaySubtitle()).toBe(`Saved evidence played back at $0. No GX run is shown: none is live, and saved run ${SAVED.savedRunId} did not pass every check.`);
+  b.unmount();
+
+  // 3. None is recorded.
+  server.status = status('idle', { qualified: true, reason: 'Qualified.' });
+  const c = render(<LiveView pollMs={60_000} autoPlay={false} />);
+  await waitFor(async () => expect(await replaySubtitle()).toBe('Saved evidence played back at $0. No GX run is shown: none is live, and no qualified GX rehearsal is recorded.'));
+  c.unmount();
+
+  // 4. No status at all: nothing is known about a recording, and nothing is claimed.
+  server.status = null;
+  render(<LiveView pollMs={60_000} autoPlay={false} />);
+  await waitFor(async () => expect(await replaySubtitle()).toBe('Saved evidence played back at $0. No GX run is shown: none is live, and the live API names no saved run.'));
+});
+
+test('FE2-1 a render error in the replay (wrong-shaped transport artifact) leaves the alert and Terminate up while GPUs may be billing', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const reason = `${FAILED}: GPU 0 (bean) terminate unconfirmed after 4 attempts: boom. GPU 1 (triangular) worker failed.`;
+  server.status = status('fallback', { qualified: true, reason, fallback: { active: true, label: 'Worker failed. No qualified GX rehearsal recorded — showing archived stella/GENE evidence', savedRunId: null } });
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (init?.method === 'POST') {
+      server.posts.push({ url, init });
+      return new Response(JSON.stringify({ ok: false, reason }), { status: 502 });
+    }
+    if (url === '/artifacts/transport.json') return new Response(JSON.stringify({ schemaVersion: 1 }));
+    return new Response(JSON.stringify(server.status));
+  });
+  render(<LiveView pollMs={60_000} autoPlay={false} />);
+  const alert = await dangerAlert('TERMINATE FAILED — GPUs may still be billing');
+  // The replay names what is wrong with the file instead of taking the panel down.
+  expect(await screen.findByRole('note', { name: /artifacts\/transport\.json has an unexpected shape/ })).toBeInTheDocument();
+  const retry = within(alert).getByRole('button', { name: 'Retry terminate' });
+  expect(retry).toBeEnabled();
+  await userEvent.setup().click(retry);
+  await waitFor(() => expect(postsTo('/api/live/terminate')).toHaveLength(1));
+  vi.restoreAllMocks();
+});
+
+test('FE2-1 a part of the view that throws while rendering is contained: the control panel, its alert and Terminate stay', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+  crash.playback = true;
+  const reason = `${PENDING}: GPU 1 (triangular) termination pending: late spawn. GPU 0 (bean) worker failed.`;
+  server.status = status('terminated', { qualified: true, reason, workers: [worker(0, 9, 1, { state: 'done' }), worker(1, 9, 1, { state: 'done' })] });
+  render(<LiveView pollMs={60_000} autoPlay={false} />);
+  const alert = await dangerAlert('TERMINATION PENDING — GPUs may still be billing');
+  expect(within(alert).getByRole('button', { name: 'Terminate' })).toBeEnabled();
+  const broken = await screen.findByRole('note', { name: /^Warning: The replay could not be displayed/ });
+  expect(broken).toHaveTextContent("Cannot read properties of undefined (reading 'length')");
+  expect(screen.getByTestId('mode-banner')).toHaveTextContent('TERMINATION NOT CONFIRMED');
+  expect(screen.getByTestId('worker-0')).toBeInTheDocument(); // the sibling sections are unaffected
+  warn.mockRestore();
+  err.mockRestore();
+});
+
+test('FE2-2 a failed Terminate answered to this page blocks Launch while shown, and goes once a later snapshot shows a clean, confirmed end', async () => {
+  const user = userEvent.setup();
+  server.status = liveNow();
+  // The 502 carries a clean idle snapshot: that is the snapshot it answered with, not a later one.
+  server.terminate = { code: 502, body: { ok: false, reason: FAILED, status: IDLE_AFTER_STOP() } };
+  render(<LiveView pollMs={60_000} autoPlay={false} />);
+  await user.click(await screen.findByRole('button', { name: 'Terminate' }));
+  const alert = await dangerAlert('TERMINATE FAILED — GPUs may still be billing');
+  expectDangerPrimitive(alert, FAILED);
+  await waitFor(() => expect(screen.getByTestId('mode-banner')).toHaveTextContent('Last session ended'));
+  expect(pillList()[0]).toBe('billing-risk:TERMINATE FAILED');
+  expect(launchButton()).toBeDisabled();
+  expect(screen.getByText(/^Launch disabled:/)).toHaveTextContent('The last Terminate sent from this page was not confirmed; GPUs may still be billing.');
+  await user.click(launchButton());
+  expect(screen.queryByRole('dialog')).toBeNull();
+
+  // A later snapshot (the next poll) reports the clean, confirmed end: the local failure is dropped.
+  act(() => {
+    liveStatusStore.apply(IDLE_AFTER_STOP());
+  });
+  await waitFor(() => expect(screen.queryByRole('alert', { name: /^Danger:/ })).toBeNull());
+  expect(pillList()).toEqual(['replay:Replay · $0']);
+  expect(screen.getByTestId('mode-banner')).not.toHaveTextContent(/TERMINATION NOT CONFIRMED/);
+  await waitFor(() => expect(launchButton()).toBeEnabled());
+  expect(screen.getByRole('button', { name: 'Terminate' })).toBeDisabled();
+  expect(postsTo('/api/live/launch')).toHaveLength(0);
+});
+
+test('FE2-2 a failed Terminate stays while later snapshots still show a session (live, then a lost connection)', async () => {
+  const user = userEvent.setup();
+  server.status = liveNow();
+  server.terminate = { code: 502, body: { ok: false, reason: FAILED } };
+  render(<LiveView pollMs={60_000} autoPlay={false} />);
+  await user.click(await screen.findByRole('button', { name: 'Terminate' }));
+  await dangerAlert('TERMINATE FAILED — GPUs may still be billing');
+  act(() => {
+    liveStatusStore.apply(liveNow({ reason: 'Both workers launched; streaming GX output (live). A later poll.' }));
+  });
+  await waitFor(() => expect(screen.getByTestId('mode-banner')).toHaveTextContent(/TERMINATION NOT CONFIRMED/));
+  expect(screen.getByRole('alert', { name: 'Danger: TERMINATE FAILED — GPUs may still be billing' })).toBeInTheDocument();
+  expect(pillList()[0]).toBe('billing-risk:TERMINATE FAILED');
+});
+
+test('FE2-2 a confirmed Terminate is not shown beside a later session: cleared by the next launch, and by a session reported later', async () => {
+  const user = userEvent.setup();
+  server.status = liveNow();
+  render(<LiveView pollMs={60_000} autoPlay={false} />);
+  const term = await screen.findByRole('button', { name: 'Terminate' });
+  server.status = IDLE_AFTER_STOP(); // what the refresh after the answer reads
+  await user.click(term);
+  expect(await screen.findByText('Terminate confirmed: Workers terminated.')).toBeInTheDocument();
+  await waitFor(() => expect(launchButton()).toBeEnabled());
+  // Launch from this page: the old confirmation goes with the new request.
+  server.launch = { code: 202, body: { ok: true, reason: 'Launched live-abc; $2.65 reserved as pending.', status: status('launching', { qualified: true, workers: PENDING_WORKERS() }) } };
+  await user.click(launchButton());
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^Confirm launch/ }));
+  await waitFor(() => expect(postsTo('/api/live/launch')).toHaveLength(1));
+  expect(screen.queryByText(/Terminate confirmed/)).toBeNull();
+  act(() => {
+    liveStatusStore.apply(liveNow());
+  });
+  expect(await screen.findByText('LIVE — GX running on two GPUs')).toBeInTheDocument();
+  expect(screen.queryByText(/Terminate confirmed/)).toBeNull();
+});
+
+test('FE2-2 a confirmed Terminate is dropped when a later snapshot reports a session started elsewhere', async () => {
+  const user = userEvent.setup();
+  server.status = liveNow();
+  render(<LiveView pollMs={60_000} autoPlay={false} />);
+  const term = await screen.findByRole('button', { name: 'Terminate' });
+  server.status = IDLE_AFTER_STOP();
+  await user.click(term);
+  expect(await screen.findByText('Terminate confirmed: Workers terminated.')).toBeInTheDocument();
+  act(() => {
+    liveStatusStore.apply(liveNow({ reason: 'Both workers launched; streaming GX output (live). Launched from another tab.' }));
+  });
+  expect(await screen.findByText('LIVE — GX running on two GPUs')).toBeInTheDocument();
+  expect(screen.queryByText(/Terminate confirmed/)).toBeNull();
+});
+
+test('FE2-3 while a launch from this page may be running the panel never reads "Replay · $0" or "nothing is running"', async () => {
+  const user = userEvent.setup();
+  const idle = status('idle', { qualified: true, reason: 'Qualified.' });
+  server.status = idle;
+  server.launch = 'hang';
+  render(<LiveView pollMs={60_000} autoPlay={false} />);
+  await waitFor(() => expect(launchButton()).toBeEnabled());
+  expect(screen.getByTestId('mode-banner')).toHaveTextContent('REPLAY — qualified and idle; nothing is running');
+  await user.click(launchButton());
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^Confirm launch/ }));
+  // Sent, no answer yet; the API still reads idle.
+  await waitFor(() => expect(pillList()).toEqual(['rehearsal:Launching…']));
+  expect(screen.getByTestId('mode-banner')).toHaveTextContent('LAUNCHING — a launch request is on its way; the API still reports idle');
+  expect(screen.getByTestId('mode-banner')).not.toHaveTextContent(/nothing is running/);
+  expect(screen.queryByText('Replay · $0')).toBeNull();
+  expect(screen.getByRole('region', { name: 'Replay: archived stella and GENE bean traces' })).not.toHaveTextContent(/\$0/);
+});
+
+test('FE2-3 an accepted launch whose status still reads idle is titled as a launch, not as an idle replay', async () => {
+  const user = userEvent.setup();
+  const idle = status('idle', { qualified: true, reason: 'Qualified.' });
+  server.status = idle;
+  server.launch = { code: 202, body: { ok: true, reason: 'Launched live-abc; $2.65 reserved as pending.', status: idle } };
+  render(<LiveView pollMs={60_000} autoPlay={false} />);
+  await waitFor(() => expect(launchButton()).toBeEnabled());
+  await user.click(launchButton());
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^Confirm launch/ }));
+  expect(await screen.findByText(/^Launch accepted:/)).toBeInTheDocument();
+  expect(pillList()).toEqual(['rehearsal:Launching…']);
+  expect(screen.getByTestId('mode-banner')).toHaveTextContent('LAUNCHING — launch accepted; the API still reports idle');
+  expect(screen.queryByText('Replay · $0')).toBeNull();
 });

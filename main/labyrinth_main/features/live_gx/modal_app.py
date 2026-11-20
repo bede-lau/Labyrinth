@@ -15,9 +15,16 @@ the 2x A100-40GB + 8 cores + 32 GiB configuration that the PRD's $6.10/h rate pr
 Timeouts, priced in stages per call (`budget_guard`):
     startup_timeout = modal_startup_timeout_s()  (the priced SETUP_MIN; image pull + cold start)
     timeout         = modal_timeout_s(kind)      (execution, counted from container start)
-    startup + execution == planned_call_s(kind)  == the orchestrator's hard timeout counted from launch.
-The worker stops GX and checkpoints CHECKPOINT_MARGIN_S before its execution budget ends, so a slot whose
-cold start uses the whole startup budget still finishes cleanly before the orchestrator gives up.
+    startup + execution == planned_call_s(kind)  == the orchestrator's hard timeout, counted from just before
+    the FIRST spawn, while this worker's execution budget counts from ITS container start.
+The worker stops GX CHECKPOINT_MARGIN_S before its execution budget ends. The margin is everything that can lie
+between the two clocks or after GX is told to stop, each at its bound: the later worker's spawn lag (SPAWN_LAG_S),
+the worker's loop period (POLL_S), GX's stop wait (GX_STOP_WAIT_S), the final flux read + checkpoint copy +
+Volume commit (FINALIZE_S, an unmeasured allowance) and the orchestrator's polling until it sees `done`
+(REPORT_LAG_S). So a worker whose cold start uses the whole startup budget still reports `done` before the
+orchestrator gives up (live: GX runs 958 s, more than the PRD's 15-min slot). Time a GPU spends queued before its
+container starts is bounded by nothing here; such a session can still end as a hard-timeout fallback, and its
+workers are cancelled like any other.
 `startup_timeout` is REQUIRED: if this modal version's `App.function` does not visibly accept it, the
 deploy fails with RuntimeError (no silent loss of the startup bound).
 Kill switch: terminating a run first sets progress["<run_id>/abort"]; every worker checks it at start
@@ -43,7 +50,18 @@ import modal
 from labyrinth_main.common.paths import WOUT_W7X_KJM
 from labyrinth_main.features.live_gx import budget_guard as guard
 from labyrinth_main.features.live_gx.gx_input import GX_GIT_URL, RESUME_FILE
-from labyrinth_main.features.live_gx.modal_backend import APP_NAME, CHECKPOINT_VOLUME, FUNCTION_NAMES, PROGRESS_DICT, abort_key
+from labyrinth_main.features.live_gx.modal_backend import (
+    APP_NAME,
+    CALL_TIMEOUT_S,
+    CHECKPOINT_VOLUME,
+    FUNCTION_NAMES,
+    LAUNCH_CALLS,
+    POLL_CALLS,
+    PROGRESS_DICT,
+    abort_key,
+)
+from labyrinth_main.features.live_gx.orchestrator import TUBES
+from labyrinth_main.features.live_gx.service import POLL_INTERVAL_S
 
 GX_REF = os.environ.get("LABYRINTH_GX_REF", "")
 if modal.is_local() and not GX_REF:
@@ -56,8 +74,14 @@ SCALEDOWN_S = 2
 LIVE_TIMEOUT_S = guard.modal_timeout_s("live")
 REHEARSAL_PHASE_TIMEOUT_S = guard.modal_timeout_s("rehearsal")
 STARTUP_TIMEOUT_S = guard.modal_startup_timeout_s()
-CHECKPOINT_MARGIN_S = 60
 POLL_S = 10                               # worker loop period: flux read, restart snapshot, kill-switch check
+GX_STOP_WAIT_S = 30                       # SIGTERM to GX, then this long before SIGKILL
+FINALIZE_S = 60                           # final flux read, checkpoint copy + Volume commit (allowance, unmeasured)
+# the later worker's spawn is sent after the first one's lookup + spawn and its own lookup (each <= CALL_TIMEOUT_S)
+SPAWN_LAG_S = (len(TUBES) * LAUNCH_CALLS - 1) * CALL_TIMEOUT_S
+# a worker that just finished is seen by the orchestrator's next poll round (its sleep + every worker's poll calls)
+REPORT_LAG_S = POLL_INTERVAL_S + len(TUBES) * POLL_CALLS * CALL_TIMEOUT_S
+CHECKPOINT_MARGIN_S = SPAWN_LAG_S + POLL_S + GX_STOP_WAIT_S + FINALIZE_S + REPORT_LAG_S  # 242 s
 WORK_ROOT = "/work"                       # container-local scratch, one sub-directory per call
 CKPT_MOUNT = "/ckpt"                      # where the checkpoint Volume is mounted
 GX_REVISION_FILE = "/opt/gx/REVISION"     # written by the image build: the GX commit actually built
@@ -220,7 +244,7 @@ def _worker(*, tube: str, gpu_index: int, progress_key: str, input_toml: str, ch
         if proc.poll() is None:
             proc.terminate()
             try:
-                proc.wait(timeout=30)
+                proc.wait(timeout=GX_STOP_WAIT_S)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()

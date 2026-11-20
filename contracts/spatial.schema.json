@@ -37,7 +37,7 @@
         }
       }
     },
-    "fieldSolve": { "type": "object", "required": ["device"], "properties": { "device": { "const": "CPU" } } },
+    "fieldSolve": { "type": "object", "required": ["device"], "additionalProperties": false, "properties": { "device": { "const": "CPU" } } },
     "runs": {
       "type": "object",
       "required": ["controlled", "passedReference"],
@@ -57,9 +57,26 @@
     },
     "independenceNote": { "type": "string" },
     "fixtures": {
-      "description": "PRD numbers this artifact reports (D-023): the speedup is an arithmetic re-check of PRD-reported means; the controlled-run tally and the means themselves cannot be recomputed here (matches null).",
+      "description": "PRD numbers this artifact reports (D-023 §2): the speedup is an arithmetic re-check of PRD-reported means; the controlled-run tally and the means themselves cannot be recomputed here (matches null). Required: at least the 'speedup' fixture with basis arithmetic and the 'controlled-runs-passed' fixture with matches null.",
       "type": "array",
-      "items": { "$ref": "common.schema.json#/$defs/fixtureCheck" }
+      "minItems": 2,
+      "items": { "$ref": "common.schema.json#/$defs/fixtureCheck" },
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "required": ["id", "basis"],
+            "properties": { "id": { "const": "speedup" }, "basis": { "const": "arithmetic" } }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": ["id", "matches"],
+            "properties": { "id": { "const": "controlled-runs-passed" }, "matches": { "type": "null" } }
+          }
+        }
+      ]
     },
     "provenance": { "$ref": "common.schema.json#/$defs/provenance" }
   }

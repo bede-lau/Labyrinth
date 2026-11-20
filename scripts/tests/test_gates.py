@@ -5,6 +5,7 @@ every bad invocation exits exactly 2; (3) the Stop-hook loop; (4) a task is DONE
 verifier's genuine, current PASS. Nothing here writes into the shared working tree: every unsafe case
 runs in tmp_path, against copies or through the LABYRINTH_* test overrides.
 """
+import ast
 import importlib.util
 import io
 import json
@@ -307,6 +308,20 @@ def test_post_edit_hook_fails_closed_on_input_it_cannot_read(tmp_path):
     assert _post_edit(tmp_path / "nowhere", "not json").returncode == 2
 
 
+def test_post_edit_hook_checks_every_editing_tool_and_any_letter_case_of_the_side(tmp_path):
+    root, bad, good = _hook_tree(tmp_path)
+    for tool in ("Edit", "Write", "MultiEdit"):
+        r = _post_edit(root, {"tool_name": tool, "tool_input": {"file_path": str(bad)}})
+        assert r.returncode == 2 and "renderer/src/bad.ts:1" in r.stderr, tool
+        assert _post_edit(root, {"tool_name": tool, "tool_input": {"file_path": str(good)}}).returncode == 0, tool
+    # RV-G4: on a case-insensitive disk (native Windows, DrvFs) these name renderer/ and main/ themselves
+    for spelled in ("Renderer/src/bad.ts", "RENDERER\\SRC\\BAD.TS", "Main/labyrinth_main/x.py"):
+        r = _post_edit(root, {"tool_name": "Edit", "tool_input": {"file_path": f"{root}/{spelled}"}})
+        assert r.returncode == 2 and "renderer/src/bad.ts:1" in r.stderr, spelled
+    bad.unlink()
+    assert _post_edit(root, {"tool_name": "Edit", "tool_input": {"file_path": f"{root}/Renderer/src/bad.ts"}}).returncode == 0
+
+
 # ============================== .claude/settings.json: the commands are executed for real ==============================
 
 def _settings():
@@ -357,6 +372,40 @@ def test_settings_stop_command_runs_the_verify_loop(tmp_path):
         assert r.returncode == 0, (extra, r.stderr)
 
 
+def _default_verify_tree(tmp_path):
+    """A throwaway checkout under a directory whose name has a space, holding the real Stop-hook scripts and a stub
+    scripts/verify.sh that records its arguments and working directory, fails on its first run and passes after."""
+    tree = tmp_path / "with space" / "checkout"
+    (tree / "scripts/hooks").mkdir(parents=True)
+    for rel in ("scripts/hooks/stop_verify.sh", "scripts/hooks/stop_launcher.py", "scripts/dev.sh"):
+        shutil.copy(ROOT / rel, tree / rel)
+    (tree / "scripts/verify.sh").write_text(
+        '#!/usr/bin/env bash\nprintf "%s|%s\\n" "$*" "$PWD" >> "$VERIFY_LOG"\nn=$(wc -l < "$VERIFY_LOG")\n'
+        'echo "STUB-VERIFY run $n"\nif [ "$n" -ge 2 ]; then exit 0; fi\nexit 2\n')
+    return tree
+
+
+def test_stop_hook_default_command_runs_verify_all_from_the_checkout_root(tmp_path):
+    # RV-G17: every other Stop-hook test sets LABYRINTH_VERIFY_CMD, so a default that checks nothing passed them all.
+    # RV-G14: the default used to be eval'd with the root unquoted - exit 127 in a checkout whose path has a space.
+    tree = _default_verify_tree(tmp_path)
+    log = tmp_path / "verify-calls.log"
+    payload = json.dumps({"session_id": "default-command"})
+    base = {"PATH": SYS_PATH, "HOME": str(tmp_path), "GIT_DIR": NO_GIT, "VERIFY_LOG": str(log), "LABYRINTH_MAX_STOP_BLOCKS": "5",
+            "LABYRINTH_TOOLS": str(tmp_path / "none")}
+    hook = ["bash", str(tree / "scripts/hooks/stop_verify.sh")]
+    command = _settings()["Stop"][0]["hooks"][0]["command"]
+    launches = [(hook, tmp_path, {}, False), (command, tmp_path, {"CLAUDE_PROJECT_DIR": str(tree)}, True), (command, tree, {}, True)]
+    for i, (cmd, cwd, extra, shell) in enumerate(launches):
+        log.write_text("")
+        env = {**base, "LABYRINTH_STATE_DIR": str(tmp_path / f"state{i}"), **extra}
+        first, second = (subprocess.run(cmd, shell=shell, cwd=cwd, env=env, input=payload, capture_output=True, text=True, check=False)
+                         for _ in range(2))
+        assert first.returncode == 2 and "STUB-VERIFY run 1" in first.stderr and "attempt 1/5" in first.stderr, (i, first.stderr)
+        assert second.returncode == 0, (i, second.stderr)
+        assert log.read_text().splitlines() == [f"all|{tree}"] * 2, i  # exactly `verify.sh all`, run from the checkout root
+
+
 def test_settings_commands_name_scripts_that_exist():
     hooks = _settings()
     for command in (hooks["PostToolUse"][0]["hooks"][0]["command"], hooks["Stop"][0]["hooks"][0]["command"]):
@@ -382,6 +431,35 @@ def test_dev_wrapper_puts_the_local_toolchain_first_on_path(tmp_path):
     env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LABYRINTH_TOOLS": str(tmp_path)}
     r = run(["bash", "scripts/dev.sh", "bash", "-c", 'echo "$PATH"'], env=env)
     assert r.stdout.strip() == f"{tmp_path}/node/bin:{tmp_path}/venv/bin:/usr/bin:/bin"
+
+
+def test_scripts_without_home_exit_0_or_2_never_1(tmp_path):
+    # RV-G20: `set -u` turned an unset HOME into exit 1, which the Stop launcher reads as "the gate did not run".
+    env = {"PATH": "/usr/bin:/bin"}
+    r = run(["bash", "scripts/dev.sh", "bash", "-c", "echo ran"], env=env)
+    assert r.returncode == 0 and r.stdout == "ran\n", r.stderr
+    for script in ("scripts/probe-copy.sh", "scripts/setup-dev.sh"):
+        r = run(["bash", script, *(["nohome"] if "probe" in script else [])], env=env)
+        assert r.returncode == 2 and "HOME is not set" in r.stderr, (script, r.returncode, r.stderr)
+
+
+def test_setup_refuses_a_windows_python_that_does_not_run(tmp_path):
+    # RV-G10: `command -v python3.exe` also finds the WindowsApps Store stub, which exits 9009 when no Python is
+    # installed; the hooks would then fail open. Checked before anything is downloaded or installed.
+    proc = tmp_path / "proc_version"
+    proc.write_text("Linux version 6.6.87.2-microsoft-standard-WSL2\n")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    env = {"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(tmp_path), "LABYRINTH_TOOLS": str(tmp_path / "tools"),
+           "LABYRINTH_PROC_VERSION": str(proc)}
+    r = run(["bash", "scripts/setup-dev.sh"], env=env)
+    assert r.returncode == 2 and "no python3.exe on PATH" in r.stderr, r.stderr
+    stub = bindir / "python3.exe"
+    stub.write_text("#!/bin/sh\necho 'Python was not found; run without arguments to install from the Microsoft Store' >&2\nexit 9009\n")
+    stub.chmod(0o755)
+    r = run(["bash", "scripts/setup-dev.sh"], env=env)
+    assert r.returncode == 2 and "does not run Python 3.8+" in r.stderr, r.stderr
+    assert not (tmp_path / "tools").exists()  # nothing was installed
 
 
 def _stop_launcher(tmp_path, verify_cmd):
@@ -505,6 +583,25 @@ def test_probe_copy_never_deletes_the_repo_or_anything_it_did_not_create(tmp_pat
     assert (repo / "keep.txt").exists()
 
 
+def test_probe_copy_decides_overlap_before_creating_anything_and_in_any_letter_case(tmp_path):
+    repo = _fake_repo(tmp_path)
+    # a destination inside the repo that does not exist yet: refused, and nothing is created in the repo (N16)
+    r = _probe(repo, tmp_path, repo / "newdir" / "deeper", "p1")
+    assert r.returncode == 2 and "is the repo or inside it" in r.stderr, r.stderr
+    assert not (repo / "newdir").exists()
+    # RV-G19: /mnt/c and /mnt/d are case-insensitive, so FAKEREPO/tmp is inside the repo there (refused on every disk)
+    for spelled in (tmp_path / "FAKEREPO" / "tmp", tmp_path / "FakeRepo" / "renderer" / "x"):
+        r = _probe(repo, tmp_path, spelled, "p2")
+        assert r.returncode == 2 and "is the repo or inside it" in r.stderr, (spelled, r.stderr)
+    r = _probe(repo, tmp_path, tmp_path / "FAKEREPO", "x")
+    assert r.returncode == 2
+    assert not (tmp_path / "FAKEREPO").exists() and not (tmp_path / "FakeRepo").exists()
+    # the repo inside the destination, spelled in another case
+    r = _probe(repo, tmp_path, tmp_path, "FAKEREPO")
+    assert r.returncode == 2 and "refusing" in r.stderr
+    assert (repo / "keep.txt").read_text() == "precious\n"
+
+
 def test_probe_copy_node_modules_survives_npm_ci_in_the_copy(tmp_path):
     repo = _fake_repo(tmp_path)
     copy = Path(_probe(repo, tmp_path, tmp_path / "probes", "nm").stdout.strip())
@@ -565,8 +662,8 @@ exit 0
 """
 
 
-def _stub_verify(tmp_path, *args, fail=None, code=1):
-    """Run the real verify.sh with stub tools: nothing is checked, so the real tree is never touched or needed."""
+def _stub_verify(tmp_path, *args, fail=None, code=1, script="scripts/verify.sh"):
+    """Run the real verify.sh (or a copy of it) with stub tools: nothing is checked, so the real tree is never touched or needed."""
     bindir = tmp_path / "stub-bin"
     bindir.mkdir(exist_ok=True)
     for tool in ("python3", "npm"):
@@ -576,7 +673,7 @@ def _stub_verify(tmp_path, *args, fail=None, code=1):
     log.write_text("")
     env = {"PATH": f"{bindir}:/usr/bin:/bin", "PYTHON": str(bindir / "python3"), "REAL_PYTHON": sys.executable, "STUB_LOG": str(log),
            "STUB_FAIL": fail or "", "STUB_FAIL_CODE": str(code)}
-    r = run(["bash", "scripts/verify.sh", *args], env=env)
+    r = run(["bash", str(script), *args], env=env)
     summary = re.findall(r"^  (PASS|FAIL)  (\S+) \(\d+s\)$", r.stdout.split("verify.sh summary")[-1], re.M)
     commands = dict(re.findall(r"^━━━ \[([^\]]+)\] \$ (.*)$", r.stdout, re.M))
     return r, summary, commands, log.read_text().splitlines()
@@ -606,6 +703,22 @@ def test_verify_runs_exactly_the_documented_stages_for_each_scope(tmp_path):
         assert calls == [_stub_call(s) for s in expected], scope
         for s in expected:
             assert commands[s].endswith(_stub_call(s).split(" ", 1)[1]), (scope, s, commands[s])
+
+
+def test_verify_installs_renderer_deps_only_when_node_modules_is_missing(tmp_path):
+    # P8: _expected() only expects renderer:install when the real tree lacks node_modules - never on a dev machine or in CI.
+    mini = tmp_path / "mini"
+    (mini / "scripts").mkdir(parents=True)
+    shutil.copy(ROOT / "scripts/verify.sh", mini / "scripts/verify.sh")
+    for scope in ("renderer", "all"):
+        r, summary, _, calls = _stub_verify(tmp_path, scope, script=mini / "scripts/verify.sh")
+        expected = list(SCOPE_STAGES[scope])
+        expected.insert(expected.index("renderer:typecheck"), "renderer:install")
+        assert r.returncode == 0 and summary == [("PASS", s) for s in expected], (scope, r.stdout)
+        assert calls == [_stub_call(s) for s in expected], scope
+    (mini / "renderer/node_modules").mkdir(parents=True)
+    r, summary, _, calls = _stub_verify(tmp_path, "renderer", script=mini / "scripts/verify.sh")
+    assert summary == [("PASS", s) for s in SCOPE_STAGES["renderer"]] and _stub_call("renderer:install") not in calls
 
 
 def test_verify_exits_2_when_any_single_stage_fails_and_still_runs_the_rest(tmp_path):
@@ -779,6 +892,54 @@ def test_artifacts_directory_must_equal_the_manifest_set(tmp_path):
     (art / "manifest.json").write_text(json.dumps(manifest))
     r = _validate(art)
     assert r.returncode == 2 and "must be a plain <name>.json file name" in r.stderr
+
+
+def test_artifacts_manifest_cannot_choose_what_is_checked(tmp_path):
+    def gate(i, mutate):
+        art = _artifacts(tmp_path / str(i))
+        manifest = json.loads((art / "manifest.json").read_text())
+        mutate(art, manifest)
+        (art / "manifest.json").write_text(json.dumps(manifest))
+        return _validate(art)
+
+    def entry(manifest, artifact_id):
+        return next(e for e in manifest["artifacts"] if e["id"] == artifact_id)
+
+    def empty_budget_as_common(art, manifest):  # RV-G15: {} is valid against common.schema.json
+        (art / "budget.json").write_text("{}")
+        entry(manifest, "budget").update(schema="common.schema.json", sha256=validate_artifacts.hashlib.sha256(b"{}").hexdigest())
+
+    def drop_budget(art, manifest):
+        (art / "budget.json").unlink()
+        manifest["artifacts"] = [e for e in manifest["artifacts"] if e["id"] != "budget"]
+
+    def budget_twice(art, manifest):
+        manifest["artifacts"].append(dict(entry(manifest, "geometry"), id="budget"))
+
+    def missing_contract(art, manifest):  # P14: a schema that is not a contracts/ file is an error, never a skip
+        entry(manifest, "spatial")["schema"] = "spatial-v2.schema.json"
+
+    cases = [(empty_budget_as_common, "artifact 'budget' must be budget.json validated against budget.schema.json"),
+             (drop_budget, "artifact id 'budget' is listed 0 times"),
+             (budget_twice, "artifact id 'budget' is listed 2 times"),
+             (missing_contract, "spatial.json: schema 'spatial-v2.schema.json' is not a file in contracts/")]
+    for i, (mutate, message) in enumerate(cases):
+        r = gate(i, mutate)
+        assert r.returncode == 2 and message in r.stderr, (mutate.__name__, r.stderr)
+
+
+def test_artifacts_symlinked_artifact_is_rejected(tmp_path):
+    # P15: a symlink in artifacts/ could point anywhere; the build copies what it points to.
+    art = _artifacts(tmp_path)
+    real = tmp_path / "elsewhere.json"
+    real.write_bytes((art / "spatial.json").read_bytes())
+    (art / "spatial.json").unlink()
+    try:
+        (art / "spatial.json").symlink_to(real)
+    except OSError:
+        pytest.skip("symlinks are not available here")
+    r = _validate(art)
+    assert r.returncode == 2 and "spatial.json: not a regular file" in r.stderr, r.stderr
 
 
 def test_artifacts_stale_missing_and_leftover_files_fail_the_freshness_check(tmp_path):
@@ -1084,14 +1245,84 @@ def test_docs_done_fails_when_owned_files_changed_after_the_verified_commit(tmp_
     assert d.with_verify(VERIFY.replace("commit {sha}", "commit `{sha}` + working tree")) == 0
 
 
-def test_docs_done_needs_owned_paths_that_exist(tmp_path):
+def test_docs_done_needs_owned_paths_that_exist(tmp_path, capsys):
     d = DocsRepo(tmp_path)
     owner = "engineer (`src/x/`) and reviewer (`lib/y.py`)"
     for bad in ("orchestrator", "engineer (`src/typo/`)", "engineer (`src/x/`, `../elsewhere`)", "engineer (`/etc`)", "engineer (src/x/)"):
         d.task.write_text(TASK.format(status="DONE").replace(owner, bad))
         assert d.gate() == 2, bad
+    # an absolute or climbing Owner path is refused as such (it would otherwise reach git diff, or exist outside the repo)
+    for bad in ("`/etc`", "`../elsewhere`", "`C:/Windows`"):
+        d.task.write_text(TASK.format(status="DONE").replace(owner, f"engineer (`src/x/`, {bad})"))
+        capsys.readouterr()
+        assert d.gate() == 2 and "must be relative to the repository root" in capsys.readouterr().err, bad
     d.task.write_text(TASK.format(status="DONE"))
     assert d.gate() == 0
+
+
+def test_docs_owner_and_outcomes_count_as_they_were_at_the_verified_commit(tmp_path, capsys):
+    # RV-G6: dropping a changed path from Owner in the same edit that flips the status made a stale verdict current.
+    d = DocsRepo(tmp_path / "owner")
+    assert d.gate() == 0
+    (d.root / "lib/y.py").write_text("b = 2\n")
+    d.task.write_text(TASK.format(status="DONE").replace(" and reviewer (`lib/y.py`)", ""))
+    capsys.readouterr()
+    assert d.gate() == 2 and "changed after the verified commit" in capsys.readouterr().err
+    d.commit("drop lib/y.py from Owner")
+    assert d.gate() == 2
+    # ... and an outcome dropped after the verdict still needs its PASS row from that verdict
+    d = DocsRepo(tmp_path / "outcome")
+    row = "| X3 | shows c | t | p | **PASS** |\n"
+    d.task.write_text(TASK.format(status="DONE").replace("- X3. shows c\n", ""))
+    capsys.readouterr()
+    assert d.with_verify(VERIFY.replace(row, "")) == 2 and "no result row for outcome(s) X3" in capsys.readouterr().err
+    assert d.with_verify(VERIFY) == 0
+    # a TASK.md that did not exist at the verified commit cannot have been verified there
+    (d.root / "tasks/02-y").mkdir()
+    (d.root / "tasks/02-y/TASK.md").write_text(TASK.format(status="DONE"))
+    (d.root / "tasks/02-y/VERIFY.md").write_text(VERIFY.format(sha=d.sha))
+    capsys.readouterr()
+    assert d.gate() == 2 and "tasks/02-y/TASK.md cannot be read at the verified commit" in capsys.readouterr().err
+
+
+def test_docs_gate_needs_at_least_one_task_and_a_git_that_can_diff(tmp_path, monkeypatch, capsys):
+    empty = tmp_path / "empty"
+    (empty / "tasks").mkdir(parents=True)
+    for f in check_docs.REQUIRED:
+        (empty / f).write_text("x\n")
+    check_docs.ROOT = empty
+    try:
+        assert check_docs.main() == 2 and "no tasks/<feature>/TASK.md files found" in capsys.readouterr().err  # P36
+    finally:
+        check_docs.ROOT = ROOT
+    d = DocsRepo(tmp_path / "repo")
+    assert d.gate() == 0
+    real_git = shutil.which("git", path=SYS_PATH)
+    fake = f"#!/bin/sh\ncase \" $* \" in *' diff '*) echo 'fatal: diff broke' >&2; exit 1;; esac\nexec {real_git} \"$@\"\n"
+    with monkeypatch.context() as m:
+        m.setenv("PATH", _bin_without_git(tmp_path / "repo", fake))
+        capsys.readouterr()
+        assert d.gate() == 2 and "git could not compare the task's files" in capsys.readouterr().err
+    assert d.gate() == 0
+
+
+def test_verifier_instructions_match_the_docs_gate(tmp_path):
+    text = (ROOT / ".claude/agents/verifier.md").read_text()
+    # RV-G11: mutation probes run in a probe copy, never in the shared working tree
+    step_c = text.split("   c. ", 1)[1].split("\n4. ", 1)[0]
+    assert "probe-copy.sh" in step_c and "Revert" not in step_c and "git status" not in step_c
+    # RV-G7: three things a verifier writes in good faith that block a genuine PASS are documented, and really block it
+    d = DocsRepo(tmp_path)
+    row = "| X2 | does b | t | p | PASS (tight, see finding 1) |\n"
+    shapes = {
+        "PASS (was FAIL in run 1)": VERIFY.replace(row, "| X2 | does b | t | p | PASS (was FAIL in run 1) |\n"),
+        'beginning "Verifier run': VERIFY.replace("1. minor\n", "Verifier run 1 missed the fence case.\n"),
+        "(`\\|` still splits the cell)": VERIFY.replace(row, "| X2 | does b | t | p | PASS (a \\| b) |\n"),
+    }
+    for documented, verify in shapes.items():
+        assert documented in text, documented
+        assert d.with_verify(verify) == 2, documented
+    assert d.with_verify(VERIFY) == 0
 
 
 def test_docs_done_when_git_or_history_is_unavailable(tmp_path, monkeypatch, capsys):
@@ -1187,15 +1418,101 @@ def test_review_workflow_is_valid_and_keeps_the_secret_away_from_pr_code():
     assert not [line for line in lines if re.match(r"\s*(?:-\s+)?if:", line) and "secrets" in line]
     assert "HAVE_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}" in code
     steps = code.split("steps:", 1)[1]
-    assert steps.count("if: env.HAVE_KEY == 'true'") == steps.count("- uses:") == 2 and "if: env.HAVE_KEY != 'true'" in steps
+    assert steps.count("if: env.HAVE_KEY == 'true'") == 3 and steps.count("- uses:") == 2 and "if: env.HAVE_KEY != 'true'" in steps
     # forks never see the secret; nothing in the job runs code from the pull request
     assert "pull_request_target" not in code and "pull_request:" in code
     assert "github.event.pull_request.head.repo.full_name == github.repository" in code
     assert code.count("secrets.") == 2 and "anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}" in code
-    assert steps.count("run:") == 1 and "echo" in steps and not re.search(r"\b(npm|pip|pytest|bash|node|python3?)\b", steps)
+    assert steps.count("run:") == 2 and "echo" in steps and not re.search(r"\b(npm|pip|pytest|bash|node|python3?)\b", steps)
+    assert "persist-credentials: false" in steps  # the checkout leaves no token in .git/config
+    # RV-G8: Claude Code would load the PR's own .claude/settings.json (hooks run scripts/hooks/*.py from the PR) and
+    # .mcp.json in a job holding the key; they are deleted from the checkout before the action starts.
+    drop = steps.index("run: rm -f .claude/settings.json .claude/settings.local.json .mcp.json")
+    assert steps.index("actions/checkout@") < drop < steps.index("anthropics/claude-code-action@")
 
 
 def test_ci_checks_out_full_history_and_runs_the_whole_gate():
-    code = "\n".join(_workflow("ci.yml"))
+    lines = _workflow("ci.yml")
+    code = "\n".join(lines)
     assert "fetch-depth: 0" in code  # check_docs.py needs the commits VERIFY.md files name
-    assert "bash scripts/verify.sh all" in code and "push:" in code and "pull_request:" in code
+    # every push and every pull request, with no branch or path filter
+    on = code.split("\non:\n", 1)[1].split("\njobs:", 1)[0]
+    assert [line.strip() for line in on.splitlines() if line.strip()] == ["push:", "pull_request:"]
+    # the last step is exactly the whole gate, and nothing turns its failure into a success
+    runs = [line.strip() for line in lines if re.match(r"\s*(?:-\s+)?run:", line)]
+    assert runs[-1].lstrip("- ") == "run: bash scripts/verify.sh all"
+    assert "continue-on-error" not in code and "||" not in code and "set +e" not in code and "if:" not in code
+
+
+# ============================== live GX danger wording: backend vs renderer classifier ==============================
+# cross-RX-9: renderer/src/lib/liveStatus.ts decides money safety (TERMINATE FAILED, TERMINATION PENDING, stop not
+# confirmed) by substrings of the backend's free-text `reason`, and each side pins only its own copy. Only a gate
+# under scripts/ may read both trees; it reads them as text (ast for Python) and never imports across.
+
+LIVE_GX = ROOT / "main/labyrinth_main/features/live_gx"
+LIVE_STATUS_TS = ROOT / "renderer/src/lib/liveStatus.ts"
+# The classifier statements _renderer_danger_kind mirrors; if one changes, the mirror must change with it.
+TS_CLASSIFIER = (
+    "const upper = reason.toUpperCase();",
+    "TERMINATION_MARKERS.find((m) => upper.includes(m)) ??",
+    "(KILL_SWITCH_UNCONFIRMED.some((p) => upper.includes(p)) ? 'TERMINATE FAILED' : undefined);",
+    "reason.toUpperCase().includes(STOP_REQUESTED.toUpperCase())",
+    "kind: problem.marker === 'TERMINATE FAILED' ? 'terminate-failed' : 'termination-pending',",
+    "if (s.status === 'ready' && stopUnconfirmed(s.data)) {",
+)
+
+
+def _backend_strings(path):
+    """(module-level NAME = "..." constants, every other non-docstring string literal) of a backend file, via ast."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    consts = {t.id: n.value.value for n in tree.body if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+              and isinstance(n.value.value, str) for t in n.targets if isinstance(t, ast.Name)}
+    docstrings = check_boundaries._docstring_nodes(tree)
+    strings = [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docstrings]
+    return consts, strings
+
+
+def _ts_strings(text, name):
+    m = re.search(rf"\bconst {name}\b[^=]*=\s*(\[[^\]]*\]|'[^'\n]*')", text)
+    assert m, f"liveStatus.ts no longer declares {name}: update this gate together with the classifier"
+    return re.findall(r"'([^'\n]*)'", m.group(1))
+
+
+def _renderer_danger_kind(reason, ts):
+    """Python mirror of liveStatus.ts terminationProblem + stopUnconfirmed + liveDanger for a ready snapshot's reason."""
+    upper = reason.upper()
+    marker = next((m for m in ts["TERMINATION_MARKERS"] if m in upper), None)
+    if marker is None and any(p in upper for p in ts["KILL_SWITCH_UNCONFIRMED"]):
+        marker = "TERMINATE FAILED"
+    if marker:
+        return "terminate-failed" if marker == "TERMINATE FAILED" else "termination-pending"
+    return "stop-unconfirmed" if ts["STOP_REQUESTED"][0].upper() in upper else None
+
+
+def test_renderer_classifies_every_backend_danger_wording():
+    ts_text = LIVE_STATUS_TS.read_text(encoding="utf-8")
+    flat = re.sub(r"\s+", "", ts_text)
+    for statement in TS_CLASSIFIER:
+        assert re.sub(r"\s+", "", statement) in flat, f"liveStatus.ts classifier changed ({statement}): update _renderer_danger_kind"
+    ts = {name: _ts_strings(ts_text, name) for name in ("TERMINATION_MARKERS", "KILL_SWITCH_UNCONFIRMED", "STOP_REQUESTED")}
+    orch, _ = _backend_strings(LIVE_GX / "orchestrator.py")
+    _, modal = _backend_strings(LIVE_GX / "modal_backend.py")
+    names = {"TERMINATE_FAILED": "terminate-failed", "TERMINATE_PENDING": "termination-pending", "TERMINATING": "termination-pending",
+             "KILL_SWITCH_ONLY": "terminate-failed", "STOPPING": "stop-unconfirmed"}
+    for name in names:
+        assert name in orch, f"orchestrator.py no longer defines {name}: classify its replacement in liveStatus.ts and here"
+    expected = {orch[name]: kind for name, kind in names.items()}
+    # modal_backend.py: a kill switch that could not be set is never a confirmed stop (both wordings it writes)
+    unset = [s for s in modal if re.search(r"kill switch could not be set", s, re.I)]
+    assert len(unset) >= 2, unset
+    expected.update({s.strip(" :("): "terminate-failed" for s in unset})
+    for reason, kind in expected.items():
+        assert _renderer_danger_kind(reason, ts) == kind, (reason, kind)
+        # inside a reason as the orchestrator assembles it (the clause, then the failure and the rest)
+        assert _renderer_danger_kind(f"{reason}: GPU 0 (bean) terminate unconfirmed. Session fell back to replay.", ts) == kind, reason
+    # no marker the renderer looks for is one the backend never sends
+    sent = [v.upper() for v in [*orch.values(), *modal]]
+    for marker in [*ts["TERMINATION_MARKERS"], *ts["KILL_SWITCH_UNCONFIRMED"], *ts["STOP_REQUESTED"]]:
+        assert any(marker.upper() in s for s in sent), f"liveStatus.ts matches {marker!r}, which no backend string contains"
+    # and a settled reason is not a danger
+    assert _renderer_danger_kind(orch["NO_REHEARSAL_LABEL"], ts) is None

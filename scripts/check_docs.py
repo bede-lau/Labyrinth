@@ -21,6 +21,8 @@
       verified. The files the task owns - the backticked paths in TASK.md "## Owner"; at least one, each
       must exist - must be identical in that commit and in the working tree
       (`git diff <sha> -- <paths>` prints nothing and there is no untracked file under them).
+      Owner and the outcome IDs of rule b are read from TASK.md in the working tree AND at <sha>: a path
+      or an outcome dropped after the verdict still counts.
 
    When git or history is unavailable:
      * `.git` exists but git cannot answer (git not installed, a shallow clone without <sha>, an
@@ -122,13 +124,20 @@ def final_run(verify_text: str) -> tuple[list[tuple[int, str]], str | None]:
     return run, m.group(1).lower() if m else None
 
 
-def check_coverage(task_text: str, run: list[tuple[int, str]]) -> list[str]:
-    """Rule b: every outcome ID of the task has a PASS row in the final run's outcome table."""
+def outcome_ids(task_text: str) -> list[str]:
     ids = []
     for line in _section(task_text, "## Expected outcome").splitlines():
         m = OUTCOME_ID.match(line)
         if m and m.group(1) not in ids:
             ids.append(m.group(1))
+    return ids
+
+
+def check_coverage(task_text: str, run: list[tuple[int, str]], verified_text: str | None = None) -> list[str]:
+    """Rule b: every outcome ID of the task - in the working tree and, when known, in the TASK.md of the
+    verified commit - has a PASS row in the final run's outcome table."""
+    ids = outcome_ids(task_text)
+    ids += [i for i in outcome_ids(verified_text or "") if ids and i not in ids]
     if not ids:
         return ["TASK.md lists no outcome IDs under '## Expected outcome' ('- G1. ...' or '1. ...'), so coverage cannot be checked"]
     results: dict[str, list[str]] = {}
@@ -154,20 +163,33 @@ def check_coverage(task_text: str, run: list[tuple[int, str]]) -> list[str]:
     return errors
 
 
-def owned_paths(task_text: str) -> tuple[list[str], list[str]]:
+def owned_paths(task_text: str, must_exist: bool = True) -> tuple[list[str], list[str]]:
     """(owned repo-relative paths, errors) from the backticked paths in '## Owner'."""
     paths, errors = [], []
     for raw in re.findall(r"`([^`\n]+)`", _section(task_text, "## Owner")):
         p = raw.strip()
         if p.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", p) or ".." in re.split(r"[/\\]", p):
             errors.append(f"owned path `{p}` must be relative to the repository root")
-        elif not (ROOT / p).exists():
+        elif must_exist and not (ROOT / p).exists():
             errors.append(f"owned path `{p}` does not exist")
         elif p.rstrip("/") not in paths:
             paths.append(p.rstrip("/"))
-    if not paths and not errors:
+    if not paths and not errors and must_exist:
         errors.append("TASK.md '## Owner' names no owned path in backticks, so the gate cannot tell whether the verdict is current")
     return paths, errors
+
+
+def task_at_commit(rel: str, commit: str | None) -> tuple[str | None, list[str]]:
+    """(TASK.md as it was in the verified commit, errors). (None, []) when that cannot be asked - no commit,
+    no .git, or a commit git does not know: check_currency reports those."""
+    if commit is None or not (ROOT / ".git").exists():
+        return None, []
+    if _git("rev-parse", "--verify", "--quiet", f"{commit}^{{commit}}")[0] != 0:
+        return None, []
+    code, text, err = _git("show", f"{commit}:{rel}")
+    if code != 0:
+        return None, [f"{rel} cannot be read at the verified commit {commit}{' (git: ' + err + ')' if err else ''}"]
+    return text, []
 
 
 def check_currency(rel: str, commit: str | None, paths: list[str]) -> list[str]:
@@ -209,10 +231,17 @@ def check_done(task: Path, task_text: str) -> list[str]:
     if not run:
         found.append("has no 'Verifier run: <date>, commit <sha>' line")
     else:
-        found += check_coverage(task_text, run)
+        # Owner and the outcome IDs count as they were when verified AND as they are now: dropping a changed path
+        # from Owner (or an outcome) in the same edit that flips Status to DONE does not make a stale verdict
+        # current again (review finding RV-G6).
+        verified_text, at_errors = task_at_commit(rel, commit)
+        found += at_errors
+        found += check_coverage(task_text, run, verified_text)
         paths, path_errors = owned_paths(task_text)
+        paths += [p for p in owned_paths(verified_text or "", must_exist=False)[0] if p not in paths]
         found += path_errors or check_currency(rel, commit, paths)
-    return [f"{rel}: Status DONE but {vrel} {e}" if not e.startswith(("TASK.md", "owned path")) else f"{rel}: Status DONE but {e}" for e in found]
+    return [f"{rel}: Status DONE but {vrel} {e}" if not e.startswith(("TASK.md", "owned path", "tasks/")) else f"{rel}: Status DONE but {e}"
+            for e in found]
 
 
 def main(argv: list[str] | None = None) -> int:

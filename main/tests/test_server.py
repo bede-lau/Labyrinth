@@ -36,6 +36,7 @@ from labyrinth_main.server import __main__ as server_main
 from labyrinth_main.server.app import DEFAULT_HOST, DEFAULT_PORT, make_server
 
 SERVER_PKG = REPO_ROOT / "main" / "labyrinth_main" / "server"
+BEAN_ONLY = "GPU 0 (bean) terminated; GPU 1 (triangular) never launched"  # a stop where only bean's spawn was sent
 
 
 @pytest.fixture(scope="module")
@@ -590,6 +591,30 @@ def test_H5_terminate_while_a_spawn_rpc_hangs_answers_502_termination_pending(ar
     assert status == 200 and json.loads(data)["ok"] is True
 
 
+def test_H5_a_report_that_overflows_archive_units_never_costs_an_answer(armed_server, validator):
+    """Review RV7-4: a worker reports a finite raw time so large that t x sqrt(2) is inf (e.g. a corrupt netCDF read).
+    Stored, it made the 202 of the launch and every status answer drop the connection for the rest of the session.
+    It is a malformed report: the worker fails, the session falls back, and every answer is schema-valid JSON."""
+    port, svc, backends, state = armed_server
+
+    class HugeClock(FakeBackend):
+        def poll(self, w):
+            return {**super().poll(w), "sim_time_raw": 1.5e308, "new_samples_raw": []}
+
+    svc.backend_factory = lambda rid, t: backends.append(HugeClock(steps=10**6, step_wall_s=0.01)) or backends[-1]
+    status, _, data = request(port, "POST", "/api/live/launch", {"confirmCostUsd": guard.slot_estimate_usd()})
+    assert status == 202, data
+    assert_valid(validator, json.loads(data)["status"])
+    deadline = time.time() + 10
+    while (st := get_json(port, "/api/live/status"))[2]["mode"] != "fallback":
+        assert st[0] == 200 and time.time() < deadline, st
+        time.sleep(0.01)
+    assert_valid(validator, st[2])
+    assert "overflows archive units" in st[2]["workers"][0]["error"] and st[2]["workers"][0]["simTime"] is None
+    status, _, data = request(port, "POST", "/api/live/terminate")
+    assert status == 200 and json.loads(data)["ok"] is True
+
+
 def test_H5_saved_run_route_and_fallback_wording(armed_server, tmp_path, no_modal_env, validator):
     port, svc, backends, state = armed_server
     saved = service.load_qualification(state)["savedRunId"]
@@ -609,6 +634,16 @@ def test_H5_saved_run_route_and_fallback_wording(armed_server, tmp_path, no_moda
     for bad in ({**good, "extra": True}, {**good, "phases": good["phases"] * 2}):
         path.write_text(json.dumps(bad))
         assert request(port, "GET", f"/api/live/runs/{saved}")[0] == 404
+    # a non-finite number (NaN, Infinity, 1e999 -> inf) is valid to jsonschema but cannot be served as JSON:
+    # such a run is invalid -> 404 and not qualified, never a dropped connection (be-live-r3-1)
+    for literal in ("NaN", "Infinity", "-Infinity", "1e999"):
+        bad = json.loads(json.dumps(good))
+        bad["phases"][0]["workers"][0]["simTime"] = "__NOT_FINITE__"
+        path.write_text(json.dumps(bad).replace('"__NOT_FINITE__"', literal))
+        status, _, data = request(port, "GET", f"/api/live/runs/{saved}")
+        assert (status, json.loads(data)) == (404, {"ok": False, "reason": "no such saved run"}), literal
+        st = service.LiveService(state_dir=state).status()
+        assert st["qualified"] is False and st["fallback"]["savedRunId"] is None, literal
     path.write_text(json.dumps(good))
     assert request(port, "GET", f"/api/live/runs/{saved}")[0] == 200
     # if the saved run is missing, never claim to play it
@@ -636,6 +671,13 @@ def test_H5_only_get_post_on_known_routes_and_loopback_hosts(default_server, no_
     assert (status, headers["Allow"]) == (405, "POST")
     status, headers, _ = request(default_server, "POST", "/api/live/status", {})
     assert (status, headers["Allow"]) == (405, "GET")
+    # POST on /artifacts/* is a 405 naming GET (review RV7-7, mutant M41). POST on a saved-run route (an id the
+    # GET route serves) is the same 405 (SEED-be-live-1); an id the route never serves stays a 404, as on GET.
+    for path in ("/artifacts/manifest.json", "/api/live/runs/rehearsal-0123456789ab", "/api/live/runs/live-0123456789ab"):
+        status, headers, data = request(default_server, "POST", path, {})
+        assert (status, headers["Allow"]) == (405, "GET") and json.loads(data) == {"ok": False, "reason": "use GET"}, path
+    for bad in ("rehearsal-test", "rehearsal-0123456789AB", "../ledger", ""):
+        assert request(default_server, "POST", f"/api/live/runs/{bad}", {})[0] == 404, bad
     for path, allow in ROUTE_ALLOW.items():
         for method in OTHER_METHODS:
             status, headers, data = request(default_server, method, path)
@@ -703,7 +745,9 @@ from labyrinth_main.features.live_gx import service
 from labyrinth_main.features.live_gx.fake_backend import FakeBackend
 from labyrinth_main.server import __main__ as server_main
 
-log, state = Path(sys.argv[1]), Path(sys.argv[2])
+log, state, options = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3:]
+if "sighup-ignored" in options:  # started under nohup (or as a shell's background job): SIGHUP ignored from the start
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
 class Recording(FakeBackend):  # TEST-ONLY: records every cancel to a file the test reads
     def terminate(self, w):
@@ -714,7 +758,7 @@ class Recording(FakeBackend):  # TEST-ONLY: records every cancel to a file the t
 svc = service.LiveService(state_dir=state, availability_check=lambda: (True, "test harness"), poll_interval_s=0.02,
                           backend_factory=lambda rid, t: Recording(steps=10**6, step_wall_s=0.02))
 code = server_main.main(["--port", "0"], service=svc, restore_signals=False)  # as `python3 -m labyrinth_main.server` does
-if sys.argv[3:] == ["signal-after-exit"]:  # stop signals that land after the last line was printed (verifier R2-9)
+if "signal-after-exit" in options:  # stop signals that land after the last line was printed (verifier R2-9)
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         os.kill(os.getpid(), s)
     time.sleep(0.2)
@@ -758,6 +802,34 @@ def test_H1_signal_terminates_running_workers_before_exit(signals, tmp_path):
             proc.communicate()
     assert proc.returncode == 0, out + err
     assert out.rstrip().endswith("Labyrinth API stopped; workers terminated.") and "Traceback" not in err and "race condition" not in err
+    assert sorted(log.read_text().split("\n")[:-1]) == ["cancel bean", "cancel triangular"]
+
+
+def test_H1_a_stop_signal_ignored_at_start_up_stays_ignored(tmp_path):
+    """Review be-live-r2-1 (mutant M60). Started under nohup, the server has SIGHUP ignored from the start (interface.md
+    §3, the module docstring). A dropped SSH session must then not end the live session: the process keeps serving
+    and cancels nothing. A stop signal it does handle (SIGTERM) still terminates both workers, exit 0."""
+    proc, port, log = _signal_harness(tmp_path, "sighup-ignored")
+    try:
+        status, _, data = request(port, "POST", "/api/live/launch", {"confirmCostUsd": guard.slot_estimate_usd()})
+        assert status == 202, data
+        deadline = time.time() + 10
+        while get_json(port, "/api/live/status")[2]["mode"] != "live":
+            assert time.time() < deadline
+            time.sleep(0.02)
+        proc.send_signal(signal.SIGHUP)
+        for _ in range(10):  # 0.5 s: a handled SIGHUP would have cancelled both fake workers and stopped serving
+            time.sleep(0.05)
+            assert get_json(port, "/api/live/status")[2]["mode"] == "live"
+        assert proc.poll() is None and not log.exists()
+        proc.send_signal(signal.SIGTERM)
+        out, err = proc.communicate(timeout=30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
+    assert proc.returncode == 0, out + err
+    assert out.rstrip().endswith("Labyrinth API stopped; workers terminated.") and "Traceback" not in err
     assert sorted(log.read_text().split("\n")[:-1]) == ["cancel bean", "cancel triangular"]
 
 
@@ -861,8 +933,8 @@ def test_H1_shutdown_during_in_flight_launch(released, join, code, tmp_path):
             proc.kill()
             proc.communicate()
     assert proc.returncode == code, out + err
-    if released:
-        assert out.rstrip().endswith("Labyrinth API stopped; workers terminated.")
+    if released:  # only bean's spawn was ever sent: the exit line says so, never "workers terminated" (review RV7-3)
+        assert out.rstrip().endswith(f"Labyrinth API stopped; {BEAN_ONLY}.")
         assert log.read_text() == "cancel [('terminate_containers', True)]\n"
     else:
         assert out.rstrip().endswith("Labyrinth API stopped; workers NOT confirmed terminated — check Modal.") and not log.exists()
@@ -1056,7 +1128,7 @@ def test_H1_api_keeps_answering_with_the_unconfirmed_status_while_the_shutdown_w
     finally:
         srv.kill()
     assert srv.proc.returncode == 0, out + err
-    assert out.rstrip().endswith("Labyrinth API stopped; workers terminated.") and srv.log.read_text() == "cancel bean\n"
+    assert out.rstrip().endswith(f"Labyrinth API stopped; {BEAN_ONLY}.") and srv.log.read_text() == "cancel bean\n"
     assert "Termination not confirmed yet — check the Modal dashboard now. TERMINATION PENDING" in err
 
 

@@ -138,10 +138,14 @@ export interface ClaimVerdict {
   inconsistent: boolean;
 }
 
+/** D-017: a saturated-agreement claim needs at least this many effective samples. */
+export const MIN_N_EFF = 20;
+
 /**
  * Saturated-agreement verdict for one row. The artifact's flag is necessary but not sufficient: a row
- * shown as "allowed" must itself be covered, stationary and carry a finite stderr (D-017), so an
- * inconsistent artifact can never put "Claim allowed" beside "Undecidable" or "—".
+ * shown as "allowed" must itself be covered, stationary, carry a finite stderr and not report fewer than
+ * 20 effective samples (D-017), so an inconsistent artifact can never put "Claim allowed" beside
+ * "Undecidable", "—" or an N_eff below the gate.
  */
 export function claimVerdict(w: TransportWindow, d: WindowDetail): ClaimVerdict {
   const gaps: string[] = [];
@@ -150,6 +154,7 @@ export function claimVerdict(w: TransportWindow, d: WindowDetail): ClaimVerdict 
     if (w.stationary === null) gaps.push('stationarity undecidable');
     else if (!w.stationary) gaps.push('not stationary');
     if (w.stderr === null || !Number.isFinite(w.stderr)) gaps.push('sampling uncertainty not finite');
+    if (d.nEff !== null && d.nEff < MIN_N_EFF) gaps.push(`N_eff below ${MIN_N_EFF}`);
   }
   if (w.saturatedClaimAllowed && gaps.length === 0) return { allowed: true, reason: null, inconsistent: false };
   if (w.saturatedClaimAllowed) {
@@ -205,13 +210,27 @@ export interface ClaimSummary {
   /** The reason most "not allowed" rows share (stated once, above the table), and how many share it. */
   commonReason: string | null;
   commonReasonCount: number;
+  /** Every recorded "not allowed" reason with its row count, most frequent first. */
+  reasons: { reason: string; count: number }[];
+  /**
+   * True only when at least one covered row is not allowed and every covered, not-allowed row reports
+   * fewer than 20 effective samples (its N_eff, or its own reason "N_eff … below 20"): only then may the
+   * view blame the autocorrelation time for the missing claim.
+   */
+  nEffLimited: boolean;
 }
+
+/** A row that itself reports fewer than 20 effective samples. */
+const reportsLowNEff = (r: WindowRow) =>
+  (r.detail.nEff !== null && r.detail.nEff < MIN_N_EFF) || new RegExp(`N_eff[^.;]*below ${MIN_N_EFF}`).test(r.claimReason ?? '');
 
 export function claimSummary(a: TransportArtifact): ClaimSummary {
   const rows = windowRows(a);
   const ns = rows.map((r) => r.detail.nEff).filter((n): n is number => n !== null);
   const counts = new Map<string, number>();
   for (const r of rows) if (!r.claimAllowed && r.claimReason) counts.set(r.claimReason, (counts.get(r.claimReason) ?? 0) + 1);
+  const reasons = [...counts].map(([reason, count]) => ({ reason, count })).sort((x, y) => y.count - x.count);
+  const blocked = rows.filter((r) => r.covered && !r.claimAllowed);
   let commonReason: string | null = null;
   let commonReasonCount = 0;
   for (const [reason, n] of counts) {
@@ -232,6 +251,8 @@ export function claimSummary(a: TransportArtifact): ClaimSummary {
     nEffMax: ns.length ? Math.max(...ns) : null,
     commonReason,
     commonReasonCount,
+    reasons,
+    nEffLimited: blocked.length > 0 && blocked.every(reportsLowNEff),
   };
 }
 
@@ -278,6 +299,35 @@ export function discrepancy(a: TransportArtifact): Discrepancy {
     };
   });
   return { value: r.value, window: r.window, rows };
+}
+
+/**
+ * How the reduced run's gap to each archive mean compares with that window's reported sampling uncertainty,
+ * in words from the numbers (FF-3): |Δ| in units of the finite reported stderr, "far larger" only when every
+ * such ratio is at least 10, and saying so when no window reports a finite stderr. An approximate stderr is
+ * a lower bound, so its ratio may overstate the gap and the sentence says that too.
+ */
+export function gapSentence(d: Discrepancy): string {
+  const win = formatWindow(d.window);
+  const finiteSe = (r: Discrepancy['rows'][number]) => {
+    const se = r.window?.stderr;
+    return se !== null && se !== undefined && Number.isFinite(se) && se > 0 ? se : null;
+  };
+  const weighed = d.rows.filter((r) => finiteSe(r) !== null);
+  const missing = d.rows.filter((r) => finiteSe(r) === null).map((r) => `${r.code} ${win} reports no finite sampling uncertainty`);
+  if (weighed.length === 0) return `The gap cannot be weighed against a sampling uncertainty: ${missing.join('; ')}.`;
+  const ratios = weighed.map((r) => Math.abs(r.delta) / (finiteSe(r) as number));
+  const min = Math.min(...ratios);
+  const verdict = min >= 10 ? 'far larger than' : min > 2 ? 'larger than' : 'not clearly larger than';
+  const parts = weighed.map((r, i) => {
+    const k = ratios[i] as number;
+    return (
+      `|Δ| to ${r.code} is ${formatNumber(Math.abs(r.delta), 2)}, ${formatNumber(k, k >= 10 ? 0 : 1)}× its reported ` +
+      `±${formatNumber(finiteSe(r), MEAN_DECIMALS)}` +
+      (r.detail?.stderrApproximate ? ' (a lower bound, so the true ratio may be smaller)' : '')
+    );
+  });
+  return `The gap is ${verdict} the reported archive sampling uncertainty: ${[...parts, ...missing].join('; ')}.`;
 }
 
 /** Plain-language state of an archive reference window (used in the discrepancy card). */

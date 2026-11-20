@@ -1,5 +1,14 @@
 // Forecast replay state machine and derived numbers (pure; tested without the DOM).
-import type { FixtureCheckData, Provenance } from '../../design';
+import { fixtureOutcome, formatNumber, type FixtureCheckData, type Provenance } from '../../design';
+import { REPLAY_PILL, modePills, type LiveState } from '../../lib/liveStatus';
+
+/**
+ * The text of the replay panel's pill: "Replay · $0" only while the header's mode pills show it (DESIGN.md §5,
+ * REPLAY_PILL), otherwise plain "Replay": $0 is not known while GPUs may be billing.
+ */
+export function replayPillText(s: LiveState): string {
+  return modePills(s).some((p) => p.status === REPLAY_PILL.status && p.text === REPLAY_PILL.text) ? REPLAY_PILL.text : 'Replay';
+}
 
 export type Window = [number, number];
 
@@ -75,11 +84,28 @@ export function runningMae(steps: readonly ForecastStep[], scored: number): { pe
 }
 
 /**
- * The PRD scores the artifact itself reports as not reproduced (`matches: false`). The mismatch
- * narrative in the view exists only while this list is non-empty.
+ * The PRD scores shown as a mismatch: the same rule as the FixtureCheck rows above the callout (the
+ * `matches` flag and the printed values together), so the count always equals the rows marked Mismatch.
+ * A score that cannot be recomputed (`matches: null`) is not a mismatch. The mismatch narrative in the
+ * view exists only while this list is non-empty.
  */
 export function mismatchedScores(a: ForecastArtifact): FixtureCheckData[] {
-  return a.fixtures.filter((f) => f.matches === false);
+  return a.fixtures.filter((f) => fixtureOutcome(f).outcome === 'mismatch');
+}
+
+/**
+ * True when the sample-and-hold values printed in the note are exactly what the PRD prints for both scores
+ * (each printed value equal to the claim at the fixture's printed precision). Only then may the view say
+ * the alternative definition reproduces them.
+ */
+export function sampleAndHoldMatchesPrd(sah: SampleAndHold, a: ForecastArtifact): boolean {
+  const printedClaim = (id: string) => {
+    const f = a.fixtures.find((x) => x.id === id);
+    return f && f.claimed !== null ? formatNumber(f.claimed, f.printedDecimals) : null;
+  };
+  const p = printedClaim('mae-persistence');
+  const f = printedClaim('mae-frozen');
+  return p !== null && f !== null && sah.persistence[1] === p && sah.frozen[1] === f;
 }
 
 export interface SampleAndHold {

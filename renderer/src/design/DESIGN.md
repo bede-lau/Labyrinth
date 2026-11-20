@@ -50,7 +50,7 @@ names something that exists.
 | `theme.ts` | `resolveTheme()`, `useResolvedTheme()`, `setThemePreference()`. These follow the same rules as the CSS selectors. |
 | `plotTheme.ts` | Plotly layout, config, series styles, uncertainty bands, window and unsampled shapes, and `axisTitle` (§6). |
 | `sceneTheme.ts` | Three.js colours, the field-line identity colours, the gray surface and the `bmag` colormap (§7). |
-| `format.ts` | Number, delta, window and unit formatting (true minus sign, en dash, subscripts). |
+| `format.ts` | Number, delta, window and unit formatting (true minus sign, en dash, subscripts). An exact tie rounds to even, as Python's round() does, so a printed value agrees with the artifact flag computed from it. |
 | `status.ts` | Label, icon and meaning for every status, the Alert's treatment, and `provenanceStatus()`, the rule that keeps LIVE out of replayed provenance (§5). |
 | `types.ts` | Structural types for provenance and fixture data (they mirror the contracts; nothing is imported from them). |
 | `components/` | Primitives and `components.css` (§8). |
@@ -58,7 +58,7 @@ names something that exists.
 | `color.ts` | Contrast, alpha compositing, CIELAB, CIEDE2000 and CVD simulation, used by the tests and the gallery. |
 | `palette.ts` | The series-palette gates and the measurement they apply to (§4). |
 | `contrastPairs.ts` | Every foreground/background pair the system draws, with the minimum it is held to (§10). |
-| `cssRules.ts` | A small CSS reader. The tests use it to pin layout and focus rules that jsdom cannot evaluate. |
+| `cssRules.ts` | A small CSS reader. The tests use it to pin layout and focus rules that jsdom cannot evaluate, and to list every colour pair the components draw (§10). |
 | `Gallery.tsx` | The review page at `/#gallery` (lazy chunk, not part of the app). |
 | `gallery.css` | Layout of the review page only. |
 | `css.d.ts` | Lets TypeScript accept CSS side-effect imports. |
@@ -184,7 +184,7 @@ own solid fill. No two statuses share a label or an icon (`components.test.tsx` 
 |---|---|---|---|---|
 | `live` | `live` (drawn as a pulsing dot) | Live | **The only solid-filled pill**: crimson, white text, set in uppercase. The fill is at least 3:1 against every surface. | Only when `/api/live/status` reports `mode === "live"` |
 | `billing-risk` | `danger` (a solid octagon with a knocked-out !) | Billing risk | **The only outlined pill**: raspberry tint, a solid outline in its own text colour (at least 3:1 against every surface and against its tint), bold text. Never a solid fill (that is live). | GPUs may still be billing: a stop is not confirmed, or the session state is unknown. Only the danger rows of the live-state table below; paired with an `Alert`. |
-| `replay` | `replay` ↻ | Replay | neutral slate tint | Saved evidence, $0. The global mode shows "Replay · $0". |
+| `replay` | `replay` ↻ | Replay | neutral slate tint | Saved evidence, $0. The global mode shows "Replay · $0" only in the live-state rows below that list it. |
 | `rehearsal` | `rehearsal` ◉ | Rehearsal | indigo tint | A recorded GX run playing back. Never styled like live. |
 | `archive` | `archive` (box) | Archive | slate-blue tint | Read from a pinned upstream file (sha256) |
 | `derived` | `derived` Σ | Derived | teal tint | Computed by Labyrinth from archives |
@@ -203,24 +203,74 @@ and drawn in the pill's text colour; it carries meaning too and is held to the s
 
 **Mapping the live-status store to the UI.** `useLiveStatus()` in `lib/liveStatus.ts` returns one
 store status (`connecting`, `unreachable` or `ready`); `modePills()` and `liveDanger()` there turn it
-into what the header and the live panel show. That code is the frontend's; this table is the
-contract it follows. A danger row wins over every mode row: its billing-risk pill leads, no
-"Replay · $0" is shown beside it ($0 is not known while GPUs may be billing), and its `Alert` sits
-under the header on every route and in the live panel.
+into the pills and the danger that the header and the live panel show. That code is the frontend's;
+this table is the contract it follows. A danger row wins over every mode row: its billing-risk pill
+leads, then come the mode's pills with every `replay` pill dropped ("Replay · $0", "Checking
+status…", "Playing saved run": $0 is not known while GPUs may be billing), and its `Alert` sits
+under the header on every route and in the live panel. Markers and phrases are matched anywhere in
+the reason, in any letter case and in any mode.
+
+**"Replay · $0" appears only in the rows that list it** (`REPLAY_PILL` in `lib/liveStatus.ts`). Even
+with no danger, "$0" is not known while a launch sent from this page may be running (the store's
+`launchPhase`) or while a snapshot still lists workers: the store then puts "Launching…" or "Checking
+status…" where "Replay · $0" would be.
 
 | Live state | Indicator | Alert |
 |---|---|---|
 | `connecting` | `<StatusPill status="replay">Replay · $0</StatusPill>` | none |
 | `unreachable` with cause `stale`: the snapshot outlived its freshness and a new request is already on its way | `<StatusPill status="replay">Checking status…</StatusPill>` | none |
-| `unreachable` with cause `network`, `http`, `invalid` or `timeout`, when the last snapshot could not be billing (or there was none) | `<StatusPill status="replay">Replay · $0</StatusPill>` | none |
-| `ready` with mode `unavailable`, `idle` or `terminated` | `<StatusPill status="replay">Replay · $0</StatusPill>` | none |
+| `unreachable` with cause `network`, `http`, `invalid` or `timeout`, when the last snapshot could not be billing (or there was none) and no launch from this page may be running | `<StatusPill status="replay">Replay · $0</StatusPill>` | none |
+| `ready` with mode `unavailable`, `idle` or `terminated`, no workers listed, and no launch from this page outstanding (no `launchPhase`, or `refused`: the backend answered 409 and launched nothing) | `<StatusPill status="replay">Replay · $0</StatusPill>` | none |
+| `ready` with mode `idle` and workers listed (a session whose workers have not started), or a launch from this page in flight or accepted (`launchPhase` `sent` or `accepted`) | `<StatusPill status="rehearsal">Launching…</StatusPill>` where "Replay · $0" would be | none |
+| `ready` with mode `unavailable` or `terminated` and workers listed, or a launch from this page that got no usable answer (`launchPhase` `unknown`: the next snapshot decides) | `<StatusPill status="replay">Checking status…</StatusPill>` where "Replay · $0" would be | none |
 | `ready` with mode `launching` | `<StatusPill status="rehearsal">Launching…</StatusPill>`. It is not live until workers report. | none |
 | `ready` with mode `live` | `<StatusPill status="live">LIVE · GPU 0 / GPU 1</StatusPill>` | none |
-| `ready` with mode `fallback` | `<StatusPill status="failed">{fallback cause}</StatusPill>` + `<StatusPill status="replay">Playing saved run</StatusPill>` ("Replay · $0" when no saved run is playable) | none |
-| danger `terminate-failed`: the reason contains TERMINATE FAILED, in any mode. It covers a stop that only raised the run's kill switch ("kill switch raised, stop not confirmed") and a kill switch that could not be set. | `<StatusPill status="billing-risk">TERMINATE FAILED</StatusPill>`, then the mode's other pills | `<Alert title="TERMINATE FAILED — GPUs may still be billing" reason={reason} action={<button>Retry terminate</button>}>` |
-| danger `termination-pending`: the reason contains TERMINATION PENDING (a cancel is queued, not confirmed) | `<StatusPill status="billing-risk">TERMINATION PENDING</StatusPill>`, then the mode's other pills | `<Alert title="TERMINATION PENDING — GPUs may still be billing" reason={reason} action={<button>Terminate</button>}>` |
-| danger `stop-unconfirmed` (not in the store yet): mode `launching` or `live` and the reason starts with "Stop requested; terminating workers — not confirmed yet" | `<StatusPill status="billing-risk">Stop not confirmed</StatusPill>` beside the mode pill: LIVE stays while the API reports live | `<Alert title="STOP NOT CONFIRMED — GPUs may still be billing" reason={reason}>` |
-| danger `connection-lost`: `unreachable` (any cause but `stale`) after a snapshot that may be billing ("connection lost — session state unknown") | `<StatusPill status="billing-risk">Connection lost</StatusPill>` | `<Alert title="CONNECTION LOST — session state unknown" reason={detail} action={<a>Open Advance plasma to send Terminate</a>}>` |
+| `ready` with mode `fallback` | `<StatusPill status="failed">{fallback cause}</StatusPill>` + `<StatusPill status="replay">Playing saved run</StatusPill>` ("Replay · $0" when no saved run is playable; a settled fallback keeps it, since every termination is confirmed, except while a launch from this page is outstanding, as in the two rows above) | none |
+| danger `terminate-failed`: `ready`, and the reason contains TERMINATE FAILED. A reason that says "kill switch raised, stop not confirmed" or "kill switch could not be set" counts even without the marker. FAILED wins when both markers occur. | `<StatusPill status="billing-risk">TERMINATE FAILED</StatusPill>`, then the mode's pills that are not replay | `<Alert title="TERMINATE FAILED — GPUs may still be billing" reason={reason}>` |
+| danger `termination-pending`: `ready`, and the reason contains TERMINATION PENDING (a cancel is queued, not confirmed) | `<StatusPill status="billing-risk">TERMINATION PENDING</StatusPill>`, then the mode's pills that are not replay | `<Alert title="TERMINATION PENDING — GPUs may still be billing" reason={reason}>` |
+| danger `stop-unconfirmed`: `ready`, no termination marker, and the reason contains "Stop requested; terminating workers — not confirmed yet" | `<StatusPill status="billing-risk">Stop not confirmed</StatusPill>`, then the mode's pills that are not replay: LIVE stays while the API reports live | `<Alert title="STOP NOT CONFIRMED — GPUs may still be billing" reason={reason}>` |
+| danger `connection-lost`: `unreachable` (any cause but `stale`) after a snapshot that may be billing (mode `launching`, `live` or `fallback`, workers listed, a termination marker or a requested stop), or after any snapshot while a launch sent from this page may be running | `<StatusPill status="billing-risk">Connection lost</StatusPill>` | `<Alert title="CONNECTION LOST — session state unknown" reason={detail}>`. The API is silent, so `detail` is the app's own sentence: what failed, when the last status arrived, its mode and reason, any launch still unanswered, and "GPUs may still be billing." |
+
+**Where the Alert sits, and what it carries.**
+
+* **Header, every route** (`ModeAlert` in `shell/ModeIndicator.tsx`): one Alert for the store's
+  danger, with the title and reason above and the body "Check the Modal dashboard until both workers
+  are confirmed stopped." Its action is the link "Open Advance plasma to send Terminate"; on
+  `#/advance`, where the button is just below, it is a line of text instead: "Use Terminate in the
+  Advance plasma panel below." When the Advance plasma view itself failed to render (`viewFailed`),
+  that control is gone, so the header carries a Terminate of its own: "The Advance plasma panel
+  failed to render; Terminate from here." with a button that reads like the panel's, then the answer
+  as a status line, "Terminate confirmed: …" or "Terminate not confirmed: …". It sends the same
+  request and applies the same confirmation rule as the panel (`sendTerminate()`). The header's copy
+  is meant to be `compact`, which keeps every part and exists so that copy does not push a phone's
+  page below the fold (the full layout stood about 370px tall at 390px); see "Not yet in the app".
+* **Live panel** (`#/advance`): one full-size Alert per danger, worst first. The first carries the
+  Terminate button: "Terminate", "Retry terminate" after a failed stop, "Terminating… (send again)"
+  while a request is out. Besides the store's dangers it shows two that only this page knows:
+
+| Panel-only state | Indicator (panel) | Alert (panel) |
+|---|---|---|
+| A failed Terminate answer: a Terminate sent from this page was answered with anything but a confirmation (not a 2xx `ok: true`, or its reason names a termination marker or a requested stop, or no answer came). It shows even while the status poll does not carry a marker. | `<StatusPill status="billing-risk">TERMINATE FAILED</StatusPill>` (or the marker the answer names) when the store shows no danger, then the mode's pills that are not replay | `<Alert title="TERMINATE FAILED — GPUs may still be billing" reason={answer}>` (TERMINATION PENDING when the answer says so); with no answer, the reason ends "termination is unconfirmed." |
+| A launch request from this page got no usable answer (neither 202 nor 409) and the connection is not lost | the mode's pills; no billing-risk pill | `<Alert title="LAUNCH NOT CONFIRMED — a session may have started" reason={outcome}>`, with Terminate |
+
+**The replay player and "$0".** The replay panel on `#/advance` prints "Replay · $0" (and "at $0" in
+its subtitle) only while the mode pills show "Replay · $0". Whenever they do not (a danger, a
+panel-only Alert, a launch that may be running, a session that still lists workers, a status still
+being checked) its pill reads `<StatusPill status="replay">Replay</StatusPill>`: the replay itself
+costs nothing, but "$0" is never printed next to a bill that may be running.
+
+**One danger, one announcement.** The header's copy announces (`role="alert"`). A copy of the same
+danger in the live panel is meant to pass `announce={false}`: it is then drawn the same and keeps its
+name, as a labelled group, so a screen reader hears the danger once. The panel-only Alerts announce,
+because nothing else on the page carries them. What an announcing Alert announces is its title and
+reason. Its body and action stay inside it but sit in `aria-live="off"` sub-regions, so a change there
+(the Terminate button's label, a terminate answer) is not announced assertively again.
+
+**Not yet in the app.** Two parts of this contract are required of the frontend (`shell/`,
+`features/live-gx/`) and not drawn yet: the header's `ModeAlert` does not pass `compact`, and the
+live panel's copy of the header's danger does not pass `announce={false}`, so on `#/advance` a screen
+reader hears that danger twice. `designDoc.test.ts` reads both files: this section may call either
+part done only once the code does it.
 
 **Provenance never produces LIVE by itself.** Provenance `kind` maps to the status of the same name
 for `archive`, `derived`, `prd-reported` and `rehearsal`. Kind `live` is different: a record read
@@ -244,8 +294,10 @@ treatment, the prefix "Danger:"), used only for the danger rows above.
 * **One layout, one config.** Build every chart with `plotLayout(theme, overrides)` and
   `plotConfig()`. Overrides are merged into the themed layout, not swapped in: passing
   `xaxis: { title: { text } }` keeps the themed title font (12px, muted) and its 8px standoff, and
-  `margin: { r: 40 }` keeps the other three margins. Axes, `title`, `title.font`, `tickfont`, `font`,
-  `margin`, `legend`, `hoverlabel` and `modebar` merge key by key; everything else replaces.
+  `margin: { r: 40 }` keeps the other three margins. Axes, `font`, `margin`, `legend`, `hoverlabel`,
+  `title` and `modebar` merge key by key, and so does every font inside them: an axis's `title.font`
+  and `tickfont`, and the `font` of `title`, `legend` and `hoverlabel` (`legend: { font: { size: 10 } }`
+  keeps the themed colour and family). Everything else replaces.
   `seriesColorway(theme)` is the default trace order.
 * **Units in every axis title.** `axisTitle('Ion heat flux Q_i', 'Q_gB')` produces
   "Ion heat flux Q<sub>i</sub> (Q<sub>gB</sub>)". The unit is mandatory, and an empty unit throws.
@@ -284,6 +336,9 @@ treatment, the prefix "Danger:"), used only for the danger rows above.
   left (bottom on narrow charts), `x unified` hover on a raised surface, true minus signs (Plotly
   default), no Plotly logo, and SVG export. The modebar stays reachable from the keyboard, and its
   buttons take the themed focus ring (§10).
+* **Name a chart on its `<figure>`** (`aria-label`, or a `figcaption`), never with `role="img"` on the
+  element Plotly draws into: the children of an img are presentational, and Plotly puts the
+  focusable modebar buttons in there.
 * Title the chart in the Panel, not inside the plot.
 
 ## 7. 3D scene conventions (Three.js, `sceneTheme.ts`)
@@ -318,9 +373,9 @@ Import everything from `src/design` (`index.ts`).
 | `Panel` | Titled region (`section` with `aria-labelledby`) | Eyebrow is the view name. The title says what is shown. The subtitle gives the *how* in plain words. `status` holds the ProvenanceBadge, `actions` holds controls, and `footer` holds sources and captions. Use `density="compact"` in side columns. The body is an inline-size query container: lay content out with `@container`, never with a viewport `@media` width query, so a 450px card on a wide screen gets the narrow layout. |
 | `Stat` | A number with its unit, ±σ and window | `unit` is required. `decimals` must match a precision you can defend. `null` renders "— not available" and never 0. The accessible name reads the full sentence. Uncertainty uses the same decimals as the value. |
 | `StatusPill` | State label | Use one status per pill. Override the text only with a synonym ("Replay · $0", "TERMINATE FAILED"). Only use `live` when the API reports live, and `billing-risk` only for the danger rows of §5. |
-| `Alert` | Money at risk now: GPUs may still be billing | `role="alert"` with the billing-risk treatment (solid octagon icon, raspberry tint, solid outline, 4px leading bar) and a spoken "Danger:" before the `title`. `reason` is the backend's text, printed verbatim: never re-cased, shortened or paraphrased, and long tokens wrap. `children` say what to do; `action` holds the control that acts (Terminate, Retry, or a link to the page that has it). Use it only for the danger rows of §5; anything else is a `Callout`. |
+| `Alert` | Money at risk now: GPUs may still be billing | `role="alert"` with the billing-risk treatment (solid octagon icon, raspberry tint, solid outline, 4px leading bar) and a spoken "Danger:" before the `title`. `reason` is the backend's text, printed verbatim: never re-cased, shortened or paraphrased, and long tokens wrap. `children` say what to do; `action` holds the control that acts (Terminate, Retry, or a link to the page that has it). `announce={false}` for a second copy of a danger the page already announces: drawn the same, named the same, a group instead of a live region (§5). `compact` for the header's copy: tighter padding, a 16px icon and one type step down, with every part kept and the reason still whole. Use it only for the danger rows of §5; anything else is a `Callout`. |
 | `ProvenanceBadge` | Kind + verification outcome; expands to solver revision, units, coverage, runtime, verification and sources (sha256) | Put one on every result panel or table. Escape closes the card and returns focus to the badge. A click outside closes it and leaves focus where the click landed. `align="start"` applies when it sits on the left edge. Kind `live` shows the live pill only with the `live` prop (§5); without it the badge reads "Recorded run". Only an http(s) source is a link; any other (a repository file such as `PRD.md`) is named as text with its reference beside it. Units are typeset with `Unit`. |
-| `FixtureCheck` | PRD claim (a value or a range) vs computed value, with Δ and an outcome in glyph and words | A match requires both `matches === true` and the values: identical printed strings for a claimed value. Otherwise it is a mismatch, and any disagreement between the flag and the values is called out. **Ranges (D-023):** when the fixture has `claimedRange` (and `claimed` is null), the claimed column reads "PRD range" with lo–hi (never broken at its dash; only the unit may wrap) and the unit, and the check is lo ≤ computed ≤ hi, unrounded: "Inside PRD range" ✓ or "Outside PRD range" ✗. The computed value is printed with two more decimals than the PRD prints (more when needed, so it never lands on the other side of a bound), and Δ becomes "Δ to range": 0 inside, otherwise the signed distance to the nearer bound. No midpoint is ever shown or spoken, even when an old artifact still has one in `claimed`. `claimed` null without a range shows "—" and "No PRD value". Reading order, in the DOM and in both layouts, is name, claimed, computed, Δ, outcome, note. Stacked by default (name, then the three numbers in equal columns, then the outcome). Inside a query container at least 500px wide the outcome sits beside the numbers; at least 720px wide the check becomes one table row whose four data columns have fixed minimum widths, so stacked rows line up, and the name, the values and the outcome share a line. Only the note can collapse: a note longer than 160 characters shows two lines behind "Show full note". **Basis:** taken from the fixture's `basis` (D-023); the `basis` prop only overrides it. `arithmetic` marks a check that only redid the arithmetic on PRD-reported inputs: a match then reads "Arithmetic consistent" (or "Arithmetic in PRD range") with an = glyph, neutral colour and a dashed edge, never the green ✓ of a data-backed check. The basis never softens a mismatch. |
+| `FixtureCheck` | PRD claim (a value or a range) vs computed value, with Δ and an outcome in glyph and words | **Source:** the claim is PRD.md's unless the fixture's `claimSource` is "task" (only `tasks/<NN>/TASK.md` prints it). Then every word that names the source says TASK.md: the column reads "Claimed (TASK.md)" or "TASK.md range", the outcome "Inside TASK.md range", "Outside TASK.md range", "Arithmetic in TASK.md range" or "No TASK.md value", and the spoken range "TASK.md range lo to hi"; no call site needs to relabel it (`claimedLabel` still overrides the column label alone). A match requires both `matches === true` and the values: identical printed strings for a claimed value. Printed values round an exact tie to even, as Python's round() does when the producer sets `matches` (0.125 at two decimals is 0.12). Δ is the difference of the two printed values, so it reads 0 exactly when they match. Otherwise it is a mismatch, and any disagreement between the flag and the values is called out. **Ranges (D-023):** when the fixture has `claimedRange` (and `claimed` is null), the claimed column reads "PRD range" with lo–hi (never broken at its dash; only the unit may wrap) and the unit, and the check is lo ≤ computed ≤ hi, unrounded: "Inside PRD range" ✓ or "Outside PRD range" ✗. The computed value is printed with two more decimals than the PRD prints, more when needed so it never lands on the other side of a bound (−3.49e-16 against 0–1 reads "−0.0000000000000003", not "0.00"), up to the 100 places toFixed() prints; when even 100 places cannot separate it from a bound (only a bound at or near 0 allows that), it is every digit of its shortest round-trip form. It is always in fixed notation, never "e-16", and so is Δ. `printedDecimals` above 100 prints 100 places. Δ becomes "Δ to range": 0 inside, otherwise the signed distance to the nearer bound, never an unsigned zero. No midpoint is ever shown or spoken, even when an old artifact still has one in `claimed`. `claimed` null without a range shows "—" and "No PRD value". Reading order, in the DOM and in both layouts, is name, claimed, computed, Δ, outcome, note. Stacked by default (name, then the three numbers in equal columns, then the outcome). Inside a query container at least 500px wide the outcome sits beside the numbers; at least 720px wide the check becomes one table row whose four data columns have fixed minimum widths, so stacked rows line up, and the name, the values and the outcome share a line. Only the note can collapse: a note longer than 160 characters shows two lines behind "Show full note". **Basis:** taken from the fixture's `basis` (D-023). The `basis` prop can only make a check more cautious: it can mark a data fixture `arithmetic`, never turn an arithmetic fixture into a data-backed ✓. `arithmetic` marks a check that only redid the arithmetic on PRD-reported inputs: a match then reads "Arithmetic consistent" (or "Arithmetic in PRD range") with an = glyph, neutral colour and a dashed edge, never the green ✓ of a data-backed check. The basis never softens a mismatch. |
 | `SegmentedControl` | One choice among 2–5 peers (bean / triangular, window) | It is a radiogroup with one tab stop. ←→↑↓ move and select, Home/End jump, and disabled options are skipped. The track never clips: the focus ring sits 2px outside the segment, and a control wider than its container wraps. For more than 5 options, or for navigation, use tabs or a select instead. |
 | `Callout` | Inline info, warn or blocked explanation | `role="note"` (static, not an alert). A blocked callout always says what would unblock it (`action`). |
 | `Icon`, `Unit` | 16-grid stroke icons (`currentColor`, aria-hidden); unit subscripts (`Q_gB`, `a/v_{th,i}`) | Icons always sit next to text. Every icon name draws a different shape. |
@@ -331,7 +386,8 @@ Import everything from `src/design` (`index.ts`).
 |---|---|
 | `2.674 → "2.67"` next to `"2.68 (PRD)"` with `Δ −0.01  ✗ Mismatch` | Round the computed value up to match the claim, or hide the claim |
 | Show the reduced Modal run as `5.79 Q_gB` with the **PRD-reported** pill, beside 2.55/2.68 | Plot 5.79 as a trace, or style it like archive data |
-| Show the global "Replay · $0" indicator whenever the API is not `live` | Use red, a pulse or the word "live" for anything replayed or rehearsed |
+| Show "Replay · $0" only in the live-state rows of §5 that list it | Print "$0" beside a billing risk, a launch that may be running or a status still being checked |
+| Draw replayed and rehearsed data with the `replay` or `rehearsal` pill | Use red, a pulse or the word "live" for anything replayed or rehearsed |
 | Pass `live` to a ProvenanceBadge only from the live-status path | Decide LIVE from a provenance record's kind |
 | Show "GPUs may still be billing" with the billing-risk pill and an `Alert` that quotes the backend's reason | Improvise a red box, reuse the `failed` pill, or paraphrase or shorten the reason |
 | Show a PRD range as "PRD range 14–15 days" with Inside or Outside | Show or speak the range's midpoint as if the PRD printed it |
@@ -359,13 +415,25 @@ Enforced by tests unless a line says otherwise.
     band, the "unsampled" label on the gray block, also where the block lies over a band.
   * Control borders, the focus ring, the accent, chart lines, |B| stops, the LIVE fill on every
     surface, both dashed outlines, the billing-risk outline and the window edge are at least 3:1.
-  * A link in an `Alert` (accent text on the billing-risk tint) is at least 4.5:1.
+    The focus ring is also at least 3:1 on every status and callout tint.
+  * Links and hovered links are at least 4.5:1 on every surface and on the tints that hold
+    controls: the `Alert`, a mismatch row ("Show full note") and every callout.
   * Measured worst cases: text 4.81:1 (light) and 4.77:1 (dark); non-text 3.14:1 (light) and 3.10:1 (dark).
+* The pair list is checked against the stylesheet (`css.test.ts`): it reads every colour
+  `components.css` draws, in every state the rules combine, plus the focus ring around each control
+  and the links in an `__action` slot, and fails when a pair is missing from `contrastPairs.ts` or
+  held to a lower minimum than its kind needs. A colour is paired with the background its own rule
+  paints, else with that of an element its selector puts it inside, else with the component's tint.
+  A component with no background of its own (`Stat`, `ProvenanceBadge`) can sit on any panel, so
+  its colours are paired with every surface (`SURFACE_PROPERTIES`), the provenance card's
+  `surfaceRaised` among them.
 * Colour is never the only signal: no two statuses share a label or an icon, and the four fixture
   outcomes differ in words and glyph (`components.test.tsx`).
 * Colour literals: `noHardcodedColors.test.ts` scans all of `renderer/src` and `index.html` for hex,
-  functional and named colours. Only `tokens.ts`, `tokens.css`, test files and the one line in
-  `color.ts` that formats a token at an alpha are exempt, and each exemption is itself tested.
+  functional and named colours. In code, a named colour is caught as a whole string and anywhere in
+  a string that reads as a CSS value (a length, a line style, `inset` or a gradient, also in a
+  template literal). Only `tokens.ts`, `tokens.css`, test files and the one line in `color.ts` that
+  formats a token at an alpha are exempt, and each exemption is itself tested.
 * Keyboard: SegmentedControl follows the radiogroup pattern (all four arrows, Home, End),
   ProvenanceBadge is a disclosure with Escape, and focus is shown with `:focus-visible`.
 * Focus rings (`tokens.test.ts`, `css.test.ts`): 2px in `color.focus`. No rule in the design CSS
@@ -377,6 +445,10 @@ Enforced by tests unless a line says otherwise.
   and the fixture note toggle are at least 24px tall.
 * Names: Stat, FixtureCheck, ProvenanceBadge, Callout and Alert expose full spoken sentences,
   including the tone and outcome words.
+* Live regions: one danger is announced once. A second copy of an `Alert` on the same page takes
+  `announce={false}` (§5). Not enforced in the app yet: the live panel does not pass it (§5, "Not
+  yet in the app"). Within an announcing Alert only the title and reason are announced; changes to
+  its body and action are not (`aria-live="off"`, `components.test.tsx`).
 * Motion: `prefers-reduced-motion` is honoured globally (`tokens.css`).
 * Colour-blind safety: `palette.test.ts` (see §4).
 * Not covered by unit tests, because jsdom lays nothing out: that the container layouts, the

@@ -1,9 +1,21 @@
 // Advance plasma (task 06, L9–L10). Reads the shared live status (lib/liveStatus.ts, one poller for
 // the whole app). LIVE appears ONLY when the API reports mode "live" on a current, valid answer; every
-// other state plays saved evidence and says so. Launch needs a fresh idle snapshot + budget.slotFits +
-// an explicit confirmation of the exact slot cost, and locks after one POST. Terminate stays available
-// whenever a session may still be billing, and every unconfirmed termination is a loud alert.
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+// other state plays saved evidence and says so. Launch needs a fresh idle (or settled fallback) snapshot
+// + the budget guard's approval + an explicit confirmation of the exact slot cost, and locks after one
+// POST. Terminate stays available whenever a session may still be billing, and every unconfirmed
+// termination is a loud alert. The status, alerts and controls never depend on the evidence below them:
+// the worker list, the live chart and the replay each sit in their own error boundary (FE2-1).
+import {
+  Component,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ErrorInfo,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import {
   Alert,
   Callout,
@@ -18,19 +30,20 @@ import {
 } from '../../design';
 import { useArtifact, type ArtifactState } from '../../lib/artifacts';
 import {
+  REPLAY_PILL,
   fetchSavedRun,
   isLive,
   launchMayBeRunning,
   liveDanger,
   liveStatusStore,
   postLiveLaunch,
-  postLiveTerminate,
-  stopUnconfirmed,
+  sendTerminate,
   terminationProblem,
   useLiveStatus,
   type LiveState,
   type LiveStatus,
   type LiveWorker,
+  type TerminateAnswer,
 } from '../../lib/liveStatus';
 import { PlotlyChart } from '../transport/PlotlyChart';
 import type { TransportArtifact } from '../transport/types';
@@ -47,7 +60,9 @@ import {
   savedRunQualified,
   savedRunSeries,
   savedRunToFetch,
+  terminateAnswerExpired,
   trackClocks,
+  workersPill,
   type ClockTrack,
   type Clocks,
   type PlaySeries,
@@ -120,7 +135,8 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
   const [dialog, setDialog] = useState<Budget | null>(null); // the budget shown in the open confirmation
   const [dialogClosed, setDialogClosed] = useState<string | null>(null);
   const [launch, setLaunch] = useState<LaunchAttempt | null>(null);
-  const [terminate, setTerminate] = useState<{ ok: boolean; reason: string } | null>(null);
+  // The last Terminate answer, with the snapshot it was answered with (FE2-2: it expires against later ones).
+  const [terminate, setTerminate] = useState<TerminateAnswer | null>(null);
   const [terminating, setTerminating] = useState(0);
   const [clearedSinceLaunch, setClearedSinceLaunch] = useState(false);
   const posting = useRef(false);
@@ -134,11 +150,22 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
     }
   }, [live]);
 
-  const termFailed = terminate !== null && !terminate.ok;
+  // A Terminate answer is shown only until a later snapshot settles it, then forgotten.
+  const shownTerminate = terminate && !terminateAnswerExpired(terminate, live) ? terminate : null;
+  useEffect(() => {
+    if (terminate && terminateAnswerExpired(terminate, live)) setTerminate(null);
+  }, [terminate, live]);
+
+  const termFailed = shownTerminate !== null && !shownTerminate.confirmed;
   // A failed Terminate answered to this page is a danger state even before the status poll says so.
-  const localProblem = termFailed
-    ? (terminationProblem(terminate.reason) ?? { marker: 'TERMINATE FAILED' as const, title: 'TERMINATE FAILED — GPUs may still be billing', reason: terminate.reason })
-    : null;
+  const localProblem =
+    shownTerminate && !shownTerminate.confirmed
+      ? (terminationProblem(shownTerminate.reason) ?? {
+          marker: 'TERMINATE FAILED' as const,
+          title: 'TERMINATE FAILED — GPUs may still be billing',
+          reason: shownTerminate.reason,
+        })
+      : null;
   const statusProblem = terminationProblem(live);
   const problem = localProblem ?? statusProblem;
   const danger = liveDanger(live);
@@ -147,8 +174,11 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
 
   // The launch lock lives in the shared store (FA-4): a launch that may have started a session keeps Terminate available.
   const launchUnconfirmed = launchMayBeRunning(live) && !clearedSinceLaunch;
-  const launchEnabled = canLaunch(live, Date.now()) && launch?.outcome !== 'pending';
+  const launchWhy = launchBlockedReason(live, Date.now(), termFailed);
+  const launchEnabled = launchWhy === null && launch?.outcome !== 'pending';
   const terminateEnabled = canTerminate(live, { terminateFailed: termFailed, launchUnconfirmed });
+  // "$0" appears in the replay only where the mode pills show it (never while GPUs may be billing).
+  const zeroCost = mv.pills.some((p) => p.status === REPLAY_PILL.status && p.text === REPLAY_PILL.text);
 
   // Every "GPUs may still be billing" state, worst first. The first alert carries the Terminate control.
   const alerts: DangerAlert[] = [];
@@ -188,17 +218,17 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
   // The open confirmation is valid only while launching is still allowed at the cost it shows.
   useEffect(() => {
     if (!dialog) return;
-    const blocked = launchBlockedReason(live, Date.now());
+    const blocked = launchBlockedReason(live, Date.now(), termFailed);
     const cost = live.status === 'ready' ? live.data.budget.slotEstimateUsd : null;
     if (blocked) closeDialog(blocked);
     else if (cost !== null && cost !== dialog.slotEstimateUsd) {
       closeDialog(`the slot estimate changed from ${usdExact(dialog.slotEstimateUsd)} to ${usdExact(cost)}; open the confirmation again to see the new cost.`);
     }
-  }, [live, dialog]);
+  }, [live, dialog, termFailed]);
 
   const openDialog = () => {
     const now = liveStatusStore.getState();
-    if (now.status !== 'ready' || !canLaunch(now, Date.now())) return;
+    if (now.status !== 'ready' || !canLaunch(now, Date.now(), termFailed)) return;
     setDialogClosed(null);
     setDialog(now.data.budget);
   };
@@ -206,7 +236,7 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
   const doLaunch = async (cost: number) => {
     if (posting.current) return; // a second click in the same frame
     const now = liveStatusStore.getState();
-    const blocked = launchBlockedReason(now, Date.now());
+    const blocked = launchBlockedReason(now, Date.now(), termFailed);
     if (blocked || now.status !== 'ready' || now.data.budget.slotEstimateUsd !== cost) {
       closeDialog(blocked ?? 'the slot estimate changed; open the confirmation again to see the new cost.');
       return;
@@ -215,6 +245,8 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
     liveStatusStore.lockLaunch(); // before the request leaves: no second POST while it is in flight
     setDialog(null);
     setDialogClosed(null);
+    // FE2-2: an earlier Terminate answer describes the session before this launch, never the one it starts.
+    setTerminate(null);
     setClearedSinceLaunch(false);
     setLaunch({ outcome: 'pending', text: '' });
     try {
@@ -235,13 +267,10 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
   const doTerminate = async () => {
     setTerminating((n) => n + 1);
     try {
-      const r = await postLiveTerminate();
-      // FA-2: a stop is confirmed only by a 2xx ok:true whose words do not say otherwise (a kill-switch-only or
-      // requested stop is never "terminated", modal_backend.py:28-33, orchestrator.py:60-62).
-      const confirmed = r.ok && terminationProblem(r.reason) === null && !stopUnconfirmed(r.reason);
-      setTerminate({ ok: confirmed, reason: r.httpStatus === null ? `${r.reason}; termination is unconfirmed.` : r.reason });
-      if (confirmed) setClearedSinceLaunch(true);
-      if (!r.status || !liveStatusStore.apply(r.status)) void liveStatusStore.refresh();
+      // FA-2 confirmation rule and the status the answer carries: lib/liveStatus.ts sendTerminate().
+      const answer = await sendTerminate(liveStatusStore);
+      setTerminate(answer);
+      if (answer.confirmed) setClearedSinceLaunch(true);
     } finally {
       setTerminating((n) => n - 1);
     }
@@ -319,7 +348,7 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
           {alerts.length === 0 && terminateButton}
           {!launchEnabled && launch?.outcome !== 'pending' && (
             <span id="lg-launch-why" className="lg-why">
-              Launch disabled: {launchBlockedReason(live, Date.now())}
+              Launch disabled: {launchWhy}
             </span>
           )}
         </div>
@@ -339,23 +368,64 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
             Launch outcome unknown ({launch.text}); the status received since reports mode "{live.data.mode}".
           </p>
         )}
-        {terminate?.ok && (
+        {shownTerminate?.confirmed && (
           <p className="lg-msg" role="status" data-ok="true">
-            Terminate confirmed: {terminate.reason}
+            Terminate confirmed: {shownTerminate.reason}
           </p>
         )}
         {dialog && <ConfirmLaunch budget={dialog} onCancel={() => closeDialog(null)} onConfirm={doLaunch} />}
       </Panel>
 
-      {data && data.workers.length > 0 && <Workers status={data} live={isLiveNow} clocks={clocks} />}
+      {/* FE2-1: everything below reads evidence; a failure there must never take the controls above with it. */}
+      {data && data.workers.length > 0 && (
+        <SectionBoundary what="the worker list" resetKey={data}>
+          <Workers status={data} live={isLiveNow} clocks={clocks} />
+        </SectionBoundary>
+      )}
 
       {isLiveNow && data ? (
-        <LiveChart workers={data.workers} />
+        <SectionBoundary what="the live chart" resetKey={data.workers}>
+          <LiveChart workers={data.workers} />
+        </SectionBoundary>
       ) : (
-        <ReplayPanel live={live} saved={saved} transport={transport} autoPlay={autoPlay} billing={alerts.length > 0} />
+        <SectionBoundary what="the replay" resetKey={`${transport.status}|${saved.status}`}>
+          <ReplayPanel live={live} saved={saved} transport={transport} autoPlay={autoPlay} billing={!zeroCost} />
+        </SectionBoundary>
       )}
     </div>
   );
+}
+
+/**
+ * FE2-1: an error boundary around one evidence section of the view. Its failure is named in place; the
+ * status, the alerts and Terminate above it are rendered outside it and stay up. Tries again when
+ * `resetKey` changes (new data for the section).
+ */
+class SectionBoundary extends Component<{ what: string; resetKey?: unknown; children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.warn(`[labyrinth] Advance plasma: ${this.props.what} failed to render`, error, info.componentStack);
+  }
+
+  componentDidUpdate(prev: { resetKey?: unknown }) {
+    if (this.state.error && prev.resetKey !== this.props.resetKey) this.setState({ error: null });
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    const what = this.props.what;
+    return (
+      <Callout tone="warn" title={`${what.charAt(0).toUpperCase()}${what.slice(1)} could not be displayed`}>
+        <p className="lab-mono lg-broken__message">{this.state.error.message}</p>
+        <p>The status, the alerts and Terminate above are not affected.</p>
+      </Callout>
+    );
+  }
 }
 
 function BudgetLine({ live }: { live: LiveState }) {
@@ -363,12 +433,13 @@ function BudgetLine({ live }: { live: LiveState }) {
     return <p className="lg-budget">Budget guard: not reachable — no slot estimate available.</p>;
   }
   const b = live.data.budget;
+  // cross-RX-5: slotFits is the guard's approval (reconciled ledger, usable values, under the ceiling), not a ceiling fit.
   return (
     <p className="lg-budget lab-num" data-testid="budget-line">
       Budget guard: billed {usd(b.billedUsd)} + pending {usd(b.pendingUsd)} of the {usd(b.ceilingUsd)} ceiling · next slot{' '}
       {usdExact(b.slotEstimateUsd)} (incl. setup, idle and storage)
       {b.hardTimeoutS !== undefined ? ` · hard timeout ${b.hardTimeoutS} s` : ''} ·{' '}
-      <strong>{b.slotFits ? 'slot fits' : 'slot does NOT fit'}</strong>
+      <strong>{b.slotFits ? 'next slot approved by the budget guard' : 'next slot refused by the budget guard'}</strong>
     </p>
   );
 }
@@ -434,12 +505,13 @@ function ConfirmLaunch({ budget: b, onCancel, onConfirm }: { budget: Budget; onC
 function Workers({ status, live, clocks }: { status: LiveStatus; live: boolean; clocks: Clocks }) {
   const workers = [...status.workers].sort((a, b) => a.gpuIndex - b.gpuIndex);
   const overlap = overlapClaim(workers, live);
+  const pill = workersPill(status, live);
   return (
     <Panel
       eyebrow="Advance plasma"
       title={live ? 'Workers (live)' : `Workers (${status.mode}, not live)`}
       subtitle="Device IDs as reported by each worker; sim clocks and samples in archive units after conversion."
-      status={live ? <StatusPill status="live">LIVE</StatusPill> : <StatusPill status={status.mode === 'fallback' ? 'failed' : 'replay'}>{status.mode}</StatusPill>}
+      status={<StatusPill status={pill.status}>{pill.text}</StatusPill>}
       headingLevel={3}
     >
       <div className="lg-workers">
@@ -546,6 +618,38 @@ function LiveChart({ workers }: { workers: LiveWorker[] }) {
   );
 }
 
+const isNumberList = (v: unknown): v is number[] => Array.isArray(v) && v.every((x) => typeof x === 'number');
+
+/**
+ * FE2-1: the archived bean traces to replay, or what is wrong with the file. The loader checks schemaVersion
+ * only; a body such as {"schemaVersion":1} must name its problem here instead of throwing in a render.
+ */
+function archiveTraces(data: TransportArtifact): { series: PlaySeries[] } | { problem: string } {
+  const traces: unknown = (data as { traces?: unknown }).traces;
+  if (!Array.isArray(traces)) return { problem: '"traces" is not a list' };
+  const series: PlaySeries[] = [];
+  for (const [i, raw] of traces.entries()) {
+    if (typeof raw !== 'object' || raw === null) return { problem: `traces[${i}] is not an object` };
+    const t = raw as Record<string, unknown>;
+    if (t.tube !== 'bean' || (t.code !== 'stella' && t.code !== 'GENE')) continue;
+    if (typeof t.id !== 'string' || !isNumberList(t.t) || !isNumberList(t.Q) || t.t.length !== t.Q.length) {
+      return { problem: `traces[${i}] (${t.code} bean) needs an id and number lists t and Q of equal length` };
+    }
+    series.push({ id: t.id, name: `${t.code} bean (archive)`, seriesId: t.code, t: t.t, Q: t.Q });
+  }
+  return { series };
+}
+
+/** cross-RX-11: why the archive plays instead of a GX run, from what is known about the saved run. */
+function noGxRunBecause(live: LiveState, saved: SavedRunState): string {
+  if (saved.status === 'error') return `saved run ${saved.id} could not be loaded`;
+  if (saved.status === 'ready') return `saved run ${saved.id} did not pass every check`; // a qualified one plays instead
+  if (saved.status === 'loading') return `saved run ${saved.id} is still loading`;
+  if (live.status !== 'ready') return 'the live API names no saved run';
+  const id = live.data.fallback.savedRunId;
+  return id === null ? 'no qualified GX rehearsal is recorded' : `saved run ${id} is named, but the API does not report the service as qualified`;
+}
+
 function ReplayPanel({
   live,
   saved,
@@ -557,15 +661,13 @@ function ReplayPanel({
   saved: SavedRunState;
   transport: ArtifactState<TransportArtifact>;
   autoPlay?: boolean;
-  /** GPUs may still be billing: the replay costs nothing, but "$0" is not shown beside a billing risk (DESIGN.md §5). */
+  /**
+   * GPUs may be billing: the mode pills do not show "Replay · $0" (a danger, a launch that may be running, a
+   * listed session). The replay costs nothing, but "$0" is not shown beside that (DESIGN.md §5).
+   */
   billing: boolean;
 }) {
-  const archiveSeries: PlaySeries[] = useMemo(() => {
-    if (transport.status !== 'ready') return [];
-    return transport.data.traces
-      .filter((t) => t.tube === 'bean' && (t.code === 'stella' || t.code === 'GENE'))
-      .map((t) => ({ id: t.id, name: `${t.code} bean (archive)`, seriesId: t.code as 'stella' | 'GENE', t: t.t, Q: t.Q }));
-  }, [transport]);
+  const archive = useMemo(() => (transport.status === 'ready' ? archiveTraces(transport.data) : null), [transport]);
 
   if (saved.status === 'ready' && savedRunQualified(saved.run)) {
     const series = savedRunSeries(saved.run);
@@ -582,19 +684,16 @@ function ReplayPanel({
     );
   }
 
+  const because = noGxRunBecause(live, saved);
   const label =
     live.status === 'ready' && live.data.fallback.label
       ? `archived stella/GENE evidence (${live.data.fallback.label})`
-      : 'archived stella/GENE evidence (no qualified GX rehearsal recorded)';
+      : `archived stella/GENE evidence (${because})`;
   return (
     <Panel
       eyebrow="Advance plasma"
       title="Replay: archived stella and GENE bean traces"
-      subtitle={
-        billing
-          ? 'Saved evidence played back. No GX run is shown because none is live and no qualified rehearsal is recorded.'
-          : 'Saved evidence played back at $0. No GX run is shown because none is live and no qualified rehearsal is recorded.'
-      }
+      subtitle={`${billing ? 'Saved evidence played back.' : 'Saved evidence played back at $0.'} No GX run is shown: none is live, and ${because}.`}
       status={<StatusPill status="replay">{billing ? 'Replay' : 'Replay · $0'}</StatusPill>}
       headingLevel={3}
     >
@@ -609,8 +708,12 @@ function ReplayPanel({
           verified (D-018).
         </Callout>
       )}
-      {transport.status === 'ready' ? (
-        <Playback kind="replay" label={label} series={archiveSeries} autoPlay={autoPlay} />
+      {archive && 'problem' in archive ? (
+        <Callout tone="warn" title="artifacts/transport.json has an unexpected shape — no archived evidence to replay">
+          <p className="lab-mono lg-broken__message">{archive.problem}</p>
+        </Callout>
+      ) : archive ? (
+        <Playback kind="replay" label={label} series={archive.series} autoPlay={autoPlay} />
       ) : transport.status === 'error' ? (
         <Callout tone="warn" title={`${transport.file} failed to load`}>
           {transport.message}

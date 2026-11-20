@@ -17,13 +17,16 @@ import {
   provenanceStatus,
 } from '../../design';
 import { useArtifact } from '../../lib/artifacts';
+import { useLiveStatus } from '../../lib/liveStatus';
 import {
   INITIAL,
   advance,
   mismatchedScores,
   nextAction,
   parseSampleAndHold,
+  replayPillText,
   runningMae,
+  sampleAndHoldMatchesPrd,
   scoredCount,
   visibility,
   type ForecastArtifact,
@@ -36,8 +39,14 @@ const TIME_UNIT = 'a/v_{th,i}';
 const MEAN_DP = 3;
 const ERR_DP = 4;
 
-export function ForecastView() {
+export interface ForecastViewProps {
+  /** Poll interval for /api/live/status (ms): the replay pill drops "$0" whenever the header does. */
+  livePollMs?: number;
+}
+
+export function ForecastView({ livePollMs = 5000 }: ForecastViewProps = {}) {
   const state = useArtifact<ForecastArtifact>('forecast');
+  const replay = replayPillText(useLiveStatus(livePollMs));
   if (state.status === 'loading') {
     return (
       <Panel eyebrow="Forecast replay" title="Loading forecast replay…">
@@ -57,7 +66,7 @@ export function ForecastView() {
   return (
     <div className="fc-view">
       <FinalScores a={state.data} />
-      {state.data.steps.length > 0 ? <Replay a={state.data} /> : <NoSteps a={state.data} />}
+      {state.data.steps.length > 0 ? <Replay a={state.data} replay={replay} /> : <NoSteps a={state.data} replay={replay} />}
     </div>
   );
 }
@@ -118,7 +127,22 @@ function FinalScores({ a }: { a: ForecastArtifact }) {
         ))}
       </div>
       {mismatched.length > 0 &&
-        (sah ? (
+        (sah && !sampleAndHoldMatchesPrd(sah, a) ? (
+          <Callout tone="warn" title="The PRD scores do not reproduce with the stated method">
+            A time-weighted sample-and-hold window mean gives persistence{' '}
+            <span className="lab-num">
+              {sah.persistence[0]} → {sah.persistence[1]}
+            </span>{' '}
+            and frozen{' '}
+            <span className="lab-num">
+              {sah.frozen[0]} → {sah.frozen[1]}
+            </span>
+            , which does not match the PRD's printed{' '}
+            <span className="lab-num">{claimText(a, 'mae-persistence')}</span> and{' '}
+            <span className="lab-num">{claimText(a, 'mae-frozen')}</span> either. One window-mean definition is kept
+            everywhere (D-013, D-016), so {affected} rather than tuned to the claim.
+          </Callout>
+        ) : sah ? (
           <Callout tone="warn" title="The PRD scores reproduce only under a different window-mean definition">
             A time-weighted sample-and-hold window mean gives persistence{' '}
             <span className="lab-num">
@@ -149,8 +173,14 @@ function FinalScores({ a }: { a: ForecastArtifact }) {
   );
 }
 
+/** A score's PRD claim as printed ("0.0423"), or "—" when the artifact carries none. */
+function claimText(a: ForecastArtifact, id: string): string {
+  const f = a.fixtures.find((x) => x.id === id);
+  return f && f.claimed !== null ? formatNumber(f.claimed, f.printedDecimals) : '—';
+}
+
 /** `steps: []` is schema-valid: say so instead of indexing into nothing. */
-function NoSteps({ a }: { a: ForecastArtifact }) {
+function NoSteps({ a, replay }: { a: ForecastArtifact; replay: string }) {
   return (
     <Panel
       eyebrow="Forecast replay"
@@ -158,7 +188,7 @@ function NoSteps({ a }: { a: ForecastArtifact }) {
       subtitle={`Initialised on ${formatWindow(a.initWindow)}. Replayed archive data, not live.`}
       status={
         <div className="fc-badges">
-          <StatusPill status="replay">Replay · $0</StatusPill>
+          <StatusPill status="replay">{replay}</StatusPill>
           <ProvenanceBadge provenance={a.provenance} subject="forecast replay" />
         </div>
       }
@@ -172,7 +202,7 @@ function NoSteps({ a }: { a: ForecastArtifact }) {
   );
 }
 
-function Replay({ a }: { a: ForecastArtifact }) {
+function Replay({ a, replay }: { a: ForecastArtifact; replay: string }) {
   const [s, setS] = useState<ReplayState>(INITIAL);
   const primaryRef = useRef<HTMLButtonElement>(null);
   const n = a.steps.length;
@@ -213,7 +243,8 @@ function Replay({ a }: { a: ForecastArtifact }) {
       subtitle={`Initialised on ${formatWindow(a.initWindow)}; ${n} windows from ${formatWindow([first.window[0], last.window[1]])}. Replayed archive data, not live.`}
       status={
         <div className="fc-badges">
-          <StatusPill status="replay">Replay · $0</StatusPill>
+          {/* "Replay · $0" only while the header shows it: never "$0" beside a bill that may be running. */}
+          <StatusPill status="replay">{replay}</StatusPill>
           <ProvenanceBadge provenance={a.provenance} subject="forecast replay" />
         </div>
       }

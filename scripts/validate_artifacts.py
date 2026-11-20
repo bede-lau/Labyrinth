@@ -3,7 +3,9 @@
 
   validate_artifacts.py               the files under artifacts/ are exactly manifest.json plus the
                                       artifacts it lists (recursive: no extra file, no subdirectory,
-                                      nothing that is not .json), every sha256 matches the manifest and
+                                      nothing that is not .json), the manifest lists every artifact id
+                                      of contracts/manifest.schema.json exactly once as <id>.json with
+                                      schema <id>.schema.json, every sha256 matches the manifest and
                                       every file validates against its schema in contracts/
   validate_artifacts.py --check-fresh rebuild the artifacts into a temp dir and require the same file
                                       set and byte equality
@@ -81,6 +83,15 @@ def registry(errors: list[str]):
     return Registry().with_resources(resources)
 
 
+def known_ids(manifest_schema) -> list[str]:
+    """The artifact ids contracts/manifest.schema.json allows, in its order ([] when the enum is missing)."""
+    try:
+        ids = manifest_schema["properties"]["artifacts"]["items"]["properties"]["id"]["enum"]
+    except (KeyError, TypeError):
+        return []
+    return [i for i in ids if isinstance(i, str)] if isinstance(ids, list) else []
+
+
 def validate(art_dir: Path) -> list[str]:
     from jsonschema import Draft202012Validator
 
@@ -95,10 +106,23 @@ def validate(art_dir: Path) -> list[str]:
     for e in Draft202012Validator(schema, registry=reg).iter_errors(manifest):
         errors.append(f"{MANIFEST}: {e.json_path}: {e.message[:300]}")
     entries = manifest.get("artifacts", []) if isinstance(manifest, dict) else []
+    entries = [e for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
+    # The manifest does not get to choose what is checked (review finding RV-G15): every artifact id the
+    # contract knows is listed exactly once, as <id>.json validated against contracts/<id>.schema.json.
+    ids = known_ids(schema)
+    if not ids:
+        errors.append("contracts/manifest.schema.json: no artifact id enum ($.properties.artifacts.items.properties.id.enum)")
+    for i in ids:
+        n = sum(1 for e in entries if e.get("id") == i)
+        if n != 1:
+            errors.append(f"{MANIFEST}: artifact id {i!r} is listed {n} times; every artifact is listed exactly once")
     listed: set[str] = set()
-    for entry in entries if isinstance(entries, list) else []:
-        if not isinstance(entry, dict) or not all(isinstance(entry.get(k), str) for k in ("path", "schema", "sha256")):
+    for entry in entries:
+        if not all(isinstance(entry.get(k), str) for k in ("id", "path", "schema", "sha256")):
             continue  # already reported by the manifest schema
+        if (entry["path"], entry["schema"]) != (f"{entry['id']}.json", f"{entry['id']}.schema.json"):
+            errors.append(f"{MANIFEST}: artifact {entry['id']!r} must be {entry['id']}.json validated against "
+                          f"{entry['id']}.schema.json, not {entry['path']!r} against {entry['schema']!r}")
         name = entry["path"]
         if not ARTIFACT_NAME.match(name) or name == MANIFEST:
             errors.append(f"{MANIFEST}: artifact path {name!r} must be a plain <name>.json file name inside artifacts/")

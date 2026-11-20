@@ -44,6 +44,13 @@ export function App({ pollMs = 2000 }: AppProps) {
   const shownRoute = useRef(route);
   const [announcement, setAnnouncement] = useState('');
   const [fade, setFade] = useState<FadeEdges>('none');
+  // FE2-1: the route whose view failed to render (its boundary is keyed by route, so a new visit starts clean).
+  const [failedRoute, setFailedRoute] = useState<RouteId | null>(null);
+  const [visited, setVisited] = useState(route);
+  if (visited !== route) {
+    setVisited(route);
+    setFailedRoute(null);
+  }
 
   useEffect(() => {
     document.title = `${def.label} · Labyrinth`;
@@ -110,7 +117,7 @@ export function App({ pollMs = 2000 }: AppProps) {
           <ThemeSwitch />
         </div>
         <HeaderBoundary what="live-session alert" resetKey={live}>
-          <ModeAlert state={live} route={route} />
+          <ModeAlert state={live} route={route} viewFailed={failedRoute === route} />
         </HeaderBoundary>
       </header>
       <nav ref={navRef} className="shell-nav" aria-label="Views">
@@ -131,7 +138,7 @@ export function App({ pollMs = 2000 }: AppProps) {
         {announcement}
       </div>
       <main ref={mainRef} id="main" className="shell-main" tabIndex={-1} aria-label={def.label}>
-        <ViewErrorBoundary key={route} view={def.label} files={def.files}>
+        <ViewErrorBoundary key={route} view={def.label} files={def.files} onError={() => setFailedRoute(route)}>
           <View />
         </ViewErrorBoundary>
       </main>

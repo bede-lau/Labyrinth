@@ -4,12 +4,15 @@
 // same behaviour is checked in a real browser during design review (see DESIGN.md §10).
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
-import { declared, parseCss, rulesFor, splitTopLevel, type CssRule } from './cssRules';
+import { NON_TEXT_MIN, SURFACE_PROPERTIES, TEXT_MIN, contrastPairs } from './contrastPairs';
+import { declared, drawnColorPairs, parseCss, rulesFor, splitTopLevel, type CssRule, type DrawnPair } from './cssRules';
+import { THEMES, themeCssVars } from './tokens';
 
 const DESIGN = resolve(import.meta.dirname);
 const read = (rel: string) => readFileSync(resolve(DESIGN, rel), 'utf8');
 const components = parseCss(read('components/components.css'));
 const gallery = parseCss(read('gallery.css'));
+const base = parseCss(read('tokens.css'));
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -169,6 +172,24 @@ describe('DL-1: the billing-risk pill and the Alert', () => {
   });
 });
 
+describe('SEED-design-1: the compact Alert (the app header at phone widths)', () => {
+  const at = (sel: string, prop: string) => declared(components, sel, prop);
+  test('it only tightens: smaller padding, gaps and type steps, the same tokens and outline', () => {
+    expect(at('.lab-alert--compact', 'padding')).toBe('var(--lab-space-2) var(--lab-space-3) var(--lab-space-2) var(--lab-space-2)');
+    expect(at('.lab-alert--compact', 'column-gap')).toBe('var(--lab-space-2)');
+    expect(at('.lab-alert--compact .lab-alert__title', 'font-size')).toBe('var(--lab-font-size-sm)');
+    expect(at('.lab-alert--compact .lab-alert__reason', 'font-size')).toBe('var(--lab-font-size-xs)');
+    expect(at('.lab-alert--compact .lab-alert__body', 'font-size')).toBe('var(--lab-font-size-xs)');
+    // no compact rule changes a colour, the outline, or hides anything
+    const compact = components.filter((r) => r.selectors.some((s) => s.includes('.lab-alert--compact')));
+    expect(compact.length).toBeGreaterThan(2);
+    for (const r of compact) {
+      const props = Object.keys(r.decl);
+      expect(props.filter((p) => /color|background|border|outline|display|visibility|overflow|clamp|transform/.test(p)), r.selectors.join()).toEqual([]);
+    }
+  });
+});
+
 describe('DL-5: a PRD range is one unbreakable token', () => {
   // Seen at 390 px: "3100–3200 USD" broke after the dash ("3100–" / "3200 USD"). Only the unit may wrap.
   test('.lab-fixture__range never wraps; the unit outside it still can', () => {
@@ -223,6 +244,101 @@ describe('CSS-level opacity cannot dim text below the contrast the tokens guaran
       .filter((r) => 'opacity' in r.decl || /opacity\(/.test(r.decl.filter ?? ''))
       .filter((r) => !r.selectors.every((s) => ALLOWED.has(s)));
     expect(offenders.map((r) => `${r.selectors.join(', ')} { opacity: ${r.decl.opacity} }`)).toEqual([]);
+  });
+});
+
+// design-r1-R4: the contrast gate measures a hand-written pair list. These tests read the pairs off
+// components.css instead and require each one in that list, at the minimum its kind needs, so a
+// colour drawn on a tint the list never pairs it with fails here (mutation MUT-A).
+describe('every colour pair components.css draws is in the contrast gate', () => {
+  /** The drawn pairs that contrastPairs() does not hold to the right minimum, in a theme. */
+  function ungated(drawn: readonly DrawnPair[], theme: (typeof THEMES)[number]): string[] {
+    const vars = themeCssVars(theme);
+    const pairs = contrastPairs(theme);
+    return drawn
+      .filter((d) => {
+        const fg = vars[d.fg];
+        const bg = vars[d.bg];
+        const min = d.kind === 'text' ? TEXT_MIN : NON_TEXT_MIN;
+        return !pairs.some((p) => p.min >= min && ((p.fg === fg && p.bg === bg) || (p.fg === bg && p.bg === fg)));
+      })
+      .map((d) => `${d.where}: ${d.fg} on ${d.bg} (${d.kind})`);
+  }
+  const surfaces = Object.values(SURFACE_PROPERTIES);
+  const pairsOf = (css: string) => drawnColorPairs(parseCss(css), base, surfaces);
+  const drawn = drawnColorPairs(components, base, surfaces);
+  const has = (where: RegExp, fg: string, bg: string, pairs: readonly DrawnPair[] = drawn) =>
+    pairs.some((d) => where.test(d.where) && d.fg === fg && d.bg === bg);
+
+  test('the reader sees the tinted components, their states, their slots and their controls', () => {
+    const blocks = new Set(drawn.map((d) => /^lab-[a-z]+/.exec(d.where)?.[0]));
+    for (const b of ['lab-alert', 'lab-callout', 'lab-fixture', 'lab-pill', 'lab-seg', 'lab-panel']) expect(blocks, b).toContain(b);
+    expect(has(/^lab-fixture\[data-outcome=mismatch\]/, '--lab-color-accent-text', '--lab-status-mismatch-bg'), 'Show full note on a mismatch row').toBe(true);
+    expect(has(/^lab-fixture\[data-outcome=mismatch\]/, '--lab-status-mismatch-bg', '--lab-status-mismatch-fg'), 'the ✗ disc').toBe(true);
+    expect(has(/^lab-alert/, '--lab-color-focus', '--lab-status-billing-risk-bg'), 'the ring in the alert slot').toBe(true);
+    expect(has(/^lab-callout--warn/, '--lab-color-accent-hover', '--lab-callout-warn-bg'), 'a hovered link in a warn callout').toBe(true);
+    expect(has(/^lab-pill\[data-status=live\]/, '--lab-status-live-fg', '--lab-status-live-bg'), 'the live pill').toBe(true);
+    // a state the rules do not combine is not invented: no passed green on the mismatch tint
+    expect(has(/./, '--lab-status-passed-fg', '--lab-status-mismatch-bg')).toBe(false);
+  });
+  test.each(THEMES)('%s: every drawn pair is gated', (theme) => {
+    expect(ungated(drawn, theme)).toEqual([]);
+  });
+  test('negative control (MUT-A): note text in a non-text token fails', () => {
+    const mutated = parseCss(`${read('components/components.css')}\n.lab-fixture__note { color: var(--lab-color-border-strong); }\n`);
+    expect(ungated(drawnColorPairs(mutated, base, surfaces), 'light')).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^lab-fixture.* \.lab-fixture__note: --lab-color-border-strong on --lab-color-surface \(text\)$/)]),
+    );
+  });
+  test('negative control: a link slot on a tint the list never pairs with links fails', () => {
+    const mutated = parseCss(`${read('components/components.css')}\n.lab-callout--x { --co-bg: var(--lab-status-rehearsal-bg); }\n`);
+    expect(ungated(drawnColorPairs(mutated, base, surfaces), 'light')).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^lab-callout--x .*__action \(a link in the slot\): --lab-color-accent-text on --lab-status-rehearsal-bg/)]),
+    );
+  });
+
+  // design-r2-R4: the reader skipped every block whose root paints no background, so a colour drawn in
+  // Stat or ProvenanceBadge (whose card sits on surfaceRaised) was gated by the hand-written list alone.
+  // Such a block can sit on any panel: each of its colours is paired with every surface, unless its
+  // rule (or an element its selector puts it inside) paints a background of its own.
+  test('a primitive with no background of its own is paired with every surface, its controls too', () => {
+    const blocks = new Set(drawn.map((d) => /^lab-[a-z]+/.exec(d.where)?.[0]));
+    for (const b of ['lab-stat', 'lab-prov']) expect(blocks, b).toContain(b);
+    for (const s of surfaces) {
+      expect(has(/^lab-stat .*\.lab-stat__unit$/, '--lab-color-text-muted', s), `Stat unit on ${s}`).toBe(true);
+      expect(has(/^lab-prov .*\.lab-prov__outcome\[data-status='passed'\]$/, '--lab-status-passed-fg', s), `Verified on ${s}`).toBe(true);
+      // A rule whose subject is a bare element inside a block element (`.lab-prov__list dt`) is read too.
+      expect(has(/^lab-prov .*\.lab-prov__list dt$/, '--lab-color-text-subtle', s), `provenance term on ${s}`).toBe(true);
+      expect(has(/^lab-prov .*\.lab-prov__toggle \(focus ring\)$/, '--lab-color-focus', s), `badge focus ring on ${s}`).toBe(true);
+    }
+  });
+  test('an element that paints a background is the ground for its own colour and for what the selector puts inside it', () => {
+    const pairs = pairsOf(`
+      .lab-q { display: flex; }
+      .lab-q__card { background: var(--lab-status-rehearsal-bg); color: var(--lab-status-rehearsal-fg); }
+      .lab-q__card:hover { background: var(--lab-color-surface-hover); }
+      .lab-q__card .lab-q__t { color: var(--lab-status-passed-fg); }
+      .lab-q__u { color: var(--lab-color-text); }
+    `);
+    const fgOn = (where: RegExp, fg: string) => pairs.filter((d) => where.test(d.where) && d.fg === fg).map((d) => d.bg);
+    expect(fgOn(/\.lab-q__card$/, '--lab-status-rehearsal-fg')).toEqual(['--lab-status-rehearsal-bg']);
+    // Inside the card by its selector: on the card's own fill (not the hover fill, not every surface).
+    expect(fgOn(/\.lab-q__card \.lab-q__t$/, '--lab-status-passed-fg')).toEqual(['--lab-status-rehearsal-bg']);
+    // Nothing places .lab-q__u: it can sit on any surface.
+    expect(fgOn(/\.lab-q__u$/, '--lab-color-text').sort()).toEqual([...surfaces].sort());
+  });
+  // The mutations the round-2 review ran in a probe copy; each passed every test before this reader.
+  test.each([
+    ['MUT-B1', '.lab-stat__unit { color: var(--lab-color-border-strong); }', /^lab-stat .*\.lab-stat__unit: --lab-color-border-strong on --lab-color-surface \(text\)$/],
+    ['MUT-B2', '.lab-prov__hash { color: var(--lab-color-border-strong); }', /^lab-prov .*\.lab-prov__hash: --lab-color-border-strong on --lab-color-surface-raised \(text\)$/],
+    [
+      'MUT-B4',
+      ".lab-prov__outcome[data-status='passed'] { color: var(--lab-status-live-fg); }",
+      /^lab-prov .*\.lab-prov__outcome\[data-status='passed'\]: --lab-status-live-fg on --lab-color-surface-raised \(text\)$/,
+    ],
+  ])('negative control (%s): %s fails', (_id, rule, message) => {
+    const mutated = parseCss(`${read('components/components.css')}\n${rule}\n`);
+    expect(ungated(drawnColorPairs(mutated, base, surfaces), 'light')).toEqual(expect.arrayContaining([expect.stringMatching(message)]));
   });
 });
 

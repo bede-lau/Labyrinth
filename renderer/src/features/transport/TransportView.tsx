@@ -28,6 +28,7 @@ import {
   buildTransportFigure,
   claimSummary,
   discrepancy,
+  gapSentence,
   lateComparison,
   liveGxSamples,
   parseWindowDetail,
@@ -273,7 +274,7 @@ function TransportBody({ a, gx }: { a: TransportArtifact; gx: ReturnType<typeof 
         <Panel
           eyebrow="Discrepancy"
           title={`Reduced Modal stella run vs archives, ${formatWindow(disc.window)}`}
-          subtitle="A PRD-reported number beside recomputed archive means. Not a trace; not recomputable here."
+          subtitle={`${reduced.label} figure beside recomputed archive means. Not a trace; not recomputable here.`}
           status={<ProvenanceBadge provenance={a.reducedModalRun.provenance} subject="reduced Modal stella run" />}
           headingLevel={3}
         >
@@ -322,8 +323,8 @@ function TransportBody({ a, gx }: { a: TransportArtifact; gx: ReturnType<typeof 
             tone="warn"
             title={`Reduced run is ${disc.rows.map((r) => `${r.ratioText} the ${r.code}`).join(' and ')} archive mean`}
           >
-            The gap is far larger than the reported archive sampling uncertainties, but {formatNumber(disc.value, 2)} has
-            no trace or uncertainty in this repo, so its cause (resolution, setup or transient) cannot be checked here.
+            <span data-testid="gap-sentence">{gapSentence(disc)}</span> {formatNumber(disc.value, 2)} has no trace or
+            uncertainty in this repo, so the cause of any gap (resolution, setup or transient) cannot be checked here.
           </Callout>
         </Panel>
 
@@ -375,10 +376,11 @@ function TransportBody({ a, gx }: { a: TransportArtifact; gx: ReturnType<typeof 
           )
         }
       >
-        {claims.allowed === 0 ? (
+        {claims.allowed === 0 && claims.nEffLimited ? (
           <Callout tone="warn" title="Saturated agreement claim: not allowed for any archive window">
             A claim needs a covered, stationary window with finite sampling uncertainty and at least 20 effective
-            samples (N<sub>eff</sub> ≥ 20, D-017). The archive's autocorrelation time leaves every window below that
+            samples (N<sub>eff</sub> ≥ 20, D-017). The archive's autocorrelation time leaves every covered window below
+            that
             {claims.nEffMin !== null && claims.nEffMax !== null && (
               <>
                 {' '}
@@ -387,6 +389,20 @@ function TransportBody({ a, gx }: { a: TransportArtifact; gx: ReturnType<typeof 
             )}
             , so means are reported but agreement is not claimed.
             <ReasonOnce claims={claims} />
+          </Callout>
+        ) : claims.allowed === 0 ? (
+          // Not every covered window is short of effective samples: the reasons are the rows' own (FF-2).
+          <Callout tone="warn" title="Saturated agreement claim: not allowed for any archive window">
+            A claim needs a covered, stationary window with finite sampling uncertainty and at least 20 effective
+            samples (N<sub>eff</sub> ≥ 20, D-017). No archive window meets it, so means are reported but agreement is
+            not claimed. Reasons recorded:
+            <ul className="tr-reasons" data-testid="claim-reasons">
+              {claims.reasons.map((r) => (
+                <li key={r.reason}>
+                  <Unit unit={r.reason} /> ({r.count} of {claims.total} windows)
+                </li>
+              ))}
+            </ul>
           </Callout>
         ) : (
           <Callout tone="info" title={`Saturated agreement claim allowed for ${claims.allowed} of ${claims.total} windows`}>

@@ -50,6 +50,16 @@ describe('the pairs that carry the fix round are in the list', () => {
       'outlined billing-risk border vs its own tint',
       'outlined billing-risk border vs surfaceHover',
       'accentText on status billing-risk bg',
+      // design-r1-R4: drawn but not gated before — the ring and hovered links on the tints that hold
+      // controls, and the "Show full note" link on a mismatch row.
+      'focus ring on status billing-risk bg',
+      'focus ring on status mismatch bg',
+      'focus ring on callout warn',
+      'accentText on status mismatch bg',
+      'accentHover on status mismatch bg',
+      'accentHover on status billing-risk bg',
+      'accentHover on callout blocked',
+      'accentHover on surface',
     ])
       expect(names, n).toContain(n);
     expect(new Set(names).size, 'pair names are unique').toBe(names.length);

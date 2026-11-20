@@ -571,15 +571,111 @@ test('A2 L9 mode pills: LIVE only for mode live; danger leads and removes "Repla
   }
   const label = (l: string, savedRunId: string | null = null, qualified = true) =>
     snapshot('fallback', { qualified, fallback: { active: true, label: l, savedRunId } });
-  expect(fallbackCause(label('Worker failed — playing saved GX run r1', 'r1'))).toBe('Worker failed');
+  const r1 = 'rehearsal-0123456789ab';
+  expect(fallbackCause(label(`Worker failed — playing saved GX run ${r1}`, r1))).toBe('Worker failed');
   expect(fallbackCause(label('Hard timeout reached. No qualified GX rehearsal recorded — showing archived stella/GENE evidence'))).toBe('Hard timeout reached');
   expect(fallbackCause(label(''))).toBe('Fallback');
   expect(fallbackCause(label('x'.repeat(41)))).toBe('Fallback');
-  // "Playing saved run" needs a run id, a qualified service and a well-formed id.
-  expect(playableSavedRunId(label('Worker failed — playing saved GX run r1', 'r1'))).toBe('r1');
+  // "Playing saved run" needs a run id, a qualified service and a well-formed id (SEED-fe-live-1: the server's own pattern).
+  expect(playableSavedRunId(label(`Worker failed — playing saved GX run ${r1}`, r1))).toBe(r1);
   expect(playableSavedRunId(label('Worker failed.', null))).toBeNull();
-  expect(playableSavedRunId(label('Worker failed — playing saved GX run r1', 'r1', false))).toBeNull();
-  expect(playableSavedRunId(label('Worker failed — playing saved GX run r 1', 'r 1'))).toBeNull();
+  expect(playableSavedRunId(label(`Worker failed — playing saved GX run ${r1}`, r1, false))).toBeNull();
+  for (const id of ['r 1', 'r1', 'run-1', 'rehearsal-0123456789AB']) {
+    expect(playableSavedRunId(label(`Worker failed — playing saved GX run ${id}`, id)), id).toBeNull();
+  }
+});
+
+/* ---- FE2-3: no "Replay · $0" while a launch from this page or a listed session may be billing ---------- */
+
+test('FE2-3 modePills: a launch in flight, accepted or unknown, or an idle snapshot listing workers, never reads "Replay · $0"', () => {
+  const text = (s: LiveState) => modePills(s).map((p) => `${p.status}:${p.text}`);
+  const idle = snapshot('idle');
+  const ready = (data: LiveStatus, extra: Partial<LiveState> = {}): LiveState => ({ status: 'ready', data, ...extra }) as LiveState;
+  const pending = { gpuIndex: 0 as const, deviceId: '', tube: 'bean' as const, state: 'pending' as const, simTime: null, samples: [] };
+  // The state before: plain replay.
+  expect(text(ready(idle))).toEqual(['replay:Replay · $0']);
+  // A launch POST from this page that may have started a session (FA-4 phases).
+  expect(text(ready(idle, { launchLocked: true, launchPhase: 'sent' }))).toEqual(['rehearsal:Launching…']);
+  expect(text(ready(idle, { launchLocked: true, launchPhase: 'accepted' }))).toEqual(['rehearsal:Launching…']);
+  expect(text(ready(idle, { launchLocked: true, launchPhase: 'unknown' }))).toEqual(['replay:Checking status…']);
+  // A refusal launched nothing: replay at $0 again.
+  expect(text(ready(idle, { launchLocked: true, launchPhase: 'refused' }))).toEqual(['replay:Replay · $0']);
+  // The 202 answer's own snapshot: a new session, still mode "idle", lists its pending workers.
+  expect(text(ready(snapshot('idle', { workers: [pending, { ...pending, gpuIndex: 1, tube: 'triangular' }] })))).toEqual(['rehearsal:Launching…']);
+  // Other modes that still list workers (the session thread has not finished): not known to be $0.
+  for (const mode of ['terminated', 'unavailable'] as const) {
+    expect(text(ready(snapshot(mode, { workers: [pending] }))), mode).toEqual(['replay:Checking status…']);
+  }
+  // A launch sent from a settled fallback (cross-RX-4): the cause stays, "Replay · $0" goes.
+  const fb = snapshot('fallback', { fallback: { active: true, label: 'Worker failed. No qualified GX rehearsal recorded — showing archived stella/GENE evidence', savedRunId: null } });
+  expect(text(ready(fb))).toEqual(['failed:Worker failed', 'replay:Replay · $0']);
+  expect(text(ready(fb, { launchLocked: true, launchPhase: 'sent' }))).toEqual(['failed:Worker failed', 'rehearsal:Launching…']);
+  // Nothing of this kind anywhere: no pill text with "$0" while sessionMayBeBilling or launchMayBeRunning holds.
+  for (const s of [ready(idle, { launchPhase: 'sent' }), ready(idle, { launchPhase: 'accepted' }), ready(idle, { launchPhase: 'unknown' }), ready(snapshot('idle', { workers: [pending] }))]) {
+    expect(modePills(s).some((p) => p.text.includes('$0'))).toBe(false);
+  }
+});
+
+/* ---- FE2-4: the store's epoch guard ------------------------------------------------------------------- */
+
+test('FE2-4 a request from before a reset neither applies its answer nor clears the in-flight flag of the new epoch', async () => {
+  const waiting: ((r: Response) => void)[] = [];
+  const slow = (() => new Promise<Response>((resolve) => waiting.push(resolve))) as unknown as typeof fetch;
+  const store = createLiveStatusStore({ fetchImpl: slow, backoff: false });
+  const stopA = store.subscribe(() => {}, 2000); // request 1 (timeout 1500 ms), held
+  await advance(0);
+  expect(waiting).toHaveLength(1);
+  stopA(); // the last subscriber leaves: reset (e.g. StrictMode's dev double mount)
+  const stopB = store.subscribe(() => {}, 2000); // request 2, held
+  await advance(0);
+  expect(waiting).toHaveLength(2);
+  const stopFast = store.subscribe(() => {}, 400); // ticks every 400 ms from now on, while request 2 is open
+  waiting[0]!(json(snapshot('live'))); // request 1 answers late
+  await advance(0);
+  expect(store.getState()).toEqual({ status: 'connecting' }); // its answer is not applied
+  await advance(400); // one tick: request 2 is still open, so nothing else may be sent
+  expect(waiting).toHaveLength(2);
+  await advance(400);
+  expect(waiting).toHaveLength(2);
+  // Request 2's answer is the one applied.
+  waiting[1]!(json(snapshot('idle')));
+  await advance(0);
+  expect(store.getState()).toMatchObject({ status: 'ready', data: { mode: 'idle' } });
+  stopFast();
+  stopB();
+});
+
+/* ---- cross-RX-4: a launch from a settled fallback keeps its lock ------------------------------------------ */
+
+test('cross-RX-4 a launch locked from a fallback snapshot is not released by fallback snapshots that may predate it, only after the answer', async () => {
+  const fb = snapshot('fallback', { reason: 'GPU 1 (triangular) worker failed: CUDA error. Other worker terminated.', fallback: { active: true, label: 'Worker failed. No qualified GX rehearsal recorded — showing archived stella/GENE evidence', savedRunId: null } });
+  const b = backend(() => json(fb));
+  const store = createLiveStatusStore({ fetchImpl: b.fetch });
+  const stop = store.subscribe(() => {}, 2000);
+  await advance(0);
+  store.lockLaunch();
+  // While the POST is on its way the backend may still report the old fallback (the session is not replaced yet).
+  await store.refresh();
+  expect(store.getState()).toMatchObject({ status: 'ready', data: { mode: 'fallback' }, launchLocked: true, launchPhase: 'sent' });
+  store.launchAnswered('accepted');
+  // 202: the new session reads idle with its workers, then launching.
+  const pending = { gpuIndex: 0 as const, deviceId: '', tube: 'bean' as const, state: 'pending' as const, simTime: null, samples: [] };
+  b.next = () => json(snapshot('idle', { workers: [pending] }));
+  await store.refresh();
+  expect(store.getState()).toMatchObject({ launchLocked: true, launchPhase: 'accepted' });
+  b.next = () => json(snapshot('launching'));
+  await store.refresh();
+  expect(store.getState().launchLocked).toBeUndefined();
+
+  // A snapshot requested after a 202 is the new session's: its own fallback releases the lock.
+  b.next = () => json(fb);
+  await store.refresh();
+  store.lockLaunch();
+  store.launchAnswered('accepted');
+  await store.refresh();
+  expect(store.getState()).toMatchObject({ data: { mode: 'fallback' } });
+  expect(store.getState().launchLocked).toBeUndefined();
+  stop();
 });
 
 /* ---- /api/live/* calls (FE-8) ----------------------------------------------------------------- */
@@ -640,5 +736,10 @@ test('L9 fetchSavedRun validates the id, the HTTP status and the shape of the ru
   await expect(fetchSavedRun(run.savedRunId, serve({ ok: false }, 404))).rejects.toThrow(/HTTP 404/);
   await expect(fetchSavedRun(run.savedRunId, serve({ savedRunId: run.savedRunId, initVerified: true }))).rejects.toThrow(/bad payload.*continuationVerified/);
   await expect(fetchSavedRun(run.savedRunId, serve({ ...run, phases: [{ schemaVersion: 1, mode: 'live' }] }))).rejects.toThrow(/bad payload.*phases\[0\]/);
-  await expect(fetchSavedRun(run.savedRunId, serve({ ...run, savedRunId: 'another-run' }))).rejects.toThrow(/answered with run another-run/);
+  await expect(fetchSavedRun(run.savedRunId, serve({ ...run, savedRunId: 'rehearsal-aaaaaaaaaaaa' }))).rejects.toThrow(/answered with run rehearsal-aaaaaaaaaaaa/);
+  // SEED-fe-live-1: an id the server can never answer for is not requested at all (the old pattern let these through).
+  for (const id of ['abc', 'run-1', 'rehearsal-0123456789AB', 'live-0123456789ab\n']) {
+    await expect(fetchSavedRun(id, serve(run)), id).rejects.toThrow(/not valid/);
+  }
+  expect(urls).toHaveLength(5);
 });

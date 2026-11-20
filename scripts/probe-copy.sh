@@ -10,8 +10,11 @@
 # renderer/node_modules in the copy is a real directory holding one symlink per package, so
 # `npm ci` or `rm -rf node_modules` inside a copy removes links, never the shared packages.
 #
-# Safety (review finding SC-10): the destination may not overlap the repo in either direction,
-# and an existing destination is only replaced when it carries this script's marker file.
+# Safety (review findings SC-10, RV-G19): the destination may not overlap the repo in either direction,
+# and an existing destination is only replaced when it carries this script's marker file. Overlap is
+# decided before anything is created, by identity (`-ef` on every existing ancestor) and by spelling
+# without regard to letter case (the /mnt/c and /mnt/d DrvFs mounts are case-insensitive; on a
+# case-sensitive disk this only adds a refusal).
 #
 # Exit codes: 0 ok, 2 bad invocation, unsafe destination or copy failure.
 set -uo pipefail
@@ -21,12 +24,24 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)" || fail "cannot resol
 if [[ $# -ne 1 || ! "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
   fail "expected exactly one name matching [A-Za-z0-9][A-Za-z0-9_-]*"
 fi
+[[ -n "${LABYRINTH_PROBE_DIR:-}" || -n "${HOME:-}" ]] || fail "HOME is not set: set HOME or LABYRINTH_PROBE_DIR"
 BASE="${LABYRINTH_PROBE_DIR:-$HOME/.cache/labyrinth-probes}"
-mkdir -p "$BASE" || fail "cannot create $BASE"
-BASE="$(cd "$BASE" && pwd -P)" || fail "cannot resolve $BASE"
+BASE="$(realpath -m -- "$BASE")" || fail "cannot resolve $BASE"
 DEST="$BASE/$1"
-case "$DEST/" in "$ROOT"/*) fail "refusing: destination $DEST is the repo or inside it";; esac
-case "$ROOT/" in "$DEST"/*) fail "refusing: the repo is inside destination $DEST";; esac
+# within A B: A is B or lies inside it - same spelling in any letter case, or B is A or one of A's existing ancestors.
+within() {
+  local a="${1,,}/" b="${2,,}/" p="$1"
+  [[ "$a" == "$b"* ]] && return 0
+  while [[ -n "$p" ]]; do
+    [[ -e "$p" && "$p" -ef "$2" ]] && return 0
+    [[ "$p" == "/" ]] && return 1
+    p="$(dirname -- "$p")"
+  done
+  return 1
+}
+within "$DEST" "$ROOT" && fail "refusing: destination $DEST is the repo or inside it"
+within "$ROOT" "$DEST" && fail "refusing: the repo is inside destination $DEST"
+mkdir -p -- "$BASE" || fail "cannot create $BASE"
 if [[ -L "$DEST" ]]; then fail "refusing: $DEST is a symlink"; fi
 if [[ -e "$DEST" ]]; then
   [[ -f "$DEST/$MARKER" ]] || fail "refusing: $DEST exists and was not created by probe-copy.sh (no $MARKER)"

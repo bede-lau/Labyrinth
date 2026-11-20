@@ -11,6 +11,8 @@ The API is served by its own thread and the main thread only waits for a stop si
 /api/live/status keep answering during the whole shutdown — a termination that is not confirmed stays visible
 as TERMINATE FAILED / TERMINATION PENDING until the process exits. If the stop is not confirmed, the reason
 is printed BEFORE anything is waited for, and the exit code is 2 with "NOT confirmed terminated — check Modal".
+A confirmed stop exits 0 saying what it stopped, from the worker records: "workers terminated." (both GPUs were
+launched and cancelled), "GPU 0 (bean) terminated; GPU 1 (triangular) never launched." or "no worker was launched."
 Output never breaks that exit path: a closed pipe or a dead terminal (hangup) is silenced, not raised, and the
 exit code stays the termination's verdict.
 """
@@ -89,7 +91,8 @@ def main(argv: list[str] | None = None, *, service: LiveService | None = None, r
         else:
             confirmed = srv.service.shutdown(_warn_unconfirmed)
         srv.server_close()
-        stopped = "workers terminated." if srv.service.launched_any else "no worker was launched."
+        # worded from the worker records: "workers terminated." only when both GPUs were launched (and cancelled)
+        stopped = f"{srv.service.stopped}." if srv.service.launched_any else "no worker was launched."
         _say("Labyrinth API stopped; " + (stopped if confirmed else "workers NOT confirmed terminated — check Modal."))
         if restore_signals:
             for s, old in previous.items():

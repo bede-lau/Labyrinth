@@ -8,7 +8,8 @@
   POST /api/live/terminate    always allowed -> 200 when every worker's termination is confirmed (a cancel
                               succeeded), 502 {"ok": false, "reason": "TERMINATE FAILED ..." | "TERMINATION
                               PENDING ..."} otherwise (retry it). A kill-switch-only stop is a 502.
-  GET  /api/live/runs/<id>    a saved, verified rehearsal run (strict id; from the state dir) or 404
+  GET  /api/live/runs/<id>    a saved, verified rehearsal run (strict id; from the state dir) or 404; POST on a
+                              strict id is a 405 `Allow: GET`, on any other id a 404
   GET  /artifacts/<file>      files under artifacts/ only (resolved path must stay inside; else 404)
 
 Binds 127.0.0.1 only. Requests whose Host/Origin is not loopback get 403 (DNS-rebinding / CSRF guard),
@@ -159,8 +160,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self._origin_ok():
             return self._error(403, "non-loopback Host/Origin refused")
         path = self._path()
-        if path in GET_ROUTES or path.startswith("/artifacts/"):
-            return self._error(405, "use GET", {"Allow": "GET"})
+        if path in GET_ROUTES or path.startswith("/artifacts/") or RUN_PATH.match(path):
+            return self._error(405, "use GET", {"Allow": "GET"})  # a saved-run id the GET route serves: 405 too
         if path not in POST_ROUTES:
             return self._error(404, "not found")
         svc = self.server.service

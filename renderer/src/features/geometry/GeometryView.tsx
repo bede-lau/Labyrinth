@@ -17,7 +17,7 @@ import { ArtifactGate } from '../../shell/ArtifactGate';
 import { ColorBar } from './ColorBar';
 import { CrossSectionInset } from './CrossSectionInset';
 import { FluxScene } from './FluxScene';
-import { bmagChartSpec, buildSceneModel, tracerPassed, tubeById, tubeMarkers } from './model';
+import { bmagChartSpec, buildSceneModel, isWebUrl, tracerPassed, tubeById, tubeMarkers } from './model';
 import { PlotlyChart } from './PlotlyChart';
 import { checkGeometry, type GeometryArtifact, type TubeId } from './types';
 import { ValidationPanel } from './ValidationPanel';
@@ -94,9 +94,17 @@ export function GeometryContent({ g }: { g: GeometryArtifact }) {
         footer={
           <>
             Equilibrium:{' '}
-            <a href={g.equilibrium.source.url} target="_blank" rel="noreferrer noopener">
-              {g.equilibrium.source.label}
-            </a>{' '}
+            {/* A link only for a web address (as ValidationPanel's SourceRef): a repository path is named, never
+                linked, since a relative href would open the app shell. */}
+            {isWebUrl(g.equilibrium.source.url) ? (
+              <a href={g.equilibrium.source.url} target="_blank" rel="noreferrer noopener">
+                {g.equilibrium.source.label}
+              </a>
+            ) : (
+              <span data-testid="equilibrium-source">
+                {g.equilibrium.source.label} <span className="lab-mono">{g.equilibrium.source.url}</span>
+              </span>
+            )}{' '}
             <span className="lab-mono" title={`sha256 ${g.equilibrium.source.sha256}`}>
               sha256 {g.equilibrium.source.sha256.slice(0, 10)}…
             </span>

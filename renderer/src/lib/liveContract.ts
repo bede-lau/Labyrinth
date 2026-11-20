@@ -48,17 +48,27 @@ export interface SavedRun {
 }
 
 export const LIVE_MODES: readonly LiveMode[] = ['unavailable', 'idle', 'launching', 'live', 'fallback', 'terminated'];
-export const SAVED_RUN_ID = /^[A-Za-z0-9_.-]{1,80}$/;
+/**
+ * A saved run id exactly as the server serves it: main/labyrinth_main/features/live_gx/service.py RUN_ID and
+ * server/app.py RUN_PATH. Checked on `fallback.savedRunId` and on the run itself; no other id is ever requested.
+ */
+export const SAVED_RUN_ID = /^(rehearsal|live)-[0-9a-f]{12}$/;
 
 /* ---- tiny schema checker ------------------------------------------------------------------- */
 type Check = (value: unknown, path: string) => string | null;
 
-const describe = (v: unknown) => (v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v);
+const describe = (v: unknown) =>
+  v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v === 'number' && !Number.isInteger(v) ? String(v) : typeof v;
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 const str: Check = (v, p) => (typeof v === 'string' ? null : `${p}: expected a string, got ${describe(v)}`);
 const bool: Check = (v, p) => (typeof v === 'boolean' ? null : `${p}: expected a boolean, got ${describe(v)}`);
-const num: Check = (v, p) => (typeof v === 'number' && Number.isFinite(v) ? null : `${p}: expected a number, got ${describe(v)}`);
+/**
+ * Finite numbers only, deliberately stricter than the schemas: JSON Schema's "number" (and "integer") has no
+ * notion of finiteness, so ajv accepts 1e400, which JSON.parse turns into Infinity. The backend never emits it
+ * (json.dumps(..., allow_nan=False)); a body that carries it is rejected here. liveContract.test.ts pins this.
+ */
+const num: Check = (v, p) => (typeof v === 'number' && Number.isFinite(v) ? null : `${p}: expected a finite number, got ${describe(v)}`);
 const int: Check = (v, p) => (typeof v === 'number' && Number.isInteger(v) ? null : `${p}: expected an integer, got ${describe(v)}`);
 const nullable =
   (inner: Check): Check =>
@@ -138,7 +148,7 @@ const liveStatus = object(
       ),
       { max: 2 },
     ),
-    fallback: object({ active: bool, label: str, savedRunId: nullable(str) }),
+    fallback: object({ active: bool, label: str, savedRunId: nullable(matching(SAVED_RUN_ID)) }),
   },
   { qualified: bool, provenance },
 );

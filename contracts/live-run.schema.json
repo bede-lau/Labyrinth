@@ -6,7 +6,7 @@
   "required": ["savedRunId", "initVerified", "continuationVerified", "checks", "phases"],
   "additionalProperties": false,
   "properties": {
-    "savedRunId": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,80}$" },
+    "savedRunId": { "type": "string", "pattern": "^(rehearsal|live)-[0-9a-f]{12}$" },
     "initVerified": { "type": "boolean" },
     "continuationVerified": { "type": "boolean" },
     "checks": {

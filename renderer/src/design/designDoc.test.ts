@@ -280,6 +280,142 @@ describe('§5 status table: one row per status, with the icon and text the code 
   });
 });
 
+// SEED-design-1, design-r2-R1: §5 is the contract for what the store, the header and the live panel
+// draw, so it is checked against that code (read as text: lib/liveStatus.ts, shell/ModeIndicator.tsx,
+// features/live-gx/LiveView.tsx; the design system never imports from them). The checks look for the
+// words both sides print, not for how the code is laid out: a refactor that keeps the words passes, a
+// change of words fails.
+describe('§5 names what the store, the header and the live panel actually draw', () => {
+  // Prose wraps, and so does JSX text: compare with every run of white space as one space.
+  const flat = (t: string) => t.replace(/\s+/g, ' ');
+  const s = () => flat(section(/^## 5\. Status semantics/));
+  const src = (p: string) => readFileSync(resolve(RENDERER, 'src', p), 'utf8');
+  const store = src('lib/liveStatus.ts');
+  const header = src('shell/ModeIndicator.tsx');
+  const panel = src('features/live-gx/LiveView.tsx');
+  const found = (re: RegExp, text: string, what: string) => {
+    const m = re.exec(text)?.[1];
+    if (!m) throw new Error(`could not read ${what} from the source`);
+    return m;
+  };
+  const quoted = (text: string) => [...text.matchAll(/['"]([^'"]+)['"]/g)].map((m) => m[1] as string);
+  const literal = (w: string) => new RegExp(`['"\`]${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"\`]`);
+  const table = () => tableIn(/^## 5\. Status semantics/, 'Live state');
+  const rowOf = (name: string) => table().rows.find((r) => codes(r[0]).includes(name))?.join(' | ') ?? '';
+  /** The props written on each `<Alert …>` opening tag of a source (the `>` of an arrow `=>` does not end it). */
+  const alertProps = (text: string) => [...text.matchAll(/<Alert\b((?:=>|[^>])*)>/g)].map((m) => flat(m[1] as string));
+  const passes = (props: string, prop: string) => new RegExp(`(^|\\s)${prop}(?=[\\s=]|$)`).test(props.trim());
+
+  test('the readers themselves', () => {
+    expect(alertProps('<Alert compact title={t} action={() => go()}>x</Alert> <AlertBox a> <Alert\n  announce={i > 0}\n>')).toEqual([
+      ' compact title={t} action={() => go()}',
+      ' announce={i ',
+    ]);
+    expect(passes(' compact title={t}', 'compact')).toBe(true);
+    expect(passes(' className="compact-ish" title={t}', 'compact')).toBe(false);
+    expect(passes(' announce={false}', 'announce')).toBe(true);
+    expect(literal('Replay · $0').test("text: 'Replay · $0' }")).toBe(true);
+    expect(literal('Replay').test("'Replay · $0'")).toBe(false);
+  });
+
+  test('the danger pills and titles are the store’s', () => {
+    expect(s()).not.toMatch(/not in the store/);
+    const billing = found(/const BILLING = ['"]([^'"]+)['"]/, store, 'BILLING');
+    const markers = quoted(found(/TERMINATION_MARKERS = \[([^\]]+)\]/, store, 'the markers'));
+    expect(markers).toEqual(['TERMINATE FAILED', 'TERMINATION PENDING']);
+    const pills = [...store.matchAll(/\bpill: ['"]([^'"]+)['"]/g)].map((m) => m[1] as string);
+    expect(pills).toEqual(['Stop not confirmed', 'Connection lost']);
+    for (const p of [...markers, ...pills]) expect(s(), p).toContain(`<StatusPill status="billing-risk">${p}</StatusPill>`);
+    for (const m of markers) expect(s(), m).toContain(`${m} — ${billing}`);
+    // The requested stop is matched anywhere in the reason, in any mode.
+    const stop = found(/export const STOP_REQUESTED = ['"]([^'"]+)['"]/, store, 'STOP_REQUESTED');
+    expect(rowOf('stop-unconfirmed')).toContain(stop);
+    expect(rowOf('stop-unconfirmed')).not.toMatch(/starts with|mode `launching` or `live` and/);
+  });
+
+  // FE2-3: "$0" is printed only while nothing this app knows of may be billing. A launch sent from this
+  // page, or a snapshot that still lists workers, puts "Launching…" or "Checking status…" in its place.
+  test('"Replay · $0" and the pills that stand in for it are the store’s, and every launch phase is mapped', () => {
+    for (const w of ['Replay · $0', 'Checking status…', 'Launching…', 'Playing saved run', 'LIVE · GPU 0 / GPU 1']) {
+      expect(store, `lib/liveStatus.ts prints ${w}`).toMatch(literal(w));
+      expect(s(), `§5 shows ${w}`).toContain(`">${w}</StatusPill>`);
+    }
+    const phases = quoted(found(/export type LaunchPhase = ([^;]+);/, store, 'LaunchPhase'));
+    expect(phases).toEqual(['sent', 'accepted', 'refused', 'unknown']);
+    for (const p of phases) expect(rowOf(p), `the live-state table names launchPhase ${p}`).not.toBe('');
+    expect(rowOf('sent')).toContain('<StatusPill status="rehearsal">Launching…</StatusPill>');
+    expect(rowOf('accepted')).toContain('<StatusPill status="rehearsal">Launching…</StatusPill>');
+    expect(rowOf('unknown')).toContain('<StatusPill status="replay">Checking status…</StatusPill>');
+    expect(rowOf('refused')).toContain('<StatusPill status="replay">Replay · $0</StatusPill>');
+    // A clean idle / unavailable / terminated snapshot keeps "$0" only with no workers listed.
+    expect(rowOf('idle')).toMatch(/no workers listed/);
+  });
+
+  test('the header’s words, and its own Terminate when the panel failed to render (`viewFailed`)', () => {
+    for (const w of [
+      'Check the Modal dashboard until both workers are confirmed stopped.',
+      'Open Advance plasma to send Terminate',
+      'Use Terminate in the Advance plasma panel below.',
+      'The Advance plasma panel failed to render; Terminate from here.',
+      'Terminate confirmed:',
+      'Terminate not confirmed:',
+    ]) {
+      expect(flat(header), `ModeIndicator.tsx prints ${w}`).toContain(w);
+      expect(s(), `§5 quotes ${w}`).toContain(w);
+    }
+    expect(header).toMatch(/\bviewFailed\b/);
+    expect(s()).toContain('(`viewFailed`)');
+    // The Terminate control reads the same in the header and in the panel.
+    for (const w of ['Retry terminate', 'Terminating… (send again)']) {
+      expect(header, `ModeIndicator.tsx: ${w}`).toMatch(literal(w));
+      expect(panel, `LiveView.tsx: ${w}`).toMatch(literal(w));
+      expect(s(), w).toContain(`"${w}"`);
+    }
+  });
+
+  test('the live panel’s own Alerts, and "$0" in its replay only beside "Replay · $0"', () => {
+    const launch = 'LAUNCH NOT CONFIRMED — a session may have started';
+    expect(panel).toMatch(literal(launch));
+    expect(s()).toContain(launch);
+    expect(s()).toMatch(/failed Terminate|Terminate answer/);
+    // LiveView reads the store's REPLAY_PILL off the mode pills and prints a bare "Replay" otherwise.
+    expect(panel).toMatch(/\bREPLAY_PILL\b/);
+    expect(panel).toMatch(literal('Replay'));
+    expect(s()).toContain('<StatusPill status="replay">Replay</StatusPill>');
+    expect(s()).toMatch(/only while the mode pills show "Replay · \$0"/);
+  });
+
+  // design-r2-R1: §5 said the header passes `compact` and the panel's copy passes `announce={false}`
+  // while neither did. It may call either done only once the code does it.
+  test('`compact` (header) and `announce={false}` (panel) are called done only when the code passes them', () => {
+    const pending = /\*\*Not yet in the app\.\*\*(.*?)(?:\*\*|$)/.exec(s())?.[1] ?? '';
+    const headerAlerts = alertProps(header);
+    const panelAlerts = alertProps(panel);
+    expect(headerAlerts.length, 'ModeIndicator.tsx draws an Alert').toBeGreaterThan(0);
+    expect(panelAlerts.length, 'LiveView.tsx draws an Alert').toBeGreaterThan(0);
+    const headerCompact = headerAlerts.some((p) => passes(p, 'compact'));
+    const panelQuiet = panelAlerts.some((p) => passes(p, 'announce'));
+    expect(headerCompact || pending.includes('`compact`'), '§5 calls the header compact; ModeIndicator.tsx does not pass it').toBe(true);
+    expect(panelQuiet || pending.includes('`announce={false}`'), '§5 calls the panel copy quiet; LiveView.tsx does not pass announce').toBe(true);
+  });
+});
+
+// ---- §9 do / don't -----------------------------------------------------------------------------
+
+describe('§9 Do / Don’t', () => {
+  // design-r2-R3: the row said to show "Replay · $0" whenever the API is not live, which §5 forbids beside
+  // a billing risk (and while a launch may be running, or a status is still being checked).
+  test('"Replay · $0" is prescribed only as §5 lists it, and never beside a billing risk', () => {
+    const rows = tableIn(/^## 9\. Do/, 'Do').rows;
+    const zero = rows.filter((r) => (r[0] ?? '').includes('Replay · $0'));
+    expect(zero.length).toBeGreaterThan(0);
+    for (const r of zero) {
+      expect(r[0]).toContain('§5');
+      expect(r[1]).toMatch(/billing risk/);
+    }
+  });
+});
+
 // ---- §6, §7 charts and scene -------------------------------------------------------------------
 
 describe('§6 / §7: every helper the chart and scene themes export is named where it is explained', () => {

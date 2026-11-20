@@ -6,7 +6,7 @@
 // is aborted after a timeout shorter than the poll interval, so a hung backend becomes `unreachable`
 // instead of leaving LIVE on frozen data. Every HTTP call to /api/live/* is in this file.
 import { useCallback, useSyncExternalStore } from 'react';
-import { SAVED_RUN_ID, validateLiveStatus, validateSavedRun, type LiveStatus, type SavedRun } from './liveContract';
+import { SAVED_RUN_ID, validateLiveStatus, validateSavedRun, type LiveMode, type LiveStatus, type SavedRun } from './liveContract';
 
 export { LIVE_MODES, SAVED_RUN_ID, validateLiveStatus, validateSavedRun } from './liveContract';
 export type { LiveMode, LiveProvenance, LiveSample, LiveStatus, LiveWorker, SavedRun } from './liveContract';
@@ -26,7 +26,10 @@ export type LaunchPhase = 'sent' | 'accepted' | 'refused' | 'unknown';
 
 /** The launch lock, carried on every store status while it holds. */
 interface LaunchLock {
-  /** Launch stays disabled: `sent`/`accepted` until a later snapshot reports a mode other than idle, `refused`/`unknown` until the next snapshot. */
+  /**
+   * Launch stays disabled: `sent`/`accepted` until a later snapshot reports a mode other than idle (while `sent`,
+   * also other than the mode the launch was sent from, e.g. a settled fallback), `refused`/`unknown` until the next snapshot.
+   */
   launchLocked?: boolean;
   launchPhase?: LaunchPhase;
 }
@@ -194,22 +197,44 @@ export function fallbackCause(d: LiveStatus): string {
   return head.length > 0 && head.length <= 40 ? head : 'Fallback';
 }
 
-const REPLAY: ModePill = { status: 'replay', text: 'Replay · $0' };
+/** The global replay pill. Its "$0" is shown only while nothing this app knows of may be billing. */
+export const REPLAY_PILL: Readonly<ModePill> = { status: 'replay', text: 'Replay · $0' };
+const REPLAY: ModePill = REPLAY_PILL;
+const CHECKING: ModePill = { status: 'replay', text: 'Checking status…' };
+const LAUNCHING: ModePill = { status: 'rehearsal', text: 'Launching…' };
+
+/**
+ * FE2-3: what stands in for "Replay · $0" on a snapshot that reads like replay while GPUs may be billing
+ * ($0 is not known then): a launch from this page that is in flight or accepted ("Launching…"), one with no
+ * usable answer ("Checking status…": the next snapshot decides), or a snapshot that still lists a session's
+ * workers (mode "idle" = the session object before its workers start, as in the 202 answer: "Launching…").
+ * A settled fallback (no termination marker) keeps its "$0": every termination is confirmed. Null = keep "$0".
+ */
+function zeroUnknown(s: LiveState): ModePill | null {
+  if (s.status !== 'ready') return null; // connection-lost is a danger of its own; stale reads "Checking status…"
+  if (s.launchPhase === 'sent' || s.launchPhase === 'accepted') return LAUNCHING;
+  if (s.launchPhase === 'unknown') return CHECKING;
+  if (s.data.mode !== 'fallback' && sessionMayBeBilling(s.data)) return s.data.mode === 'idle' ? LAUNCHING : CHECKING;
+  return null;
+}
 
 export function modePills(s: LiveState): ModePill[] {
   const danger = liveDanger(s);
   let pills: ModePill[];
-  if (s.status === 'unreachable' && s.cause === 'stale') pills = [{ status: 'replay', text: 'Checking status…' }];
+  if (s.status === 'unreachable' && s.cause === 'stale') pills = [CHECKING];
   else if (s.status !== 'ready') pills = [REPLAY];
   else if (s.data.mode === 'live') pills = [{ status: 'live', text: 'LIVE · GPU 0 / GPU 1' }];
-  else if (s.data.mode === 'launching') pills = [{ status: 'rehearsal', text: 'Launching…' }];
+  else if (s.data.mode === 'launching') pills = [LAUNCHING];
   else if (s.data.mode === 'fallback') {
     pills = [
       { status: 'failed', text: fallbackCause(s.data) },
       playableSavedRunId(s.data) ? { status: 'replay', text: 'Playing saved run' } : REPLAY,
     ];
   } else pills = [REPLAY];
-  if (!danger) return pills;
+  if (!danger) {
+    const instead = zeroUnknown(s);
+    return instead ? pills.map((p) => (p === REPLAY ? instead : p)) : pills;
+  }
   // Danger leads, and no "Replay · $0" beside it: $0 is not known while GPUs may be billing.
   return [{ status: 'billing-risk', text: danger.pill }, ...pills.filter((p) => p.status !== 'replay')];
 }
@@ -314,6 +339,34 @@ export function postLiveTerminate(fetchImpl?: typeof fetch): Promise<LiveActionR
   return postLive('/api/live/terminate', {}, fetchImpl);
 }
 
+/** What one Terminate sent from this page came back with. */
+export interface TerminateAnswer {
+  /** FA-2: a 2xx `ok: true` whose words do not say otherwise. Anything else is not a confirmation. */
+  confirmed: boolean;
+  /** The backend's words (or, with no answer at all, what this page knows). */
+  reason: string;
+  /** The snapshot on screen right after the answer was applied: a later snapshot is a different object. */
+  seen: LiveStatus | null;
+}
+
+/**
+ * POST /api/live/terminate, then show what the backend says now: the status the answer carries, or a fresh
+ * poll when it carries none. Shared by the live panel and the header's control, so both read an answer alike.
+ */
+export async function sendTerminate(store: LiveStatusStore = liveStatusStore, fetchImpl?: typeof fetch): Promise<TerminateAnswer> {
+  const r = await postLiveTerminate(fetchImpl);
+  // A stop is confirmed only by a 2xx ok:true whose words do not say otherwise (a kill-switch-only or requested
+  // stop is never "terminated", modal_backend.py:28-33, orchestrator.py:60-62).
+  const confirmed = r.ok && terminationProblem(r.reason) === null && !stopUnconfirmed(r.reason);
+  if (!r.status || !store.apply(r.status)) void store.refresh();
+  const now = store.getState();
+  return {
+    confirmed,
+    reason: r.httpStatus === null ? `${r.reason}; termination is unconfirmed.` : r.reason,
+    seen: now.status === 'ready' ? now.data : null,
+  };
+}
+
 /* ---- the shared store ----------------------------------------------------------------------- */
 export interface LiveStatusStoreOptions {
   /** Defaults to the global `fetch`, looked up at each request. */
@@ -337,7 +390,7 @@ export interface LiveStatusStore {
   lockLaunch(): void;
   /**
    * Call with the launch POST's outcome, BEFORE applying the status it carried (FA-4):
-   * `accepted` (202) stays locked until a later snapshot reports a mode other than idle;
+   * `accepted` (202) stays locked until a snapshot requested after the answer reports a mode other than idle;
    * `refused` (409: nothing was launched) and `unknown` (no answer, or neither 2xx nor 409) are released
    * by the next snapshot requested after this call, whatever it says — that snapshot decides whether
    * launching is allowed. No-op when no launch is locked.
@@ -359,8 +412,9 @@ export function createLiveStatusStore(opts: LiveStatusStoreOptions = {}): LiveSt
   let state: LiveState = { status: 'connecting' };
   let lastKnown: LastKnown | null = null;
   // The launch lock and the newest request sequence number when it last changed: only a snapshot
-  // requested after that can release it (an older poll may predate the launch on the backend).
-  let launch: { phase: LaunchPhase; after: number } | null = null;
+  // requested after that can release it (an older poll may predate the launch on the backend). `from` is
+  // the mode on screen when the launch was sent (idle, or a settled fallback: cross-RX-4).
+  let launch: { phase: LaunchPhase; after: number; from: LiveMode | null } | null = null;
   let issued = 0; // sequence number of the newest request (or applied POST answer)
   let applied = 0; // sequence number of the answer on screen
   let epoch = 0; // bumped on reset: answers from before a reset are dropped
@@ -405,7 +459,11 @@ export function createLiveStatusStore(opts: LiveStatusStoreOptions = {}): LiveSt
     if (launch && seq > launch.after) {
       // refused / unknown: this snapshot, requested after the answer, says what is true now.
       // sent / accepted: released once the mode changed (right after a 202 the API can still read idle).
-      if (launch.phase === 'refused' || launch.phase === 'unknown' || outcome.data.mode !== 'idle') launch = null;
+      // While the request is in flight (sent) the backend may still report the mode it was sent from (a
+      // fallback), so that mode does not count as a change; after a 202 every snapshot is the new session's.
+      const mode = outcome.data.mode;
+      const changed = mode !== 'idle' && (launch.phase === 'accepted' || mode !== launch.from);
+      if (launch.phase === 'refused' || launch.phase === 'unknown' || changed) launch = null;
     }
     emit({ status: 'ready', data: outcome.data, receivedAt, freshForMs: freshFor(), ...lock() });
   };
@@ -494,12 +552,12 @@ export function createLiveStatusStore(opts: LiveStatusStoreOptions = {}): LiveSt
       return true;
     },
     lockLaunch() {
-      launch = { phase: 'sent', after: issued };
+      launch = { phase: 'sent', after: issued, from: state.status === 'ready' ? state.data.mode : null };
       relock();
     },
     launchAnswered(outcome) {
       if (!launch) return; // already released (the mode changed while the request was in flight)
-      launch = { phase: outcome, after: issued };
+      launch = { phase: outcome, after: issued, from: launch.from };
       relock();
     },
   };

@@ -30,6 +30,34 @@ describe('format', () => {
     expect(formatSigned(0.001, 2)).toBe('0.00');
     expect(formatWindow([1500, 1893.765])).toBe('1500–1893.765');
   });
+  // design-r1-R2: the artifacts' `matches` flags come from Python's round(), which rounds an exact
+  // binary tie to even, where toFixed() rounds it away from zero. Printed values follow Python, so a
+  // flag and the values printed beside it cannot disagree. Expected strings: python3 f"{round(x, d):.{d}f}".
+  test.each([
+    [0.125, 2, '0.12'],
+    [2.5, 0, '2'],
+    [14.25, 1, '14.2'],
+    [0.375, 2, '0.38'],
+    [3.5, 0, '4'],
+    [1.5, 0, '2'],
+    [0.5, 0, '0'],
+    [-0.125, 2, '−0.12'],
+    [0.0625, 3, '0.062'],
+    // stored below the tie (2.67499…, 1.00499…, 0.1499…): down, as stored; above it: up
+    [2.675, 2, '2.67'],
+    [1.005, 2, '1.00'],
+    [0.15, 1, '0.1'],
+    [0.15000000000000002, 1, '0.2'],
+    [0.25, 1, '0.2'],
+  ] as const)('formatNumber(%s, %s) rounds like Python round(): %s', (x, d, expected) => {
+    expect(formatNumber(x, d)).toBe(expected);
+  });
+  test('formatSigned uses the same rounding: a tie that rounds to zero is unsigned', () => {
+    expect(formatSigned(0.5, 0)).toBe('0');
+    expect(formatSigned(-0.5, 0)).toBe('0');
+    expect(formatSigned(1.5, 0)).toBe('+2');
+    expect(formatSigned(-0.125, 2)).toBe('−0.12');
+  });
   test('units', () => {
     expect(parseUnit('Q_gB')).toEqual([
       { text: 'Q', sub: false },
@@ -120,6 +148,19 @@ describe('plotTheme', () => {
       expect(l.legend).toEqual({ ...base.legend, orientation: 'v' });
       expect(l.hoverlabel).toEqual({ ...base.hoverlabel, align: 'right' });
       expect(l.modebar).toEqual({ ...base.modebar, orientation: 'v' });
+    });
+    // design-r1-R8: a partial font inside the layout title, the legend or the hover label used to
+    // replace the themed font, dropping its colour, family and weight.
+    test('title, legend and hover-label fonts: one key overridden, the others kept', () => {
+      const l = plotLayout(theme, {
+        title: { text: 'x', font: { size: 16 } },
+        legend: { font: { size: 10 } },
+        hoverlabel: { font: { size: 13 } },
+      });
+      expect(l.title).toEqual({ ...base.title, text: 'x', font: { family: font.sans, size: 16, color: t.color.text, weight: 600 } });
+      expect(l.legend.font).toEqual({ family: font.sans, size: 10, color: t.color.text });
+      expect(l.hoverlabel.font).toEqual({ family: font.sans, size: 13, color: t.color.text });
+      expect(l.hoverlabel.bgcolor).toBe(base.hoverlabel.bgcolor);
     });
     test('scalar and array overrides still replace (height, shapes, hovermode)', () => {
       const shapes = [windowShape([200, 300], theme)];

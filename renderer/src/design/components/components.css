@@ -461,3 +461,13 @@
   margin-top: var(--lab-space-1);
   font-size: var(--lab-font-size-sm);
 }
+/* Compact: the app header's copy, which must not push a phone's content below the fold (it stood
+ * about 370px tall at 390px). The same parts, colours and outline; only spacing, the icon (16px, set
+ * in Alert.tsx) and the type step shrink. The reason is still printed whole: nothing is clamped. */
+.lab-alert--compact { column-gap: var(--lab-space-2); padding: var(--lab-space-2) var(--lab-space-3) var(--lab-space-2) var(--lab-space-2); }
+.lab-alert--compact .lab-alert__content { gap: var(--lab-space-0-5); }
+.lab-alert--compact .lab-alert__title { font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); }
+.lab-alert--compact .lab-alert__reason,
+.lab-alert--compact .lab-alert__body,
+.lab-alert--compact .lab-alert__action { font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); }
+.lab-alert--compact .lab-alert__action { margin-top: 0; }

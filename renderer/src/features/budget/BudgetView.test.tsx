@@ -1,14 +1,27 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { FixtureCheckData } from '../../design';
-import type { LiveStatus } from '../../lib/liveStatus';
+import { liveStatusStore, modePills, type LiveState, type LiveStatus, type LiveWorker } from '../../lib/liveStatus';
 import { BudgetView } from './BudgetView';
-import { checkBudget, claimUsd, claimedLabelFor, guardPlanStale, ledgerSegments, planChecks, usd, type BudgetArtifact, type GuardView } from './model';
+import {
+  checkBudget,
+  claimUsd,
+  claimedLabelFor,
+  guardPlanStale,
+  guardSegments,
+  ledgerSegments,
+  planChecks,
+  usd,
+  type BudgetArtifact,
+  type GuardView,
+} from './model';
 
 const ARTIFACT: BudgetArtifact = JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/budget.json'), 'utf8'));
 const clone = (): BudgetArtifact => JSON.parse(JSON.stringify(ARTIFACT)) as BudgetArtifact;
 const fixture = (a: BudgetArtifact, id: string): FixtureCheckData => a.fixtures.find((f) => f.id === id)!;
+/** How many scenarios of the committed artifact carry this provenance kind (the producer decides, not this test). */
+const scenariosOfKind = (kind: string) => ARTIFACT.scenarios.filter((s) => s.provenance.kind === kind).length;
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 const RANGE_IDS = ['full-grid-days', 'full-grid-usd', 'halved-dt-days', 'halved-dt-usd'];
 /** The midpoints an earlier artifact put in `claimed` (14.5 d, $3,150, 29 d, $6,300): the PRD never printed them. */
@@ -19,28 +32,58 @@ const MIDPOINT: Record<string, RegExp> = {
   'halved-dt-usd': /(^|[^0-9.])6,?300([^0-9]|$)/,
 };
 
+/** A snapshot the backend sends: qualified and idle, reconciled ledger, so the guard approves the next slot. */
 const STATUS: LiveStatus = {
   schemaVersion: 1,
-  mode: 'unavailable',
-  reason: 'No Modal credentials.',
-  qualified: false,
+  mode: 'idle',
+  reason: 'Qualified. Launch requires explicit confirmation of the slot cost.',
+  qualified: true,
   budget: { ceilingUsd: 40, billedUsd: 8.1, pendingUsd: 0, slotEstimateUsd: 2.65, slotFits: true, hardTimeoutS: 1500 },
   workers: [],
-  fallback: { active: true, label: 'No qualified GX rehearsal recorded', savedRunId: null },
+  fallback: { active: false, label: '', savedRunId: null },
 };
+const worker = (gpuIndex: 0 | 1, state: LiveWorker['state'] = 'running'): LiveWorker => ({
+  gpuIndex,
+  deviceId: `GPU-${gpuIndex}aaaa`,
+  tube: gpuIndex === 0 ? 'bean' : 'triangular',
+  state,
+  simTime: 12,
+  samples: [],
+});
+const RUNNING = [worker(0), worker(1)];
+const snap = (mode: LiveStatus['mode'], reason: string, workers: LiveWorker[] = [], extra: Partial<LiveStatus> = {}): LiveStatus => ({
+  ...STATUS,
+  mode,
+  reason,
+  workers,
+  ...extra,
+});
+const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour12: false });
 
-function serve(live: LiveStatus | null, artifact: unknown = ARTIFACT, artifactStatus = 200) {
+/** One API answer: a snapshot, an HTTP 502 (null) or no answer at all ('reject'). A list is answered in turn, its last repeated. */
+type Api = LiveStatus | null | 'reject';
+function serve(live: Api | Api[], artifact: unknown = ARTIFACT, artifactStatus = 200) {
+  const answers = Array.isArray(live) ? live : [live];
+  let n = 0;
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === '/artifacts/budget.json') return new Response(JSON.stringify(artifact), { status: artifactStatus });
-      if (url === '/api/live/status') return live ? new Response(JSON.stringify(live)) : new Response('', { status: 502 });
+      if (url === '/api/live/status') {
+        const next = answers[Math.min(n++, answers.length - 1)];
+        if (next === 'reject') throw new TypeError('network down');
+        return next ? new Response(JSON.stringify(next)) : new Response('', { status: 502 });
+      }
       return new Response('', { status: 404 });
     }),
   );
 }
 afterEach(() => vi.unstubAllGlobals());
+
+/** The replay pill in the ledger panel's header. */
+const ledgerPill = () =>
+  screen.getByRole('region', { name: /Modal spend against the/ }).querySelector('.lab-panel__header .lab-pill[data-status="replay"]');
 
 /** The comparison table as text: [[header…], [row…], …]. */
 function compareTable() {
@@ -65,9 +108,10 @@ test('B6 ledger bar to the $40 ceiling: posted, planned, remaining; live guard e
   const widths = [...bar.querySelectorAll<HTMLElement>('.bg-bar__seg')].map((e) => e.style.width);
   expect(widths).toEqual(['20.25%', '34.325%', '45.425%']);
   expect(screen.getByText('$21.83', { selector: 'dd' })).toBeInTheDocument();
-  // The posted spend is a PRD-reported figure; what is computed from it is derived.
+  // The posted spend is a PRD-reported amount; the plan and remaining carry the live-demo scenario's kind, which is
+  // PRD-reported too: an arithmetic re-check of PRD inputs, not "derived" (computed from archives).
   const kind = (seg: string) => document.querySelector(`.bg-legend__item[data-seg="${seg}"] .lab-pill`)?.getAttribute('data-status');
-  expect([kind('posted'), kind('plan'), kind('remaining')]).toEqual(['prd-reported', 'derived', 'derived']);
+  expect([kind('posted'), kind('plan'), kind('remaining')]).toEqual(['prd-reported', 'prd-reported', 'prd-reported']);
   expect(await screen.findByRole('note', { name: /Live budget guard not reachable/ })).toBeInTheDocument();
   expect(screen.queryByTestId('guard-live')).toBeNull();
   expect(screen.getByText('Guard not reachable')).toBeInTheDocument();
@@ -95,7 +139,7 @@ test('B6 ledger bar to the $40 ceiling: posted, planned, remaining; live guard e
 
   // API reachable: the guard's own numbers come from /api/live/status.
   serve({ ...STATUS, budget: { ...STATUS.budget, billedUsd: 8.1, pendingUsd: 1.0, slotEstimateUsd: 2.65 } });
-  render(<BudgetView livePollMs={60_000} />);
+  const second = render(<BudgetView livePollMs={60_000} />);
   const guard = await screen.findByTestId('guard-live');
   expect(within(guard).getByRole('img')).toHaveAccessibleName(
     'Live budget guard: billed $8.10, pending $1.00, next slot estimate $2.65, of the $40.00 ceiling',
@@ -107,11 +151,25 @@ test('B6 ledger bar to the $40 ceiling: posted, planned, remaining; live guard e
   expect(compareTable()[1]).toEqual(['15-min live slot', '$1.53', '$2.65 · from /api/live/status']);
   expect(compareTable()[3]).toEqual(['Planned total incl. $8.10 posted', '$21.83', '$26.21 · guard plan · budget.json']);
   expect(screen.queryByRole('note', { name: /differs from the guard plan/ })).toBeNull();
+  second.unmount();
+
+  // FF-5: the guard's figures are derived from the API's answer; whatever non-live mode it reports, the guard
+  // pill is "derived" and nothing on the page is a LIVE pill.
+  for (const mode of ['unavailable', 'idle', 'launching', 'fallback', 'terminated'] as const) {
+    serve({ ...STATUS, mode });
+    const view = render(<BudgetView livePollMs={60_000} />);
+    await screen.findByTestId('guard-live');
+    expect(screen.getByText('Guard · /api/live/status').closest('.lab-pill'), mode).toHaveAttribute('data-status', 'derived');
+    expect(document.querySelector('.lab-pill[data-status="live"]'), mode).toBeNull();
+    view.unmount();
+  }
 });
 
 test('B6 the ledger, its title and the plan-versus-ceiling statement follow a modified artifact', async () => {
   const a = clone();
   Object.assign(a, { ceilingUsd: 50, postedUsd: 9.99, plannedUsd: 30.5, remainingAfterPlanUsd: 19.5 });
+  // FF-16: the PRD's GPU-only rehearsal price is rate × hours from the live-demo inputs, not the hourly rate.
+  a.scenarios.find((s) => s.id === 'live-demo')!.inputs.rehearsalH = 2;
   serve(null, a);
   const first = render(<BudgetView livePollMs={60_000} />);
   const bar = await screen.findByTestId('ledger-bar');
@@ -121,6 +179,7 @@ test('B6 the ledger, its title and the plan-versus-ceiling statement follow a mo
   );
   expect([...bar.querySelectorAll<HTMLElement>('.bg-bar__seg')].map((e) => e.style.width)).toEqual(['19.98%', '41.02%', '39%']);
   expect(screen.getByText('$50.00 ceiling')).toBeInTheDocument();
+  expect(compareTable()[2]).toEqual(['One rehearsal, 2 h', '$12.20', '$7.73 · guard plan · budget.json']);
   expect(compareTable()[3]).toEqual(['Planned total incl. $9.99 posted', '$30.50', '$26.21 · guard plan · budget.json']);
   expect(screen.getByTestId('plan-vs-ceiling')).toHaveTextContent(
     'Both plans stay inside the $50.00 ceiling: PRD GPU-only plan $30.50, Guard plan $26.21.',
@@ -130,9 +189,13 @@ test('B6 the ledger, its title and the plan-versus-ceiling statement follow a mo
   // A ceiling the guard plan does not fit under: the statement changes, it is not fixed text.
   const tight = clone();
   tight.ceilingUsd = 25;
+  // FF-16: with an input missing, the rehearsal price is not available, never a guess.
+  delete tight.scenarios.find((s) => s.id === 'live-demo')!.inputs.rateUsdPerH;
   serve(null, tight);
   const second = render(<BudgetView livePollMs={60_000} />);
   const warn = await screen.findByRole('note', { name: /Over the \$25\.00 ceiling: Guard plan$/ });
+  expect(screen.getByTestId('prd-rehearsal')).toHaveTextContent(/^—$/);
+  expect(compareTable()[2]![0]).toBe('One-hour rehearsal');
   expect(warn).toHaveTextContent('Guard plan $26.21 is $1.21 over the $25.00 ceiling');
   expect(warn).toHaveTextContent('PRD GPU-only plan $21.83 stays inside it');
   expect(document.body).not.toHaveTextContent(/Both plans stay inside/);
@@ -178,11 +241,66 @@ test('B6 the ledger, its title and the plan-versus-ceiling statement follow a mo
   expect(guardOver).toHaveTextContent('Guard plan $27.73 is $0.73 over the $27.00 ceiling. PRD GPU-only plan $21.83 stays inside it.');
 });
 
+test('B6 the ledger provenance pills follow the live-demo scenario kind in the artifact, never a hard-coded "derived"', async () => {
+  /** [data-status, text] of the panel pill, each legend row's pill and the planned total's pill. */
+  const pills = () => {
+    const ledger = screen.getByRole('region', { name: /Modal spend against the/ });
+    return ['.lab-panel__header', '[data-seg="posted"]', '[data-seg="plan"]', '[data-seg="remaining"]', '.bg-legend__item--total'].map(
+      (sel) => {
+        const el = ledger.querySelector(`${sel} .bg-kind`);
+        return el ? [el.getAttribute('data-status'), el.textContent] : null;
+      },
+    );
+  };
+  const PRD = ['prd-reported', 'PRD-reported'];
+  const DERIVED = ['derived', 'Derived'];
+
+  // Committed artifact: the live-demo ledger is an arithmetic re-check of PRD-reported inputs.
+  expect(ARTIFACT.scenarios.find((s) => s.id === 'live-demo')!.provenance).toMatchObject({
+    kind: 'prd-reported',
+    verification: { outcome: 'not-applicable' },
+  });
+  serve(null);
+  const first = render(<BudgetView livePollMs={60_000} />);
+  await screen.findByTestId('ledger-bar');
+  expect(pills()).toEqual([PRD, PRD, PRD, PRD, PRD]);
+  expect(screen.getByRole('region', { name: /Modal spend against the/ }).querySelector('[data-status="derived"]')).toBeNull();
+  first.unmount();
+
+  // The data says "derived": the computed figures follow it; the posted amount stays PRD-reported.
+  const derived = clone();
+  derived.scenarios.find((s) => s.id === 'live-demo')!.provenance.kind = 'derived';
+  serve(null, derived);
+  const second = render(<BudgetView livePollMs={60_000} />);
+  await screen.findByTestId('ledger-bar');
+  expect(pills()).toEqual([DERIVED, PRD, DERIVED, DERIVED, DERIVED]);
+  second.unmount();
+
+  // Only the scenario the ledger is computed from counts: another scenario's kind leaves it alone.
+  const other = clone();
+  other.scenarios.find((s) => s.id === 'full-grid-modal')!.provenance.kind = 'derived';
+  serve(null, other);
+  const third = render(<BudgetView livePollMs={60_000} />);
+  await screen.findByTestId('ledger-bar');
+  expect(pills()).toEqual([PRD, PRD, PRD, PRD, PRD]);
+  third.unmount();
+
+  // A kind of "live" read from an artifact is a recorded run, never the LIVE pill.
+  const recorded = clone();
+  recorded.scenarios.find((s) => s.id === 'live-demo')!.provenance.kind = 'live';
+  serve(null, recorded);
+  render(<BudgetView livePollMs={60_000} />);
+  await screen.findByTestId('ledger-bar');
+  const run = ['replay', 'Recorded run'];
+  expect(pills()).toEqual([run, PRD, run, run, run]);
+  expect(document.querySelector('.lab-pill[data-status="live"]')).toBeNull();
+});
+
 test('B6 a live guard estimate that differs from the artifact guard plan marks the plan figures as possibly out of date', async () => {
   serve({ ...STATUS, budget: { ...STATUS.budget, billedUsd: 36, pendingUsd: 2, slotEstimateUsd: 3.11, slotFits: false } });
   const first = render(<BudgetView livePollMs={60_000} />);
   const guard = await screen.findByTestId('guard-live');
-  expect(within(guard).getByText(/Next slot does NOT fit — replay only/)).toBeInTheDocument();
+  expect(within(guard).getByText(/Next slot does NOT fit under the ceiling — replay only/)).toBeInTheDocument();
   expect(within(guard).getByText('−$1.11')).toBeInTheDocument(); // 40 − 36 − 2 − 3.11, never "$-1.11"
   expect(screen.getByTestId('guard-slot')).toHaveTextContent('$3.11 · from /api/live/status');
   // The rehearsal price and the planned total are still the plan's figures (no API field carries them):
@@ -236,9 +354,9 @@ test('B7 scenario cards show headline, derivation and interpretation; PRD-report
     ).toBeInTheDocument();
   }
   expect(screen.getByRole('article', { name: 'Published GPU-native GX bean benchmark scenario' })).toHaveAttribute('data-kind', 'prd-reported');
-  expect(screen.getByRole('article', { name: 'Live demo scenario' })).toHaveAttribute('data-kind', 'derived');
-  expect(screen.getAllByText('PRD-reported context')).toHaveLength(2);
-  expect(screen.getAllByText('Derived estimate')).toHaveLength(2);
+  // The eyebrow follows each scenario's kind in the artifact.
+  expect(screen.queryAllByText('PRD-reported context')).toHaveLength(scenariosOfKind('prd-reported'));
+  expect(screen.queryAllByText('Derived estimate')).toHaveLength(scenariosOfKind('derived'));
 
   // FB-1, range fixtures (D-023): `claimed` is null and the PRD range is `claimedRange`. The row shows
   // "PRD range lo–hi unit" and the computed value checked lo ≤ computed ≤ hi; no midpoint anywhere.
@@ -334,7 +452,7 @@ test('B7 range rows follow a modified artifact: outside the range, matches false
   expect(gx).toHaveAttribute('data-kind', 'derived');
   expect(gx.querySelector('.bg-headline .lab-pill')).toHaveTextContent('Derived');
   expect(screen.getByRole('button', { name: 'Provenance of Published GPU-native GX bean benchmark: Derived, Failed' })).toBeInTheDocument();
-  expect(screen.getAllByText('PRD-reported context')).toHaveLength(1);
+  expect(screen.queryAllByText('PRD-reported context')).toHaveLength(scenariosOfKind('prd-reported') - 1);
 });
 
 test('FB-1 a range is read from claimedRange only: no range and no claim shows "—", prose is never parsed, an old midpoint is never shown', async () => {
@@ -397,7 +515,7 @@ test('B7 a scenario whose provenance kind is "live" is shown as a recorded run: 
   expect(document.querySelector('.lab-pill[data-status="live"]')).toBeNull();
   expect(document.body).not.toHaveTextContent(/\bLIVE\b/);
   // The card is not mislabelled as a derived estimate either.
-  expect(screen.getAllByText('Derived estimate')).toHaveLength(2);
+  expect(screen.queryAllByText('Derived estimate')).toHaveLength(scenariosOfKind('derived'));
   expect(screen.getByText('Recorded run context')).toBeInTheDocument();
 });
 
@@ -427,6 +545,195 @@ test('A3 budget: a missing or invalid artifact shows an error naming the file, n
   expect(checkBudget(ARTIFACT)).toBeNull();
   expect(checkBudget({ ...ARTIFACT, guardPlan: { ...ARTIFACT.guardPlan, plannedTotalUsd: Number.NaN } })).toBe('guardPlan.plannedTotalUsd is not a number');
   expect(checkBudget({ ...ARTIFACT, fixtures: undefined as unknown as FixtureCheckData[] })).toBe('scenarios or fixtures is missing');
+});
+
+/* ---- money safety on the money page (cross-RX-1, FF-1, FF-8) ------------------------------------- */
+const TERMINATE_FAILED =
+  'TERMINATE FAILED — check Modal dashboard; GPUs may still be billing: GPU 0 (bean) terminate unconfirmed (cancel raised an error).';
+const TERMINATION_PENDING = 'TERMINATION PENDING — cancel queued, not yet confirmed; GPUs may still be billing: GPU 1 (triangular).';
+const FALLBACK = { active: true, label: 'Worker failed — GPU 0 (bean)', savedRunId: null };
+/** Snapshots on which the header withholds "Replay · $0": the ledger pill must withhold it too. */
+const NO_ZERO: [string, Api[]][] = [
+  ['mode live with two running workers', [snap('live', 'Live: both workers running.', RUNNING)]],
+  ['a fallback with TERMINATE FAILED', [snap('fallback', TERMINATE_FAILED, [worker(0, 'failed')], { fallback: FALLBACK })]],
+  ['a fallback with TERMINATION PENDING', [snap('fallback', TERMINATION_PENDING, [worker(1)], { fallback: FALLBACK })]],
+  ['a stop that is not confirmed', [snap('live', 'Stop requested; terminating workers — not confirmed yet', RUNNING)]],
+  ['mode idle with workers listed', [snap('idle', 'Session created; workers starting.', [worker(0, 'pending'), worker(1, 'pending')])]],
+  ['mode launching', [snap('launching', 'Launching both workers.', [worker(0, 'initializing'), worker(1, 'initializing')])]],
+];
+
+test.each(NO_ZERO)('FF-1 / cross-RX-1 the ledger pill withholds the zero-cost label for %s, as the header does', async (_name, api) => {
+  serve(api);
+  render(<BudgetView livePollMs={60_000} />);
+  await screen.findByTestId('guard-live');
+  // The header's own rule on the same snapshot …
+  expect(modePills(liveStatusStore.getState()).map((p) => p.text)).not.toContain('Replay · $0');
+  // … and the money page agrees with it.
+  expect(ledgerPill()).toHaveTextContent(/^Replay$/);
+  expect(document.body).not.toHaveTextContent('Replay · $0');
+});
+
+test('FF-1 "Replay · $0" stays where the header shows it, and goes once a launch from this page is accepted', async () => {
+  // Static replay build: no API at all.
+  serve(null);
+  const first = render(<BudgetView livePollMs={60_000} />);
+  await screen.findByRole('note', { name: /Live budget guard not reachable/ });
+  expect(ledgerPill()).toHaveTextContent(/^Replay · \$0$/);
+  first.unmount();
+
+  // A settled fallback (every termination confirmed) keeps it, as the header does.
+  serve(snap('fallback', 'Hard timeout reached; every worker terminated (confirmed).', [], { fallback: { ...FALLBACK, label: 'Hard timeout' } }));
+  const second = render(<BudgetView livePollMs={60_000} />);
+  await screen.findByTestId('guard-live');
+  expect(modePills(liveStatusStore.getState()).map((p) => p.text)).toContain('Replay · $0');
+  expect(ledgerPill()).toHaveTextContent(/^Replay · \$0$/);
+  second.unmount();
+
+  // Qualified and idle: "$0", until a launch sent from this page is accepted.
+  serve(STATUS);
+  render(<BudgetView livePollMs={60_000} />);
+  await screen.findByTestId('guard-live');
+  expect(ledgerPill()).toHaveTextContent(/^Replay · \$0$/);
+  act(() => {
+    liveStatusStore.lockLaunch();
+    liveStatusStore.launchAnswered('accepted');
+  });
+  expect(ledgerPill()).toHaveTextContent(/^Replay$/);
+  expect(document.body).not.toHaveTextContent('Replay · $0');
+});
+
+test('FF-8 when the API stops answering a session that may be billing, the guard panel says so with the last-known figures', async () => {
+  const live = snap('live', 'Live: both workers running.', RUNNING, {
+    budget: { ceilingUsd: 40, billedUsd: 20, pendingUsd: 2.65, slotEstimateUsd: 2.65, slotFits: false, hardTimeoutS: 1500 },
+  });
+  serve([live, 'reject']);
+  const first = render(<BudgetView livePollMs={60} />);
+  const note = await screen.findByRole('note', { name: /CONNECTION LOST — session state unknown/ });
+  const s = liveStatusStore.getState() as Extract<LiveState, { status: 'unreachable' }>;
+  expect(s.status).toBe('unreachable');
+  expect(within(note).getByTestId('guard-last-known')).toHaveTextContent(
+    `The live API stopped answering (network down). Its last status, received at ${clock(s.lastKnown!.receivedAt)}, reported mode “live”: ` +
+      'billed $20.00, pending $2.65, next slot estimate $2.65 of the $40.00 ceiling. These figures are not current. ' +
+      'The connection to a session that may be billing was lost: GPUs may still be billing. Use Terminate in Advance plasma.',
+  );
+  expect(within(note).getByRole('link', { name: 'Open Advance plasma to send Terminate' })).toHaveAttribute('href', '#/advance');
+  expect(document.body).not.toHaveTextContent(/static replay build/);
+  const panel = screen.getByRole('region', { name: /Live budget guard: setup, idle and storage included/ });
+  expect(panel.querySelector('.lab-panel__header .lab-pill')).toHaveAttribute('data-status', 'billing-risk');
+  expect(panel.querySelector('.lab-panel__header .lab-pill')).toHaveTextContent('Connection lost');
+  expect(ledgerPill()).toHaveTextContent(/^Replay$/);
+  expect(document.body).not.toHaveTextContent('Replay · $0');
+  first.unmount();
+
+  // A last status that could not be billing: no alarm and no Terminate pointer, but not "static replay build" either.
+  serve([STATUS, 'reject']);
+  render(<BudgetView livePollMs={60} />);
+  const quiet = await screen.findByRole('note', { name: /Live budget guard not answering — no current guard estimate/ });
+  expect(within(quiet).getByTestId('guard-last-known')).toHaveTextContent(/reported mode “idle”: billed \$8\.10, pending \$0\.00, next slot estimate \$2\.65 of the \$40\.00 ceiling\. These figures are not current\. The guard’s current figures appear again/);
+  expect(within(quiet).queryByRole('link')).toBeNull();
+  expect(document.body).not.toHaveTextContent(/static replay build|CONNECTION LOST/);
+  expect(ledgerPill()).toHaveTextContent(/^Replay · \$0$/);
+});
+
+test('cross-RX-6 the guard line is worded from the numbers: a refusal under the ceiling is not a ceiling miss, a 0 s timeout is not a timeout', async () => {
+  // A fresh install, as the backend reports it: no credentials, ledger not yet reconciled ($8.10 pending).
+  const fresh = snap('unavailable', 'Live GX unavailable: no Modal credentials. Live GX is UNREHEARSED (D-011).', [], {
+    qualified: false,
+    budget: { ceilingUsd: 40, billedUsd: 0, pendingUsd: 8.1, slotEstimateUsd: 2.65, slotFits: false, hardTimeoutS: 1500 },
+    fallback: { active: true, label: 'No qualified GX rehearsal recorded', savedRunId: null },
+  });
+  serve(fresh);
+  const first = render(<BudgetView livePollMs={60_000} />);
+  let guard = await screen.findByTestId('guard-live');
+  expect(within(guard).getByTestId('guard-fits')).toHaveTextContent(/^Next slot refused by the budget guard, not by the ceiling — replay only · hard timeout 1500 s$/);
+  expect(guard).not.toHaveTextContent(/does NOT fit/);
+  expect(within(guard).getByTestId('guard-why')).toHaveTextContent(
+    'Billed + pending + next slot = $10.75 is within the $40.00 ceiling. The guard also refuses a slot when the ledger is not reconciled or cannot be read',
+  );
+  expect(within(guard).queryByTestId('guard-reason')).toBeNull();
+  first.unmount();
+
+  // A corrupt ledger, as the backend reports it: billed 0, pending 0, hard timeout 0.
+  serve({ ...fresh, budget: { ...fresh.budget, pendingUsd: 0, hardTimeoutS: 0 } });
+  const second = render(<BudgetView livePollMs={60_000} />);
+  guard = await screen.findByTestId('guard-live');
+  expect(within(guard).getByTestId('guard-fits')).toHaveTextContent(/^Next slot refused by the budget guard, not by the ceiling — replay only$/);
+  expect(guard).not.toHaveTextContent(/hard timeout|does NOT fit/);
+  expect(within(guard).getByTestId('guard-why')).toHaveTextContent('= $2.65 is within the $40.00 ceiling');
+  expect(within(guard).getByTestId('guard-why')).toHaveTextContent('(an unreadable ledger is reported as $0.00)');
+  second.unmount();
+
+  // Qualified and idle with the guard's own refusal in the reason: it is quoted.
+  const clause =
+    "Budget guard refused: ledger not reconciled (billed $1.00, pending $0.00). Check both against Modal's usage page and record them before any allocation.";
+  serve(snap('idle', `Qualified. Launch requires explicit confirmation of the slot cost. ${clause}`, [], {
+    budget: { ceilingUsd: 40, billedUsd: 1, pendingUsd: 0, slotEstimateUsd: 2.65, slotFits: false, hardTimeoutS: 1500 },
+  }));
+  const third = render(<BudgetView livePollMs={60_000} />);
+  guard = await screen.findByTestId('guard-live');
+  expect(within(guard).getByTestId('guard-fits')).toHaveTextContent(/refused by the budget guard, not by the ceiling/);
+  expect(within(guard).getByTestId('guard-reason')).toHaveTextContent(`The guard’s reason: “${clause}”`);
+  third.unmount();
+
+  // Over the ceiling: the only case worded as not fitting under it.
+  const over = 'Budget guard refused: billed $36.00 + pending $2.00 + slot $3.11 = $41.11 exceeds the $40.00 ceiling. Use replay.';
+  serve(snap('idle', `Qualified. Launch requires explicit confirmation of the slot cost. ${over}`, [], {
+    budget: { ceilingUsd: 40, billedUsd: 36, pendingUsd: 2, slotEstimateUsd: 3.11, slotFits: false, hardTimeoutS: 600 },
+  }));
+  render(<BudgetView livePollMs={60_000} />);
+  guard = await screen.findByTestId('guard-live');
+  expect(within(guard).getByTestId('guard-fits')).toHaveTextContent(/^Next slot does NOT fit under the ceiling — replay only · hard timeout 600 s$/);
+  expect(within(guard).queryByTestId('guard-why')).toBeNull();
+  expect(within(guard).getByTestId('guard-reason')).toHaveTextContent(over);
+});
+
+test('FF-11 the guard bar never runs past the ceiling: widths within it, clamped above it, with an over-ceiling marker', async () => {
+  const widths = (bar: HTMLElement) =>
+    [...bar.querySelectorAll<HTMLElement>('.bg-bar__seg')].map((e) => `${e.dataset.seg}:${parseFloat(e.style.width).toFixed(3)}`);
+  serve({ ...STATUS, budget: { ...STATUS.budget, billedUsd: 8.1, pendingUsd: 1, slotEstimateUsd: 2.65 } });
+  const first = render(<BudgetView livePollMs={60_000} />);
+  const within40 = await screen.findByTestId('guard-bar');
+  expect(widths(within40)).toEqual(['posted:20.250', 'pending:2.500', 'slot:6.625']);
+  expect(within40).toHaveAttribute('data-over', 'false');
+  expect(screen.queryByTestId('guard-over')).toBeNull();
+  first.unmount();
+
+  serve({ ...STATUS, budget: { ceilingUsd: 40, billedUsd: 45, pendingUsd: 3, slotEstimateUsd: 2.65, slotFits: false, hardTimeoutS: 0 } });
+  render(<BudgetView livePollMs={60_000} />);
+  const over = await screen.findByTestId('guard-bar');
+  expect(widths(over)).toEqual(['posted:100.000', 'pending:0.000', 'slot:0.000']);
+  expect(over).toHaveAttribute('data-over', 'true');
+  expect(over).toHaveClass('bg-bar--over');
+  expect(over).toHaveAccessibleName('Live budget guard: billed $45.00, pending $3.00, next slot estimate $2.65, of the $40.00 ceiling; $10.65 over the ceiling');
+  expect(screen.getByTestId('guard-over')).toHaveTextContent('Over the ceiling by $10.65: billed + pending + next slot = $50.65. The bar stops at the $40.00 ceiling.');
+
+  // Partly over: each segment gets what is left of the bar.
+  const g = { ceilingUsd: 40, billedUsd: 36, pendingUsd: 2, slotEstimateUsd: 3.11, afterSlotUsd: 41.11 } as GuardView;
+  const { segments, overUsd } = guardSegments(g);
+  expect(segments.map((x) => x.pct.toFixed(3))).toEqual(['90.000', '5.000', '5.000']);
+  expect(overUsd).toBeCloseTo(1.11, 9);
+  expect(guardSegments({ ...g, billedUsd: 8, pendingUsd: 1, slotEstimateUsd: 2.65, afterSlotUsd: 11.65 }).overUsd).toBe(0);
+});
+
+test('FF-10 the TASK.md claim label comes from the fixture claimSource, never from the note', async () => {
+  const a = clone();
+  const remaining = fixture(a, 'remaining-usd');
+  expect(remaining.claimSource).toBe('task');
+  remaining.note = '40.00 − 21.83.';
+  // A PRD claim whose note happens to name TASK.md stays a PRD claim.
+  fixture(a, 'planned-usd').note = '13.73 + 8.10 = 21.83; value from tasks/04-budget/TASK.md wording, for reference.';
+  serve(null, a);
+  render(<BudgetView livePollMs={60_000} />);
+  await screen.findByTestId('ledger-bar');
+  const row = screen.getByRole('group', { name: /^Remaining of the \$40 ceiling after the plan: / });
+  expect(within(row).getByText('Claimed (TASK.md)')).toBeInTheDocument();
+  expect(row).not.toHaveTextContent('Claimed (PRD)');
+  const planned = screen.getByRole('group', { name: /^Planned incl\. \$8\.10 posted: / });
+  expect(within(planned).getByText('Claimed (PRD)')).toBeInTheDocument();
+  expect(planned).not.toHaveTextContent('Claimed (TASK.md)');
+  expect(claimedLabelFor(remaining)).toBe('Claimed (TASK.md)');
+  expect(claimedLabelFor(fixture(a, 'planned-usd'))).toBeUndefined();
+  expect(claimedLabelFor({ ...remaining, claimSource: undefined })).toBeUndefined();
 });
 
 test('DS-1 / DS-19 fixture rows reflow by the width of their card, and the scenario grid never orphans a card', () => {

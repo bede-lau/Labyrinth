@@ -6,7 +6,7 @@
 import Ajv2020 from 'ajv/dist/2020';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { LIVE_MODES, validateLiveStatus, validateSavedRun, type LiveStatus, type SavedRun } from './liveContract';
+import { LIVE_MODES, SAVED_RUN_ID, validateLiveStatus, validateSavedRun, type LiveStatus, type SavedRun } from './liveContract';
 
 const CONTRACTS = resolve(__dirname, '../../../contracts');
 const schema = (file: string) => JSON.parse(readFileSync(resolve(CONTRACTS, file), 'utf8'));
@@ -157,6 +157,48 @@ test('validateLiveStatus names what is wrong, starting with the bodies that used
   expect(validateLiveStatus(null)).toBe('$: expected an object, got null');
   expect(validateLiveStatus([idle])).toBe('$: expected an object, got array');
   expect(validateLiveStatus('live')).toBe('$: expected an object, got string');
+});
+
+test('SEED-fe-live-1 saved-run ids are exactly what the server serves: (rehearsal|live)-<12 lowercase hex>, also in fallback.savedRunId', () => {
+  // main/labyrinth_main/features/live_gx/service.py RUN_ID and server/app.py RUN_PATH.
+  expect(SAVED_RUN_ID.source).toBe('^(rehearsal|live)-[0-9a-f]{12}$');
+  for (const id of ['rehearsal-0123456789ab', 'live-abcdef012345']) {
+    expect(SAVED_RUN_ID.test(id), id).toBe(true);
+    expect(validateLiveStatus({ ...fallback, fallback: { ...fallback.fallback, savedRunId: id } }), id).toBeNull();
+    expect(validateSavedRun({ ...savedRun, savedRunId: id }), id).toBeNull();
+  }
+  // Ids the old pattern (^[A-Za-z0-9_.-]{1,80}$) let through, and ids no request could ever be answered for.
+  const refused = ['abc', 'r1', 'run-1', 'a/../b', 'live-abcdef012345/..', 'rehearsal-0123456789AB', 'rehearsal-0123456789a', 'rehearsal-0123456789abc', 'replay-0123456789ab', 'rehearsal-0123456789ab\n', ' live-abcdef012345', ''];
+  for (const id of refused) {
+    expect(SAVED_RUN_ID.test(id), JSON.stringify(id)).toBe(false);
+    expect(validateLiveStatus({ ...fallback, fallback: { ...fallback.fallback, savedRunId: id } }), JSON.stringify(id)).toMatch(/^\$\.fallback\.savedRunId: expected a string matching/);
+    expect(validateSavedRun({ ...savedRun, savedRunId: id }), JSON.stringify(id)).toMatch(/^\$\.savedRunId: expected a string matching/);
+  }
+  // null stays the "no qualified rehearsal recording" value.
+  expect(validateLiveStatus({ ...fallback, fallback: { ...fallback.fallback, savedRunId: null } })).toBeNull();
+});
+
+test('FE2-5 non-finite numbers: the validator accepts finite numbers only, a documented tightening of the schema (pinned here)', () => {
+  const a = ajv();
+  const oracle = (doc: unknown) => a.validate('live-status.schema.json', doc) as boolean;
+  // JSON text that parses to Infinity / -Infinity. JSON Schema has no notion of finiteness, so ajv accepts it; the
+  // backend cannot emit it (json.dumps(..., allow_nan=False)); the validator rejects it and names the value.
+  const cases: [string, string, RegExp][] = [
+    ['budget.billedUsd 1e400', JSON.stringify(idle).replace('"billedUsd":8.1', '"billedUsd":1e400'), /^\$\.budget\.billedUsd: expected a finite number, got Infinity$/],
+    ['budget.ceilingUsd -1e400', JSON.stringify(idle).replace('"ceilingUsd":40', '"ceilingUsd":-1e400'), /^\$\.budget\.ceilingUsd: expected a finite number, got -Infinity$/],
+    ['budget.hardTimeoutS 1e400', JSON.stringify(live).replace('"hardTimeoutS":1500', '"hardTimeoutS":1e400'), /^\$\.budget\.hardTimeoutS: expected an integer, got Infinity$/],
+    ['workers[0].simTime 1e400', JSON.stringify(live).replace('"simTime":12.5', '"simTime":1e400'), /^\$\.workers\[0\]\.simTime: expected a finite number, got Infinity$/],
+    ['workers[0].samples[0].Q 1e400', JSON.stringify(live).replace('"Q":2.1', '"Q":1e400'), /^\$\.workers\[0\]\.samples\[0\]\.Q: expected a finite number, got Infinity$/],
+  ];
+  for (const [what, text, message] of cases) {
+    expect(text, what).toMatch(/e400/); // the replacement happened
+    const doc: unknown = JSON.parse(text);
+    expect(oracle(doc), what).toBe(true);
+    expect(validateLiveStatus(doc), what).toMatch(message);
+  }
+  // Ordinary wrong types keep their message.
+  expect(validateLiveStatus({ ...idle, budget: { ...idle.budget, billedUsd: '8.10' } })).toBe('$.budget.billedUsd: expected a finite number, got string');
+  expect(validateLiveStatus({ ...live, budget: { ...live.budget, hardTimeoutS: 1.5 } })).toBe('$.budget.hardTimeoutS: expected an integer, got 1.5');
 });
 
 test('validateSavedRun agrees with contracts/live-run.schema.json (phases are full live-status snapshots)', () => {

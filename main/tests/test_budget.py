@@ -3,6 +3,7 @@ from decimal import Decimal
 
 import pytest
 
+from labyrinth_main.common import paths
 from labyrinth_main.features.budget import artifact, model, pricing
 
 
@@ -40,7 +41,33 @@ def test_B1_live_demo_ledger_recomputed_with_half_up_cents(art):
     assert live["headline"] == "$1.53 for 15 minutes"
     assert "1.525" in live["derivation"] and "half-up" in live["derivation"]
     assert "same" in live["derivation"] and "before summing (the PRD" not in live["derivation"]
-    assert live["provenance"]["kind"] == "derived" and live["provenance"]["verification"]["outcome"] == "passed"
+    # BE-DATA-7 / cross-RX-3: arithmetic on PRD-reported inputs is not "derived from archives", nor "verified"
+    assert live["provenance"]["kind"] == "prd-reported"
+    assert live["provenance"]["verification"]["outcome"] == "not-applicable"
+    details = live["provenance"]["verification"]["details"]
+    assert details.startswith("Arithmetic re-check of PRD-reported inputs") and "see fixtures" in details
+    assert "matches the PRD's $1.53 / $13.73 / $21.83 at 2 dp" in details and "does not match" not in details
+
+
+def test_B1_live_fixture_mismatch_drives_scenario_verdict(monkeypatch):
+    """BE-DATA-8: a live-demo fixture that no longer matches its claim fails the scenario, and the details say so."""
+    monkeypatch.setattr(pricing, "LIVE_RATE_USD_PER_H", 6.20)
+    a = artifact.build()
+    assert _fx(a, "live-slot-usd")["matches"] is False
+    live = _sc(a, "live-demo")["provenance"]
+    assert live["kind"] == "prd-reported" and live["verification"]["outcome"] == "failed"
+    details = live["verification"]["details"]
+    assert "does not match" in details and "see fixtures" in details and "matches the PRD's" not in details
+
+
+def test_B9_no_budget_scenario_claims_archive_derivation(art):
+    """cross-RX-3 / BE-DATA-7: every recomputed budget figure only re-does arithmetic on PRD-reported inputs (basis
+    "arithmetic"), and contracts/common.schema.json defines "derived" as computed from archives. So no scenario is
+    "derived", and none reads "passed" (which the UI shows as Verified): a matching re-check is "not-applicable"."""
+    for s in art["scenarios"]:
+        assert s["provenance"]["kind"] == "prd-reported", s["id"]
+        assert s["provenance"]["verification"]["outcome"] == "not-applicable", s["id"]
+    assert all(f.get("basis") in (None, "arithmetic") for f in art["fixtures"])
 
 
 def test_B2_published_stella_cpu_hours(art):
@@ -68,7 +95,10 @@ def test_B3_full_grid_days_and_dollars_inside_prd_ranges(art):
     # The range check can fail: a 10 % slower step pushes the dollars out of the PRD range.
     out = artifact.range_fixture("x", "x", (3_100, 3_200), fg.usd * 1.1, 0, "USD")
     assert out["matches"] is False and "OUTSIDE" in out["note"]
-    assert _sc(art, "full-grid-modal")["provenance"]["verification"]["outcome"] == "passed"
+    fg_prov = _sc(art, "full-grid-modal")["provenance"]
+    assert fg_prov["kind"] == "prd-reported" and fg_prov["verification"]["outcome"] == "not-applicable"
+    assert fg_prov["verification"]["details"].startswith("Arithmetic re-check of PRD-reported inputs")
+    assert "inside the PRD's printed ranges" in fg_prov["verification"]["details"]
 
 
 def test_B3_range_fixture_drives_scenario_verdict(monkeypatch):
@@ -76,7 +106,9 @@ def test_B3_range_fixture_drives_scenario_verdict(monkeypatch):
     monkeypatch.setattr(pricing, "FULL_GRID_S_PER_STEP", 19.0 * 1.1)
     a = artifact.build()
     assert _fx(a, "full-grid-usd")["matches"] is False and _fx(a, "full-grid-usd")["claimed"] is None
-    assert _sc(a, "full-grid-modal")["provenance"]["verification"]["outcome"] == "failed"
+    fg_prov = _sc(a, "full-grid-modal")["provenance"]
+    assert fg_prov["kind"] == "prd-reported" and fg_prov["verification"]["outcome"] == "failed"
+    assert "OUTSIDE the PRD's printed ranges" in fg_prov["verification"]["details"]
 
 
 def test_B6_fixture_basis_marks_arithmetic_only_checks(art):
@@ -90,6 +122,31 @@ def test_B6_fixture_basis_marks_arithmetic_only_checks(art):
         assert "basis" not in by_id[fid] and by_id[fid]["computed"] is None
     assert all(f.get("basis") in (None, "arithmetic") for f in by_id.values())
     assert all(f["computed"] is not None for f in by_id.values() if f.get("basis") == "arithmetic")
+
+
+def _prd_budget_section() -> str:
+    text = (paths.REPO_ROOT / "PRD.md").read_text(encoding="utf-8")
+    return text.split("## Budget and presentation figures", 1)[1].split("\n## ", 1)[0]
+
+
+def test_B8_every_claim_is_printed_by_the_source_it_names(art):
+    """BE-DATA-3 / D-023: `claimed` is never a value its source did not print. The PRD's budget section prints every
+    claim except $18.17, which only tasks/04-budget/TASK.md states: that fixture says claimSource "task", so no
+    consumer can show it as a PRD figure; every PRD claim has no claimSource (absent = PRD)."""
+    sources = {"prd": _prd_budget_section(), "task": (paths.REPO_ROOT / "tasks/04-budget/TASK.md").read_text("utf-8")}
+    assert "18.17" not in sources["prd"] and "remaining $18.17" in sources["task"]
+    remaining = _fx(art, "remaining-usd")
+    assert remaining["claimSource"] == "task" and remaining["claimed"] == 18.17
+    assert [f["id"] for f in art["fixtures"] if "claimSource" in f] == ["remaining-usd"]
+    points = [f for f in art["fixtures"] if f["claimed"] is not None]
+    ranges = [f for f in art["fixtures"] if f["claimed"] is None]
+    assert len(points) == 7 and len(ranges) == 4
+    for f in points:
+        printed = f"{f['claimed']:,.{f['printedDecimals']}f}"
+        assert printed in sources[f.get("claimSource", "prd")], (f["id"], printed)
+    for f in ranges:
+        for end in f["claimedRange"]:
+            assert f"{end:,.{f['printedDecimals']}f}" in sources["prd"], (f["id"], end)
 
 
 # ---- D-023 §5: the live budget guard's plan, from the guard itself (D-015) -------------------------------------------

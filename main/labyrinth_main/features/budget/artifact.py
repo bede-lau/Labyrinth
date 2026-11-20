@@ -3,7 +3,8 @@ budget guard's plan (D-015, D-023).
 
 Every recomputed budget fixture is ``basis: "arithmetic"``: its inputs (prices, hours, step counts) are all
 PRD-reported, so the check re-does the PRD's arithmetic and nothing more. The GX benchmark items are not
-recomputable (``computed: null``) and carry no basis.
+recomputable (``computed: null``) and carry no basis. For the same reason every scenario is ``prd-reported``: none is
+``derived`` (computed from archives) and none ``passed`` (BE-DATA-7).
 """
 from __future__ import annotations
 
@@ -32,6 +33,17 @@ PRD_HALVED_USD = (6_200.0, 6_400.0)
 ROUNDING_NOTE = ("Exact decimal arithmetic, rounded half-up to whole cents (the PRD's convention: "
                  "1.525 → $1.53). Rounding per line item or rounding the exact totals once gives the same "
                  "$13.73 and $21.83 here; binary-float round() would give 1.52 / 13.72 / 21.82.")
+
+# BE-DATA-7 / cross-RX-3: the live-demo and full-grid scenarios only redo arithmetic on PRD-reported inputs (every
+# fixture is basis "arithmetic"), so like stella-published they are "prd-reported", never "derived" (= computed from
+# archives, common.schema.json) and never "passed" (shown as Verified). A matching re-check is "not-applicable"; a
+# mismatching one is "failed".
+ARITHMETIC_RECHECK = "Arithmetic re-check of PRD-reported inputs ({inputs}), no archived data behind them"
+
+
+def _recheck_verdict(ok: bool, inputs: str, agrees: str, disagrees: str) -> dict:
+    return {"outcome": "not-applicable" if ok else "failed",
+            "details": f"{ARITHMETIC_RECHECK.format(inputs=inputs)}; {agrees if ok else disagrees}; see fixtures"}
 
 
 def _prd_source() -> dict:
@@ -68,9 +80,11 @@ def fixtures() -> list[dict]:
         fixture("planned-usd", "Planned incl. $8.10 posted", PRD_PLANNED_USD, float(led.planned), 2,
                 f"{led.plan} + {led.posted} = {led.planned}; unrounded {led.planned_exact} "
                 f"(binary-float round() would give {round(float(led.planned_exact), 2)}). {ROUNDING_NOTE}", basis="arithmetic"),
+        # The one claim the PRD does not print (BE-DATA-3): claimSource "task" keeps any consumer from labelling it a
+        # PRD figure (contract common.fixtureCheck.claimSource).
         fixture("remaining-usd", "Remaining of the $40 ceiling after the plan", TASK_REMAINING_USD,
                 float(led.remaining), 2, f"{led.ceiling} − {led.planned}; value from tasks/04-budget/TASK.md "
-                "(the PRD implies it but does not print it).", basis="arithmetic"),
+                "(the PRD implies it but does not print it).", basis="arithmetic", claim_source="task"),
         fixture("stella-published-cpu-h", "Published stella bean: 161 h × 288 processors", PRD_STELLA_CPU_H,
                 float(model.stella_published_cpu_hours()), 0, "Arithmetic recomputed; inputs are PRD-reported.",
                 basis="arithmetic"),
@@ -109,12 +123,14 @@ def scenarios(fx: list[dict]) -> list[dict]:
                                f"${led.posted} provisionally posted earlier, ${led.planned} is planned against the "
                                f"${led.ceiling:.0f} ceiling, leaving ${led.remaining}."),
             "provenance": provenance(
-                "derived", solver_revision="n/a (cost model)", units="USD",
+                "prd-reported", solver_revision="n/a (cost model)", units="USD",
                 coverage="Two 1-h rehearsals + one 15-min live slot + $8.10 posted",
                 sources=[_pricing_source(), _prd_source()], runtime="n/a",
-                outcome="passed" if live_ok else "failed",
-                details=("Recomputed from pricing.py constants; matches the PRD's $1.53 / $13.73 / $21.83 at 2 dp"
-                         if live_ok else "Recomputed ledger does not match the PRD; see fixtures")),
+                **_recheck_verdict(
+                    live_ok, "Modal rate, slot and rehearsal lengths, posted amount; pricing.py",
+                    f"matches the PRD's ${PRD_SLOT_USD:.2f} / ${PRD_PLAN_USD:.2f} / ${PRD_PLANNED_USD:.2f} at 2 dp "
+                    f"and TASK.md's ${TASK_REMAINING_USD:.2f}",
+                    "the recomputed ledger does not match its claims")),
         },
         {
             "id": "stella-published",
@@ -145,12 +161,13 @@ def scenarios(fx: list[dict]) -> list[dict]:
             "interpretation": ("Estimate from three explicit-streaming startup steps. Long-run timestep, I/O and "
                                "restarts can change the total."),
             "provenance": provenance(
-                "derived", solver_revision="stella (startup-step timing; revision not stated in PRD)", units="days, USD",
-                coverage="three startup steps extrapolated to normalised time 1900",
+                "prd-reported", solver_revision="stella (startup-step timing; revision not stated in PRD)",
+                units="days, USD", coverage="three startup steps extrapolated to normalised time 1900",
                 sources=[_pricing_source(), _prd_source()], runtime="n/a (estimate)",
-                outcome="passed" if fg_ok else "failed",
-                details=("Recomputed days and dollars fall inside the PRD's printed ranges" if fg_ok
-                         else "Recomputed values fall outside the PRD ranges; see fixtures")),
+                **_recheck_verdict(
+                    fg_ok, "step count, seconds per startup step, Modal rate",
+                    "recomputed days and dollars fall inside the PRD's printed ranges",
+                    "recomputed days or dollars fall OUTSIDE the PRD's printed ranges")),
         },
         {
             "id": "gx-benchmark",

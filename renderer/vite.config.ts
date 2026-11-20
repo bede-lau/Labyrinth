@@ -97,10 +97,15 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
-    // F13: each test file still runs in its own VM context (fresh module graph and globals: per-file
-    // isolation is kept), but a worker builds its jsdom environment once instead of once per file —
-    // the environment was 64 % of the suite's time. Full suite, 4 workers, same 29 files / 1158 tests:
-    // 137 s with 'threads', 40 s with 'vmThreads'.
+    // F13 (comment corrected, FE2-7): each test file still runs in its own VM context with its own jsdom
+    // window — vitest's runVmTests calls the environment's setupVM() for every file, which creates a new
+    // JSDOM — so globals, the DOM, location, storage and module state start fresh per file
+    // (src/shell/isolation/ + build.test.ts check this deterministically, in one worker). What a worker
+    // keeps between files is the loaded jsdom package and the compiled code of external modules, so they
+    // are not imported again for every file: that import was 64 % of the suite's time. Not isolated: the
+    // worker's real `process` (every context gets the same object), so a test that changes process.env
+    // must restore it. Full suite, 4 workers, same 29 files / 1158 tests: 137 s with 'threads', 40 s with
+    // 'vmThreads'.
     pool: 'vmThreads',
     maxWorkers: testMaxWorkers(),
     // A vm worker that grows past this is recycled before its next file, so a leak cannot exhaust memory.

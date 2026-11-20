@@ -39,6 +39,15 @@
 /* "GPUs may still be billing" on every route: the design system's Alert (DESIGN.md §5), a full-width row
    of the header. Layout only here; the treatment is the Alert's. */
 .shell-alert { flex: 1 1 100%; min-width: 0; }
+/* FE2-1: the header's own Terminate, shown only when the Advance plasma view failed to render. */
+.shell-alert__terminate { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--lab-space-2); }
+.shell-alert__button {
+  min-height: var(--lab-space-8); padding: var(--lab-space-1) var(--lab-space-4);
+  border: 1px solid var(--lab-status-failed-border); border-radius: var(--lab-radius-md);
+  background: var(--lab-color-surface); color: var(--lab-status-failed-fg);
+  font-size: var(--lab-font-size-sm); font-weight: var(--lab-font-weight-medium); cursor: pointer;
+}
+.shell-alert__button:hover { background: var(--lab-color-surface-hover); }
 
 .shell-nav {
   background: var(--lab-color-surface);

@@ -27,11 +27,18 @@ code (2). The same holds when the put of the kill switch failed; every later ter
 
 One terminate round per stop. A stop request makes the session thread finish its step and run one round
 (every worker: kill-switch put + cancel, retried with backoff), which is all WORST_CASE_STOP_S counts.
-`terminate()` runs a round itself only for a session whose thread had already ended (the operator's retry),
-and once more for a queued cancel that settled as failed (there is a call to cancel now). It announces an
+`terminate()` runs a round itself only when the thread ran none for this stop (it had already ended — the
+operator's retry — or its fallback round had begun before the call), and once more for a queued cancel that
+settled during the call (as failed: there is a call to cancel now), whenever it settled. It announces an
 unconfirmed stop BEFORE it waits, and it waits only while a cancel is queued: a cancel that failed hard is
-reported at once, never slept on. During the server's shutdown the HTTP API keeps answering, so
-/api/live/status goes on reading TERMINATE FAILED / TERMINATION PENDING until the process exits.
+reported at once, never slept on. So one call is bounded by `terminate_bound_s(join_timeout_s, wait)` =
+join_timeout_s + 2 x TERMINATE_ROUND_S + wait: 1319.5 s for POST /api/live/terminate (wait 5 s) and 1814 s for
+the shutdown (wait = join_timeout_s), when every Modal call takes its full bound. During the server's shutdown
+the HTTP API keeps answering, so /api/live/status goes on reading TERMINATE FAILED / TERMINATION PENDING until
+the process exits.
+
+Every state file is read so that a malformed one (truncated, wrong types, nested too deep to parse) can only make
+the guard refuse or the gate say "not qualified": it never raises out of status(), launch() or a route.
 """
 from __future__ import annotations
 
@@ -54,7 +61,7 @@ from ...common.paths import CONTRACTS
 from ..budget.pricing import POSTED_USD
 from . import budget_guard as guard
 from .modal_backend import CALL_TIMEOUT_S, LAUNCH_CALLS, POLL_CALLS, TERMINATE_CALLS, availability
-from .orchestrator import NO_REHEARSAL_LABEL, TERMINATE_BACKOFF_S, TUBES, Orchestrator, WorkerBackend
+from .orchestrator import NO_REHEARSAL_LABEL, TERMINATE_BACKOFF_S, TUBES, Orchestrator, WorkerBackend, stopped_wording
 
 BackendFactory = Callable[[str, int], WorkerBackend]  # (run_id, hard_timeout_s) -> backend
 RUN_ID = re.compile(r"^(rehearsal|live)-[0-9a-f]{12}$")
@@ -72,6 +79,16 @@ TERMINATE_ROUND_S = sum(TERMINATE_BACKOFF_S) + len(TUBES) * (1 + len(TERMINATE_B
 WORST_CASE_STOP_S = max(LAUNCH_CALLS, len(TUBES) * POLL_CALLS) * CALL_TIMEOUT_S + POLL_INTERVAL_S + TERMINATE_ROUND_S
 RUN_KEYS = {"savedRunId", "initVerified", "continuationVerified", "checks", "phases"}
 CENT = Decimal("0.01")
+# What reading a state file can raise: missing / unreadable (OSError), not JSON (ValueError), nested deeper than the
+# parser or the schema validator can recurse (RecursionError), wrong shape (KeyError, TypeError).
+UNREADABLE = (OSError, ValueError, KeyError, TypeError, RecursionError)
+
+
+def terminate_bound_s(join_timeout_s: float, wait_s: float) -> float:
+    """Upper bound of one `LiveService.terminate()` when every Modal call takes its full bound: the session
+    thread's step and round (join_timeout_s), this call's own round (only when the thread ran none for this stop),
+    the wait for a queued cancel, and one more round once that cancel settled."""
+    return join_timeout_s + 2 * TERMINATE_ROUND_S + wait_s
 
 
 def default_state_dir() -> Path:
@@ -134,7 +151,7 @@ class LedgerStore:
         except FileNotFoundError:
             # Nothing recorded: the PRD's provisionally posted $8.10 is pending and unreconciled.
             return guard.Ledger(billed=0.0, pending=POSTED_USD, reconciled=False)
-        except (OSError, ValueError, KeyError, TypeError):
+        except UNREADABLE:  # an unusable ledger: the guard refuses it
             return guard.Ledger(billed=float("nan"), pending=float("nan"), reconciled=False)
 
     def save(self, ledger: guard.Ledger) -> None:
@@ -179,17 +196,30 @@ def _run_validator():
     return Draft202012Validator(schema, registry=Registry().with_resources(resources))
 
 
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):  # 1e999 parses as inf
+        raise ValueError(f"non-finite number {text[:40]}")
+    return value
+
+
+def _no_constant(text: str):
+    raise ValueError(f"non-finite number {text}")  # NaN, Infinity, -Infinity
+
+
 def load_saved_run(state_dir: Path, run_id) -> dict | None:
-    """A qualifying saved rehearsal run, or None. Requires: a well-formed id naming an existing file; the
+    """A qualifying saved rehearsal run, or None. Requires: a well-formed id naming an existing file; only
+    finite numbers (jsonschema accepts NaN and inf, which the route could not serve as JSON); the
     whole record valid against contracts/live-run.schema.json; exactly the contract's keys (nothing
     extra); every check true; exactly two phases (initialization + continuation)."""
     if not isinstance(run_id, str) or not RUN_ID.match(run_id):
         return None
     try:
-        rec = json.loads((state_dir / "runs" / f"{run_id}.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if next(_run_validator().iter_errors(rec), None) is not None:
+        rec = json.loads((state_dir / "runs" / f"{run_id}.json").read_text(encoding="utf-8"),
+                         parse_float=_finite_float, parse_constant=_no_constant)
+        if next(_run_validator().iter_errors(rec), None) is not None:  # (an error's message repr()s the value)
+            return None
+    except UNREADABLE:
         return None
     if not (set(rec) == RUN_KEYS and rec["savedRunId"] == run_id and rec["initVerified"] is True
             and rec["continuationVerified"] is True and all(v is True for v in rec["checks"].values())
@@ -201,7 +231,7 @@ def load_saved_run(state_dir: Path, run_id) -> dict | None:
 def load_qualification(state_dir: Path) -> dict | None:
     try:
         q = json.loads((state_dir / "qualification.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except UNREADABLE:
         return None
     ok = isinstance(q, dict) and q.get("initVerified") is True and q.get("continuationVerified") is True \
         and load_saved_run(state_dir, q.get("savedRunId")) is not None
@@ -254,14 +284,23 @@ class LiveService:
         self._lock = threading.Lock()
         self._run: Orchestrator | None = None
         self._thread: threading.Thread | None = None
-        self._launched_before = False  # an earlier session (no longer `_run`) launched a worker
+        self._launched_before: frozenset[int] = frozenset()  # GPUs that earlier sessions (no longer `_run`) launched
+
+    def _launched_gpus(self) -> frozenset[int]:
+        with self._lock:
+            run, before = self._run, self._launched_before
+        return before | (run.launched_gpus if run is not None else frozenset())
 
     @property
     def launched_any(self) -> bool:
         """Whether any session of this service launched a worker (only then can anything be "terminated")."""
-        with self._lock:
-            run, before = self._run, self._launched_before
-        return before or (run is not None and run.launched_any)
+        return bool(self._launched_gpus())
+
+    @property
+    def stopped(self) -> str:
+        """What this service's confirmed terminations stopped, over every session it ran (`stopped_wording` of the
+        GPUs any of them launched): the server's exit line. Meaningful once shutdown() returned True."""
+        return stopped_wording(self._launched_gpus())
 
     def decision(self) -> guard.GuardDecision:
         return guard.evaluate(self.ledger.load())
@@ -297,11 +336,14 @@ class LiveService:
             available = run.saved_run_id is not None and (
                 (qual is not None and qual.get("savedRunId") == run.saved_run_id)  # already loaded and checked above
                 or load_saved_run(self.state_dir, run.saved_run_id) is not None)
-            return run.snapshot(decision.budget_snapshot(), qualified=qual is not None, saved_run_available=available)
+            snap = run.snapshot(decision.budget_snapshot(), qualified=qual is not None, saved_run_available=available)
+            if not decision.ledger_usable:  # the budget's amounts are stand-ins: say so next to them
+                snap["reason"] += " " + decision.reason
+            return snap
         mode, reason, qual = self._gate()
         if run is not None:  # a finished, cleanly terminated session: back to the gate (idle when allowed)
             reason = f"Last session ended: {run.reason} " + reason
-        if mode == "idle" and not decision.approved:
+        if not decision.approved and (mode == "idle" or not decision.ledger_usable):
             reason += " " + decision.reason
         saved = qual["savedRunId"] if qual else None
         if mode == "unavailable":
@@ -348,7 +390,7 @@ class LiveService:
                 return False, f"The ledger could not be updated ({type(e).__name__}: {e}); {kept}, nothing launched."
             run_id = f"live-{uuid.uuid4().hex[:12]}"
             backend = self.backend_factory(run_id, decision.hard_timeout_s)
-            self._launched_before |= self._run is not None and self._run.launched_any
+            self._launched_before |= self._run.launched_gpus if self._run is not None else frozenset()
             self._run = Orchestrator(backend, hard_timeout_s=decision.hard_timeout_s, saved_run_id=qual["savedRunId"])
             self._thread = threading.Thread(target=self._run.run, kwargs={"poll_interval_s": self.poll_interval_s},
                                             name=run_id, daemon=True)
@@ -361,10 +403,13 @@ class LiveService:
         Safe to call repeatedly: each call retries what is still unconfirmed.
 
         The session thread gets up to the worst-case stop time to finish its step and its one terminate round.
-        A round is run here only if the thread did not run one for this stop (the session had already ended).
-        If the stop is then unconfirmed, `on_unconfirmed(reason)` is called FIRST; after that the call waits
-        only while a cancel is queued (e.g. a late spawn), at most `confirm_wait_s`, and gives a queued cancel
-        that settled as failed one more round. Anything still unsettled is reported unconfirmed."""
+        A round is run here only if the thread did not run one for this stop (the session had already ended, or
+        its fallback round had begun before this call). If the stop is then unconfirmed, `on_unconfirmed(reason)`
+        is called FIRST; after that the call waits only while a cancel is queued (e.g. a late spawn), at most
+        `confirm_wait_s`, and gives a queued cancel that settled one more round — also one that settled as failed
+        before the wait began. Anything still unsettled is reported unconfirmed. Bound: `terminate_bound_s`.
+        A confirmed stop says what it stopped, from the worker records: "Workers terminated.", "Nothing was
+        launched." or "GPU 0 (bean) terminated; GPU 1 (triangular) never launched." """
         with self._lock:
             run, thread = self._run, self._thread
         if run is None:
@@ -384,13 +429,17 @@ class LiveService:
         if not confirmed:
             if on_unconfirmed:
                 on_unconfirmed(run.reason)
-            if run.termination_pending:
+            waited = run.termination_pending
+            if waited:
                 run.wait_terminated(wait_s)
-                if not run.termination_pending:  # settled: confirmed, or failed with a call that can now be cancelled
-                    confirmed = run.stop_and_terminate()
+            # settled while waited for (confirmed, or failed with a call that can now be cancelled), or settled as
+            # failed already (e.g. while on_unconfirmed was printing): either way one more round
+            if run.queued_cancel_failed or (waited and not run.termination_pending):
+                confirmed = run.stop_and_terminate()
         if not confirmed:
             return False, run.reason
-        return True, ("Workers terminated." if run.launched_any else "Nothing was launched.")
+        stopped = run.stopped
+        return True, f"{stopped[0].upper()}{stopped[1:]}."
 
     def shutdown(self, on_unconfirmed: Callable[[str], None] | None = None) -> bool:
         """Process exit path (SIGINT/SIGTERM/server shutdown): refuse new launches, never leave GPU workers

@@ -4,6 +4,7 @@ import type { IconName, SeriesId, StatusKind } from '../../design';
 import {
   fallbackCause,
   isLive,
+  launchMayBeRunning,
   liveDanger,
   modePills,
   playableSavedRunId,
@@ -11,8 +12,10 @@ import {
   stopUnconfirmed,
   terminationProblem,
   type LiveState,
+  type LiveStatus,
   type LiveWorker,
   type SavedRun,
+  type TerminateAnswer,
   type TerminationProblem,
 } from '../../lib/liveStatus';
 
@@ -70,6 +73,15 @@ export function modeView(s: LiveState, localProblem: TerminationProblem | null =
     return { pills, title: 'CHECKING — the last status is too old to show', tone: 'warn', icon: 'replay', replay };
   }
   if (s.status === 'unreachable') return { pills, title: 'REPLAY — live API unreachable', tone: 'warn', icon: 'replay', replay };
+  // FE2-3: a launch from this page that may be running is never titled as an idle replay.
+  if ((s.data.mode === 'idle' || s.data.mode === 'fallback') && launchMayBeRunning(s)) {
+    const reports = `the API still reports ${s.data.mode}`;
+    if (s.launchPhase === 'unknown') {
+      return { pills, title: `LAUNCH NOT CONFIRMED — the request got no usable answer and ${reports}; waiting for a current status`, tone: 'warn', icon: 'alert', replay };
+    }
+    const what = s.launchPhase === 'sent' ? 'a launch request is on its way' : 'launch accepted';
+    return { pills, title: `LAUNCHING — ${what}; ${reports}`, tone: 'info', icon: 'rehearsal', replay };
+  }
   switch (s.data.mode) {
     case 'live':
       return { pills, title: 'LIVE — GX running on two GPUs', tone: 'info', icon: 'live', replay };
@@ -83,10 +95,36 @@ export function modeView(s: LiveState, localProblem: TerminationProblem | null =
       return { pills, title: 'REPLAY — last live session terminated', tone: 'info', icon: 'replay', replay };
     case 'idle':
     default:
+      // A session object that lists workers while it reads idle is one whose workers have not started yet
+      // (the 202 answer's own snapshot): it may bill as soon as they do.
       return s.data.workers.length > 0
-        ? { pills, title: 'REPLAY — the API reports idle while a session still lists workers', tone: 'warn', icon: 'replay', replay }
+        ? { pills, title: 'LAUNCHING — the API reports idle while a session already lists workers', tone: 'warn', icon: 'rehearsal', replay }
         : { pills, title: 'REPLAY — qualified and idle; nothing is running', tone: 'info', icon: 'replay', replay };
   }
+}
+
+/**
+ * cross-RX-10: the Workers panel's pill. Workers are listed, so never the replay ("$0") pill: LIVE only for
+ * a live snapshot, the fallback's cause, "Launching…" while a session is starting, otherwise a neutral pill
+ * naming the mode (the states shown are the last ones reported).
+ */
+export function workersPill(d: LiveStatus, live: boolean): Pill {
+  if (live) return { status: 'live', text: 'LIVE' };
+  if (d.mode === 'fallback') return { status: 'failed', text: fallbackCause(d) };
+  if (d.mode === 'launching' || d.mode === 'idle') return { status: 'rehearsal', text: 'Launching…' };
+  return { status: 'not-applicable', text: d.mode };
+}
+
+/**
+ * FE2-2: a Terminate answer shown by this page holds only until a LATER snapshot (not the one on screen right
+ * after the answer) settles it. A failure goes once a later snapshot shows a clean end: no danger and nothing
+ * that may bill (the backend reports every termination confirmed). A confirmation goes once a later snapshot
+ * reports a session (launching or live) that it does not describe.
+ */
+export function terminateAnswerExpired(answer: Pick<TerminateAnswer, 'confirmed' | 'seen'>, s: LiveState): boolean {
+  if (s.status !== 'ready' || s.data === answer.seen) return false;
+  if (answer.confirmed) return s.data.mode === 'launching' || s.data.mode === 'live';
+  return liveDanger(s) === null && !sessionMayBeBilling(s.data);
 }
 
 /** A snapshot counts as fresh only with a timestamp, for `freshForMs` after it arrived. */
@@ -110,12 +148,28 @@ const LAUNCH_LOCKED: Record<NonNullable<LiveState['launchPhase']>, string> = {
   unknown: 'The launch request got no usable answer; waiting for a current status to show whether a session started.',
 };
 
+/** FE2-2: a failed Terminate answered to this page blocks Launch for as long as it is shown. */
+export const LOCAL_TERMINATE_UNCONFIRMED = 'The last Terminate sent from this page was not confirmed; GPUs may still be billing.';
+
 /**
- * L10: why Launch is not allowed right now, or null when it is. Allowed only for a fresh snapshot
- * with mode "idle" and `budget.slotFits`, with no session left over and no launch lock held (FA-4:
- * after a 202 until the mode changes; after a 409 or no answer, until the next snapshot).
+ * cross-RX-5: `budget.slotFits` is the budget guard's approval (ledger reconciled, values usable, and under the
+ * ceiling: budget_guard.py `"slotFits": self.approved`), not a ceiling fit. Quote the guard's own clause when
+ * the reason carries it (service.py appends it to an idle status).
  */
-export function launchBlockedReason(s: LiveState, now: number): string | null {
+function guardRefusal(d: LiveStatus): string {
+  const at = d.reason.search(/budget guard refused/i);
+  return at >= 0 ? `The budget guard refuses this slot: "${d.reason.slice(at).trim()}"` : 'The budget guard refuses this slot (the API gives no reason).';
+}
+
+/**
+ * L10: why Launch is not allowed right now, or null when it is. Allowed only for a fresh snapshot with mode
+ * "idle", or a settled fallback of a qualified service (cross-RX-4: no termination or stop marker, i.e. every
+ * termination confirmed; the service accepts the next launch and keeps the fallback label until then), whose
+ * budget guard approves the slot (`budget.slotFits`), with no session left over, no launch lock held (FA-4:
+ * after a 202 until the mode changes; after a 409 or no answer, until the next snapshot) and no failed
+ * Terminate of this page still shown (`localTerminateFailed`).
+ */
+export function launchBlockedReason(s: LiveState, now: number, localTerminateFailed = false): string | null {
   if (s.status === 'connecting') return 'Waiting for /api/live/status.';
   if (s.status === 'unreachable') {
     if (s.cause === 'stale') return 'The last status is too old; waiting for a current one.';
@@ -124,17 +178,20 @@ export function launchBlockedReason(s: LiveState, now: number): string | null {
       : 'The live API is not reachable (static replay build).';
   }
   const d = s.data;
-  if (d.mode !== 'idle') return `Launch needs mode "idle"; the API reports "${d.mode}".`;
+  if (d.mode !== 'idle' && d.mode !== 'fallback') return `Launch needs mode "idle"; the API reports "${d.mode}".`;
   if (terminationProblem(d) || stopUnconfirmed(d)) return 'A termination is unconfirmed; GPUs may still be billing.';
-  if (d.workers.length > 0) return 'The API still lists workers from a session.';
-  if (d.budget.slotFits !== true) return 'The next slot does not fit under the budget ceiling.';
+  if (localTerminateFailed) return LOCAL_TERMINATE_UNCONFIRMED;
+  if (d.mode === 'fallback' && d.qualified !== true) return 'Launch after a fallback needs a qualified service; the API does not report one.';
+  // A fallback lists the last state of its (terminated) workers; an idle snapshot that lists any is a session starting.
+  if (d.mode === 'idle' && d.workers.length > 0) return 'The API still lists workers from a session.';
+  if (d.budget.slotFits !== true) return guardRefusal(d);
   if (s.launchLocked) return LAUNCH_LOCKED[s.launchPhase ?? 'accepted'];
   if (!isFresh(s, now)) return 'The last status is not fresh; waiting for the next poll.';
   return null;
 }
 
-export function canLaunch(s: LiveState, now: number): boolean {
-  return launchBlockedReason(s, now) === null;
+export function canLaunch(s: LiveState, now: number, localTerminateFailed = false): boolean {
+  return launchBlockedReason(s, now, localTerminateFailed) === null;
 }
 
 /** What this page itself knows beyond the status poll. */

@@ -7,6 +7,26 @@
 
 ## Session 3 (2026-11-20, maintainer on Opus) — live log, newest first
 
+- **Review round complete: all six areas APPROVED** (workflow `labyrinth-final-fix-and-review`, run `wf_293e54ad-a02`, 11 agents, 23 min).
+  49 of the 50 open confirmed findings fixed (fe-features 18, gates 19, be-data 6, be-live 5, design 1); `verify.sh all` exit 0 (71 gate, 331 backend,
+  1349 frontend tests; boundary self-test now 134 violation shapes). Final reviewers found no blocker/major. **Open, accepted as minor / follow-up:**
+  | Item | Area | What |
+  |---|---|---|
+  | cross-RX-2 | be-live + fe + contract | **PRD gap:** the live comparison of new GX samples with the archive (200–300 / 300–400 means, stationarity, saturated-agreement gate) is not computed; the backend says so in `reason`. Needs a live-status contract field (decision first). interface.md §10 |
+  | FR-FE-LIVE-1 | fe-live | if the Advance view crashes during an ordinary live session (no danger marker), the header offers no Terminate; the backend hard timeout (1500 s) still caps cost |
+  | FR-FE-LIVE-2 | fe-live | worker-list `SectionBoundary resetKey={data}` retries and warns every poll on a persistent render error |
+  | design-r3-N1 | design | DESIGN.md says Alert body/action changes "are not announced" (nested `aria-live="off"`); WebKit/VoiceOver may still announce them |
+  | RV-G21, RV-G22 | gates | boundary scanner: a cwd built by a call, and `$1`/`$@`/`%~dp0` heads before `..`, are not treated as dynamic (narrow, obfuscation-adjacent) |
+  | RV-G23, RV-G5 (part) | gates | test gaps: probe-copy `-ef` identity walk and setup-dev version check can be removed with tests green; ci.yml is line-checked, not YAML-parsed (no PyYAML) |
+  | be-live-r4-1 | be-live | no test for the running-session branch of the unusable-ledger reason (cross-RX-7) |
+- **Review run `labyrinth-review-to-approval` (wf_7a2a8d29-81f) was stopped at the owner's request** ("too redundant, shorten it") after ~2 h / 257 agents.
+  Cross review: 11 findings (3 major). 42 confirmed findings were fixed. Cause of the redundancy: the owner's mid-run chat question ("why is there a
+  budget plan") was relayed to the running fixers as "the user request", and most fixers (gates ×4 rounds, fe-features ×4, be-data r1/r3/r4, be-live r1)
+  refused to edit, so reviewers re-raised the same findings each round. The loop also only stopped when a round had nothing to fix, so minors kept it going.
+  The maintainer fixed one item directly: saved-run id pattern in both contracts (D-023 item 7).
+- **Owner asked to shorten the process (2026-11-20 ~21:50):** no more skeptic panels or multi-round loops; one short fix+review round, then one verifier
+  per task with at most one fix round.
+
 - **Wave 3 done (workflow `labyrinth-wave3-leftovers`), committed locally, NOT reviewed yet.** `verify.sh all` exit 0: 59 gate, 274 backend,
   1164 frontend tests; the renderer suite now takes ~35 s (was ~150 s: vitest `vmThreads`, F13).
   | Agent | Result |
@@ -19,7 +39,7 @@
   | docs | interface.md §1–§10 and architecture.md rewritten against the code |
   Known open, carried into the review round: saved-run id pattern is stricter on the server (`^(rehearsal|live)-[0-9a-f]{12}$`) than in `live-run.schema.json` /
   `live-status.schema.json` / `renderer/src/lib/liveContract.ts` `SAVED_RUN_ID` (`^[A-Za-z0-9_.-]{1,80}$`); DESIGN.md §5 says stop-unconfirmed is "not in the store yet" (it is)
-  and lacks the panel-only "LAUNCH NOT CONFIRMED" alert; `POST /api/live/runs/*` answers 404 (documented).
+  and lacks the panel-only "LAUNCH NOT CONFIRMED" alert; `POST /api/live/runs/*` answers 404 (since fixed: 405 `Allow: GET` for a served id).
   Process note: messaging a running workflow agent by id started a duplicate copy; it was stopped (memory note added).
 - **Decided this session:** D-023 (contract tightenings, closes interface.md §10). Launch after a 409 re-enables on the next fresh snapshot that allows
   launching (nothing was launched); after a 202 it stays disabled until the mode changes.

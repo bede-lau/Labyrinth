@@ -86,7 +86,7 @@ Dev: vite proxies `/api` → `127.0.0.1:8787` (`renderer/vite.config.ts`). **The
 Checked first on every request: `Host` not loopback (`127.0.0.1 | localhost | [::1]`, optional port) or an `Origin` present and not `http(s)://` loopback → **403**.
 Only GET and POST exist: every other method (PUT, DELETE, PATCH, OPTIONS, HEAD, TRACE, CONNECT, any token) → **405** `{ok:false, reason:"method X not allowed; this API answers only GET and POST"}`
 (HEAD: no body) with `Allow: GET` (GET routes, `/api/live/runs/*`, `/artifacts/*`), `POST` (launch, terminate) or `GET, POST` (unknown paths).
-GET on a POST route → 405 `Allow: POST`; POST on a GET route or `/artifacts/*` → 405 `Allow: GET`; POST on `/api/live/runs/*`, and GET or POST on an unknown path → 404.
+GET on a POST route → 405 `Allow: POST`; POST on a GET route or `/artifacts/*` → 405 `Allow: GET`; POST on `/api/live/runs/<id matching the pattern below>` → 405 `Allow: GET` (`{"ok":false,"reason":"use GET"}`); POST on any other `/api/live/runs/*`, and GET or POST on an unknown path → 404.
 A connection that stops sending is dropped after `REQUEST_TIMEOUT_S` = 15 s without an answer. Error bodies are `{ok:false, reason}`.
 
 | Method + path | Request | Response |
@@ -94,7 +94,7 @@ A connection that stops sending is dropped after `REQUEST_TIMEOUT_S` = 15 s with
 | `GET /api/health` | — | `200 {"ok":true,"version":"0.1.0"}` |
 | `GET /api/live/status` | — | `200` live-status snapshot (`contracts/live-status.schema.json`) |
 | `GET /api/live/stream` | — | SSE, `data: <live-status JSON>\n\n` every 1 s. **Max 8 concurrent streams → 503**. The renderer does not use it; it polls status |
-| `GET /api/live/runs/<savedRunId>` | served only for ids matching `^(rehearsal\|live)-[0-9a-f]{12}$` (narrower than the schema's pattern, §10) | `200` saved rehearsal run (`contracts/live-run.schema.json`: exactly savedRunId, initVerified, continuationVerified, checks{init,continuation,distinctDevices,overlap}, phases[1..2] of live-status; closed at every level) · `404` if the id does not match, or the file is missing, invalid, has other keys, a false check or not exactly 2 phases |
+| `GET /api/live/runs/<savedRunId>` | served only for ids matching `^(rehearsal\|live)-[0-9a-f]{12}$` (the same pattern as both contracts, D-023 item 7) | `200` saved rehearsal run (`contracts/live-run.schema.json`: exactly savedRunId, initVerified, continuationVerified, checks{init,continuation,distinctDevices,overlap}, phases[1..2] of live-status; closed at every level) · `404` if the id does not match, or the file is missing, invalid, has other keys, a false check or not exactly 2 phases |
 | `POST /api/live/launch` | `Content-Type: application/json`, body ≤ 4096 bytes `{"confirmCostUsd": <number>}` equal to the current `budget.slotEstimateUsd` at two decimals, exactly (2.65 and 2.650 match $2.65; 2.6549 does not) | `202 {ok:true, reason:"Launched live-<12 hex>; $2.65 reserved as pending.", status}` · **every** refusal is `409 {ok:false, reason:"launch refused: <why>", status}` and launches nothing: Content-Type; Content-Length invalid, > 4096 or longer than the body (`body ended before its Content-Length`); not JSON (also too deeply nested); not an object; no `confirmCostUsd`; `confirmCostUsd must equal the current slot estimate $2.65 to the cent (got …)`; unavailable / not qualified (the gate's reason); guard refusal (unreconciled, over the ceiling, unusable ledger amounts); ledger locked by another process; `The ledger could not be updated (…)`; a session still running or unconfirmed; `The server is shutting down; no new sessions.` |
 | `POST /api/live/terminate` | the body is never read | `200 {ok:true, reason, status}` only when every launched worker's cancel is confirmed: `Workers terminated.`, `Nothing was launched.` (the session launched no worker) or `Nothing running.` · otherwise `502 {ok:false, reason, status}` (retry it): the session's reason (danger strings below) or `Session thread still running after N s; termination unconfirmed. …`. A kill-switch-only stop is always 502. Blocks while the session thread ends its step and terminate round (≤ `join_timeout_s` = 499.5 s), then while a queued cancel settles (≤ 5 s) |
 | `GET /artifacts/<file>` | path-traversal protected (encoded/double-encoded/backslash/absolute/NUL/symlink-escape → 404) | the committed artifact file |
@@ -257,6 +257,9 @@ Helper scripts (D-020): `dev.sh` (toolchain PATH wrapper, caps `VITEST_MAX_WORKE
 
 ## 10. Known interface gaps
 
-- Saved-run ids: `live-run.schema.json` (and the renderer's `SAVED_RUN_ID`) allow `^[A-Za-z0-9_.-]{1,80}$`, but the backend writes, loads and serves only `^(rehearsal|live)-[0-9a-f]{12}$`; a schema-valid id outside that is a 404.
+- **Live comparison is not computed (PRD "Check transport", review finding cross-RX-2).** New GX bean samples are converted to archive units and
+  can be overlaid, but nothing computes the PRD's live comparison (time-weighted means on 200–300 and 300–400 when covered, stationarity,
+  saturated-agreement gate) for them; the backend says so in `reason` ("Live comparison NOT computed: …") and the UI must not imply otherwise.
+  Closing it needs a live-status contract field for the comparison (decision entry first) and the transport statistics applied to the live trace.
 - `common.verification.outcome` still permits `passed` for geometry `provenance.verification`; only a backend test (`test_geometry.py`) keeps it `blocked`/`failed`. `acceptance129` itself is schema-fixed.
 - Modal API details (`cancel(terminate_containers=True)`, `startup_timeout`, `(request, limit)` tuples, `scaledown_window`, `Image.env`, `modal.is_local()`) were written against knowledge of modal 1.x, **not an installed `modal==1.6.4`**.
