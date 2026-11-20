@@ -33,15 +33,18 @@ def main() -> int:
         for s in SECTIONS:
             if s not in text:
                 errors.append(f"{rel}: missing section '{s}'")
+        if len(re.findall(r"^## Status[ \t]*$", text, re.M)) != 1:
+            errors.append(f"{rel}: must contain exactly one '## Status' heading")
         m = re.search(r"^## Status[ \t]*\n+[ \t]*[`*_ ]*([A-Za-z][A-Za-z\-]*)", text, re.M)
         status = m.group(1).upper() if m else "?"
         if status not in STATES:
             errors.append(f"{rel}: Status must be one of {sorted(STATES)}, found {status!r}")
         if status == "DONE":
             v = t.parent / "VERIFY.md"
-            verdicts = re.findall(r"^Verdict: (PASS|FAIL)[ \t]*$", v.read_text(), re.M) if v.exists() else []
+            body = re.sub(r"^```.*?^```", "", v.read_text(), flags=re.M | re.S) if v.exists() else ""  # ignore fenced output
+            verdicts = re.findall(r"^Verdict:[ \t]*(PASS|FAIL)\b.*$", body, re.M)
             if not verdicts or verdicts[-1] != "PASS":
-                errors.append(f"{rel}: Status DONE but {v.relative_to(ROOT)} has no final line 'Verdict: PASS' from the verifier")
+                errors.append(f"{rel}: Status DONE but {v.relative_to(ROOT)} has no final 'Verdict: PASS' line (outside code fences) from the verifier")
     if errors:
         for e in errors:
             print(f"DOCS ERROR: {e}", file=sys.stderr)

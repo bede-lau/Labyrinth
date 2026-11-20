@@ -1,50 +1,48 @@
-# Verify: 00-scaffold
-Verifier run: 2026-11-19, commit 1cdc976 (HEAD, clean) verified in an isolated `git worktree` at
-`/tmp/claude-0/-home-user-Labyrinth/7ab7c93d-a99a-5137-bbf3-e77ff0f80ade/scratchpad/verify-00`, with
-`renderer/node_modules` symlinked from the main tree. The main working tree was not used, because other
-agents are editing it at the same time. Every mutation was reverted, and `git status --porcelain` was
-`?? renderer/node_modules` (the symlink) before and after each probe. The worktree was removed afterwards.
+# Verify: 00-scaffold (re-verification)
+Verifier run: 2026-11-19, commit 0884d0b (HEAD; includes fix commit 408ce44), clean, verified in an isolated
+`git worktree` at `/tmp/claude-0/-home-user-Labyrinth/7ab7c93d-a99a-5137-bbf3-e77ff0f80ade/scratchpad/verify-00b`
+with `renderer/node_modules` symlinked from the main tree. `git status --porcelain` was `?? renderer/node_modules`
+(the symlink) before and after every probe. Every mutation was reverted. The worktree was removed afterwards.
+
+## Previous run: FAIL (findings F1–F11)
+The run at 1cdc976 found 13 of 14 boundary bypass shapes getting through, including an end-to-end leak of
+`main/` source into the `vite build` output (F1–F4). It also found a DONE gate that could be fooled (F5),
+stop-hook gaps (F6–F8) and three low-severity items (F9–F11). Commit 408ce44 addressed them.
+**This run: every F1–F11 item is fixed.** All 14 old bypass shapes, the tsconfig/vite alias and the old
+end-to-end leak now exit 2 in the scanner, in the Edit hook and in the Bash hook. However, a fresh, plain
+(non-obfuscated) shape still leaks end to end: an **absolute-path import** (N1 below). It worked as a ban
+in the old checker and was lost in the rewrite.
 
 ## Outcomes
 | # | Expected outcome | Test | Independent probe | Result |
 |---|---|---|---|---|
-| 1 | `main/` and `renderer/` exist; imports between them are rejected | `check_boundaries.py --self-test`: 6 planted / 2 clean (6 violations caught, 2 clean files passed) | 18 planted violations in the real tree were all caught by the scanner and the hook, each exiting 2. **14 bypass shapes were tried and 13 got through.** One bypass was shown end to end: a `vite.config.ts` alias plus a template-literal `import()` put backend source into `renderer/dist` while `boundary: OK` | **FAIL**: holds for quoted static, dynamic, require and export-from imports and for Python `import` statements; does not hold for template-literal `import()`, path aliases, `importlib`/`__import__`, or a `sys.path` hack with a `)` before "renderer" |
-| 2 | `verify.sh` runs boundary → docs → lint → tests → artifact schema/freshness → typecheck → tests → build; exits 2 on any failure or bad invocation | `bash scripts/verify.sh nope` → 2 | Clean `all` → 0. Each of these exits 2: bad scope, failing pytest, ruff F401, stale manifest, schema-invalid manifest, extra uncommitted artifact, TS type error, failing vitest, tampered raw file | PASS (low: `verify.sh ''` is accepted as `all`) |
-| 3 | PostToolUse boundary hook and Stop verify loop both exit 2 on failure | none automated (TASK says "see VERIFY.md") | Post-edit hook, fed hook JSON: exits 2 on all 18 planted violations. `stop_verify.sh`: clean tree → 0 (skips verify, 0.011 s); dirty tree with green verify → 0; failing pytest → 2, 2, then 0 (released) with `LABYRINTH_MAX_STOP_BLOCKS=2`; after the fix → 0 and the counter resets | PASS (findings F6–F8) |
-| 4 | Pinned raw inputs with sha256 checks | `pytest main/tests/test_common.py -k sha256` (5 passed) | `sha256sum data/raw/*` matches all 5 pins. Appending 1 byte to `stella_test2_vmec_geometry.in` makes the test fail and `verify.sh main` exit 2 | PASS (low: README digest typo, F9; no check for unpinned new files, F10) |
-| 5 | Handoff docs exist: status, architecture, decision, CLAUDE, tasks/*/TASK.md | `python3 scripts/check_docs.py` → OK (10 task folders) | Each of these exits 2: missing decision.md, empty status.md, missing `## Tests`, `DONE` with no VERIFY.md, `DONE` with VERIFY "Verdict: FAIL" | PASS (medium: F5, the DONE gate can be fooled) |
+| 1 | `main/` and `renderer/` exist; imports between them are rejected | `check_boundaries.py --self-test`: 28 violations caught, 7 clean files passed. `scripts/tests/test_gates.py`: self-test, per-violation, hook. A mutation that drops template-literal scanning makes 2 tests fail | 37 old shapes (18 old-caught, 15 old-bypass, 3 old sys.path shapes, plus `@backend` usage) re-run: every real violation now exits 2 in the scanner, the Edit hook, the Bash hook and the full scan. The tsconfig `paths` alias and the vite alias are caught. The old e2e leak: `verify.sh all` exits 2. Of 33 fresh attempts, 13 were caught, 20 missed. **2 plain shapes leak to `dist/`: an absolute path and `/@fs/`** | **FAIL**: absolute-path and `/@fs/` specifiers are not resolved (N1, medium; a regression from 1cdc976). The other misses are obfuscation, deliberate symlinks/config, or low-severity |
+| 2 | `verify.sh` runs boundary → docs → lint → tests → artifacts → typecheck → tests → build; exits 2 on any failure or bad invocation | `test_verify_rejects_bad_invocations_with_2` | Clean `all` → 0. `''` → 2, `main extra` → 2, `nope` → 2 (F11 fixed). The boundary violation (e2e leak) → `all` 2. An unpinned raw file → `main` 2 | PASS |
+| 3 | PostToolUse boundary hook and Stop verify loop both exit 2 on failure | `test_post_edit_hook_*`, `test_stop_hook_*` (3 tests). A mutation to a shared counter fails `test_stop_hook_counters_are_per_session` | The hook exits 2 on Edit payloads and on `{"tool_name":"Bash"}` payloads for every caught shape (F8 fixed). Stop hook, real runs: committed-broken HEAD with a clean tree → 2 (F6 fixed). Counters A and B are independent; A is released after MAX, B is unaffected (F7 fixed). Green HEAD skip 0.04 s | PASS |
+| 4 | Pinned raw inputs with sha256 checks | `pytest main/tests/test_common.py -k "sha256 or pinned"`: 6 passed | The README digest now ends in `…602d`, matching `sha256sum` (F9 fixed). Planting `data/raw/zz_unpinned.bin` → `test_every_raw_file_is_pinned` FAILED, `verify.sh main` 2 (F10 fixed) | PASS |
+| 5 | Handoff docs exist and the DONE gate is sound | `test_docs_gate_*` (2 tests). A substring-check mutation fails `test_docs_gate_requires_final_verdict_line` | The template line, `FAIL (supersedes … PASS)`, PASS-then-FAIL, `` `DONE` ``, `Done`, `- DONE` and `DONE ✅` all → 2 (F5 fixed). Residual: a final `Verdict: FAIL — reason` line is not counted as a verdict (N9, low-medium) | PASS (low findings) |
 
 ## Real output
 
-### Baseline: `bash scripts/verify.sh all` in the worktree → EXIT=0
+### Baseline at HEAD: `bash scripts/verify.sh all` → EXIT=0
 ```
 ━━━ [boundary:self-test] $ python3 scripts/check_boundaries.py --self-test
-boundary self-test: OK (6 violations caught, 2 clean files passed)
+boundary self-test: OK (28 violations caught, 7 clean files passed)
 ━━━ [boundary:scan] $ python3 scripts/check_boundaries.py
-boundary: OK (35 files scanned)
+boundary: OK (34 files scanned)
 ━━━ [docs:handoff] $ python3 scripts/check_docs.py
 docs: OK (10 task folders)
-━━━ [main:lint] $ python3 -m ruff check main scripts
-All checks passed!
-━━━ [main:tests] $ python3 -m pytest -q main/tests
-9 passed in 0.07s
-━━━ [artifacts:schema] $ python3 scripts/validate_artifacts.py
-artifacts: schema-valid
-━━━ [artifacts:fresh] $ python3 scripts/validate_artifacts.py --check-fresh
-artifacts: fresh (byte-identical rebuild)
-...
- Test Files  2 passed (2)
-      Tests  2 passed (2)
 ...
 ✓ built in 140ms
 ━━━ verify.sh summary (scope: all)
   PASS  boundary:self-test (0s)
   PASS  boundary:scan (0s)
   PASS  docs:handoff (0s)
+  PASS  scripts:tests (1s)
   PASS  main:lint (0s)
   PASS  main:tests (0s)
-  PASS  artifacts:schema (0s)
-  PASS  artifacts:fresh (1s)
+  PASS  artifacts:schema (1s)
+  PASS  artifacts:fresh (0s)
   PASS  renderer:typecheck (1s)
   PASS  renderer:tests (1s)
   PASS  renderer:build (1s)
@@ -52,198 +50,199 @@ verify.sh: all stages passed.
 EXIT=0
 ```
 
-### Boundary: planted violations that must be caught (scanner per file, then the hook fed `{"tool_input":{"file_path":"<abs>"}}`)
-The files were in `renderer/src/__probe/` and `main/labyrinth_main/__probe/`:
-c1 `import x from '../../../main/…'`; c2 the same with double quotes; c3 `await import('../../../main/…')`;
-c4 `require("../../../main/x")`; c5 `export { z } from '…main…'`; c6 a multi-line `import {\n a,\n b,\n} from '…main…'`;
-c7 side-effect `import '…main…'`; c8 `export * from "…main…"`; c9 `import y from 'labyrinth_main/common'`;
-c10 an absolute `/home/user/Labyrinth/main/…`; c11 `../../../scripts/check_docs`; c12 `import fs = require('…main…')`;
-c13 `../../../contracts/foo.ts` (not JSON); p1 `from renderer.src import app`; p2 `sys.path.insert(0, '../renderer')`;
-p3 `import os, renderer.src as r`; p4 `import renderer` inside a function; p5 a multi-line `sys.path.append(\n "../../renderer/src"\n)`.
+### `python3 -m pytest -q -p no:cacheprovider scripts/tests`, `verify.sh boundary`, `verify.sh docs` (clean tree)
 ```
-c10_abs.ts             check=2 hook=2
-c11_scripts.ts         check=2 hook=2
-c12_tsimporteq.ts      check=2 hook=2
-c13_contracts_ts.ts    check=2 hook=2
-c1_rel.ts              check=2 hook=2
-c2_dq.ts               check=2 hook=2
-c3_dyn.ts              check=2 hook=2
-c4_req.js              check=2 hook=2
-c5_exportfrom.ts       check=2 hook=2
-c6_multiline.ts        check=2 hook=2
-c7_sideeffect.ts       check=2 hook=2
-c8_exportstar.ts       check=2 hook=2
-c9_bare.ts             check=2 hook=2
-p1.py                  check=2 hook=2
-p2.py                  check=2 hook=2
-p3.py                  check=2 hook=2
-p4.py                  check=2 hook=2
-p5.py                  check=2 hook=2
-```
-Full scan with the probes present: `python3 scripts/check_boundaries.py` → `BOUNDARY VIOLATION … (18 lines)` `full scan EXIT=2`.
-The hook prints the violation on stderr:
-```
-BOUNDARY VIOLATION: main/ and renderer/ must never import each other.
-Exchange data through artifacts/ (JSON validated by contracts/) or the HTTP API instead.
-  - renderer/src/__probe/c2_dq.ts:1: renderer imports '../../../main/labyrinth_main/common/io' which leaves renderer/ (resolves to main/labyrinth_main/common/io)
-hook EXIT=2
-```
-`renderer/vite.config.ts` with `import x from '../main/labyrinth_main/foo.json'` appended → `vite.config direct EXIT=2` (caught).
+..........                                                               [100%]
+10 passed in 0.64s
+pytest EXIT=0
 
-### Boundary: bypass attempts (check=0 means the violation was NOT detected)
-```
-b1_template.ts         check=0 hook=0    const m = await import(`../../../main/labyrinth_main/x`);
-b2_alias.ts            check=0 hook=0    import x from '@backend/common/io';
-b3_concat.ts           check=0 hook=0    const p = '../../../ma' + 'in/x'; await import(p);
-b4_tripleslash.ts      check=0 hook=0    /// <reference path="../../../main/labyrinth_main/types.d.ts" />
-b5_globimport.ts       check=0 hook=0    import.meta.glob('../../../main/**/*.py', { as: 'raw' })
-b6_newurl.ts           check=0 hook=0    new URL('../../../main/labyrinth_main/x.py', import.meta.url)
-b7_comment.ts          check=2 hook=2    import /* c */ x from '../../../main/x';   (caught)
-b8_vue.vue             check=0 hook=0    <script setup>import x from '../../../main/x'</script>
-q1.py                  check=0 hook=0    importlib.import_module("renderer.src")
-q2.py                  check=0 hook=0    sys.path.insert(0, str(Path(__file__).parents[3] / "renderer"))
-q3.py                  check=0 hook=0    sys.path += ["../renderer"]
-q4.py                  check=0 hook=0    __import__("renderer")
-q5.py                  check=0 hook=0    site.addsitedir("../renderer")
-q6.py                  check=0 hook=0    RENDERER = "../renderer"; sys.path.insert(0, RENDERER)
-q7.py                  check=0 hook=0    from \<newline> renderer import app
-```
-Shapes of the `sys.path` hack:
-```
-zz1 check=2 :: sys.path.insert(0, str(ROOT / "renderer"))
-zz2 check=0 :: sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "renderer"))
-zz3 check=0 :: sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "renderer"))
-```
-Path alias in tsconfig: with `"paths": {"@be/*": ["../main/labyrinth_main/*"]}` and `import x from '@be/common/io'`, the result was
-`boundary: OK (36 files scanned)` `EXIT=0`. A hook run on the edited `renderer/tsconfig.json` gave `hook(tsconfig) EXIT=0`
-(the hook does not check JSON config). The alias was only caught when the specifier itself contained `labyrinth_main`.
+━━━ [boundary:scan] $ python3 scripts/check_boundaries.py
+boundary: OK (34 files scanned)
+━━━ [scripts:tests] $ python3 -m pytest -q -p no:cacheprovider scripts/tests
+10 passed in 0.62s
+━━━ verify.sh summary (scope: boundary)
+  PASS  boundary:self-test (0s)
+  PASS  boundary:scan (0s)
+  PASS  scripts:tests (1s)
+verify.sh: all stages passed.
+verify.sh boundary EXIT=0
 
-End-to-end leak. I added `resolve: { alias: { '@backend': resolve(import.meta.dirname, '../main') } }` to
-`renderer/vite.config.ts` and created `renderer/src/leak.ts` with
-`import viaAlias from '@backend/pyproject.toml?raw'` and ``import(`../../main/labyrinth_main/build_artifacts.py?raw`)``,
-then imported it from `main.tsx`. Result:
-```
-boundary: OK (36 files scanned)
-boundary EXIT=0
-hook(vite.config.ts) EXIT=0
-dist/assets/build_artifacts-CHcqJRNj.js    2.20 kB │ gzip:  1.04 kB
-dist/assets/index--ZlVQTfi.js            221.77 kB │ gzip: 69.58 kB
-✓ built in 156ms
-$ grep -l 'Labyrinth backend' renderer/dist/assets/*.js
-renderer/dist/assets/index--ZlVQTfi.js            <- main/pyproject.toml text inside the renderer bundle
-```
-(Under vitest, Vite's dev-server `fs.allow` refused the same import with `Error: Denied ID …/main/pyproject.toml?raw`.
-That block comes from Vite, not from the project gate, and `vite build` does not apply it.)
-
-### verify.sh exit codes
-```
-$ bash scripts/verify.sh nope; echo $?
-verify.sh: unknown scope 'nope' (expected all|main|renderer|boundary|artifacts|docs)
-EXIT=2
-
-$ bash scripts/verify.sh ''     -> runs every stage (scope: all) ... empty-scope EXIT=0
-
-# planted main/tests/test_zz_probe.py: assert 1 == 2
-$ bash scripts/verify.sh main
-FAILED main/tests/test_zz_probe.py::test_probe_fails - assert 1 == 2
-1 failed, 9 passed in 0.08s
-  FAIL  main:tests (1s)
-verify.sh: FAILED — fix the stages above and re-run. Exiting 2.
-failing-pytest EXIT=2
-
-# artifacts/manifest.json rewritten with generator.version "0.0.9" (still schema-valid)
-$ bash scripts/verify.sh artifacts
-artifacts: schema-valid
-ARTIFACT ERROR: artifacts/manifest.json: stale or non-deterministic — regenerate with `cd main && python3 -m labyrinth_main.build_artifacts`
-  PASS  artifacts:schema (0s)
-  FAIL  artifacts:fresh (0s)
-verify.sh: FAILED — fix the stages above and re-run. Exiting 2.
-stale-manifest EXIT=2
-
-# manifest schemaVersion "one"
-ARTIFACT ERROR: manifest.json: $.schemaVersion: 1 was expected
-  FAIL  artifacts:schema (0s)
-  FAIL  artifacts:fresh (1s)
-schema-invalid EXIT=2
-
-# extra artifacts/extra.json
-ARTIFACT ERROR: artifacts/extra.json: committed but no longer generated
-uncommitted-extra EXIT=2
-
-clean artifacts EXIT=0
-
-# main/labyrinth_main/zz_lint_probe.py = "import os"
-F401 [*] `os` imported but unused
-  FAIL  main:lint (0s)
-lint EXIT=2
-# renderer/src/zz_type_probe.ts = export const n: number = 'str';
-src/zz_type_probe.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.
-  FAIL  renderer:typecheck (1s)
-typecheck EXIT=2
-# renderer/src/zz.test.ts = expect(1).toBe(2)
- FAIL  src/zz.test.ts > x
-  FAIL  renderer:tests (1s)
-vitest EXIT=2
+━━━ [docs:handoff] $ python3 scripts/check_docs.py
+docs: OK (10 task folders)
+━━━ verify.sh summary (scope: docs)
+  PASS  docs:handoff (0s)
+verify.sh docs EXIT=0
 ```
 
-### stop_verify.sh
+### Previous probes re-run
+Harness: write a file, then run `check_boundaries.py FILE`, the hook with `{"tool_name":"Edit","tool_input":{"file_path":…}}`, the hook with `{"tool_name":"Bash",…}`, and a full scan. Then revert.
 ```
-porcelain: []
-clean-tree(skip) EXIT=0        real 0m0.011s   (verify not run)
-porcelain: [?? renderer/node_modules]
-dirty-but-green EXIT=0         counter=0
-# planted failing pytest, LABYRINTH_MAX_STOP_BLOCKS=2
-failing attempt 1 EXIT=2 counter=1
-failing attempt 2 EXIT=2 counter=2
-failing attempt 3 EXIT=0 counter=0
-  stderr(1): scripts/verify.sh FAILED (exit 2) — attempt 1/2. Fix these before stopping:
-             FAILED main/tests/test_zz_probe.py::test_probe_fails - assert 1 == 2
-               FAIL  main:tests (0s)
-  stderr(3): stop_verify: verify.sh still failing after 2 attempts; releasing the stop. Record the blocker in status.md.
-after-fix EXIT=0 counter=0
+c1     renderer/src/__probe/c1_rel.ts             check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+c2 … c13 (dq, dyn, require, export-from, multiline, side-effect, export*, bare labyrinth_main,
+   absolute …/main/labyrinth_main/…, scripts/, import=require, contracts/*.ts)         all   2 2 2 2  CAUGHT
+p1 … p5 (from renderer, sys.path '../renderer', import os, renderer.src, nested import, multi-line append)  all 2 2 2 2 CAUGHT
+b1     renderer/src/__probe/b1_template.ts        check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+b2     renderer/src/__probe/b2_alias.ts           check=0 hook(Edit)=0 hook(Bash)=0 fullscan=0  MISSED   (bare '@backend/…' alone; the alias *definition* is the violation, caught below)
+b3     renderer/src/__probe/b3_concat.ts          check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+b4     renderer/src/__probe/b4_tripleslash.ts     check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+b5     renderer/src/__probe/b5_globimport.ts      check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+b6     renderer/src/__probe/b6_newurl.ts          check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+b7     renderer/src/__probe/b7_comment.ts         check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+b8     renderer/src/__probe/b8_vue.vue            check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+q1     main/labyrinth_main/__probe/q1.py          check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT   importlib.import_module("renderer.src")
+q2     main/labyrinth_main/__probe/q2.py          check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+q3     main/labyrinth_main/__probe/q3.py          check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+q4     main/labyrinth_main/__probe/q4.py          check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+q5     main/labyrinth_main/__probe/q5.py          check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+q6     main/labyrinth_main/__probe/q6.py          check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+q7     main/labyrinth_main/__probe/q7.py          check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+zz1    main/labyrinth_main/__probe/zz1.py         check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+zz2    main/labyrinth_main/__probe/zz2.py         check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT   os.path.join(dirname(__file__),"..","..","renderer")
+zz3    main/labyrinth_main/__probe/zz3.py         check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT
+al-vt  renderer/vite.config.ts                    check=2 hook(Edit)=2 hook(Bash)=2 fullscan=2  CAUGHT   vite resolve.alias -> ../main
+```
+The tsconfig `paths` alias `"@be/*": ["../main/labyrinth_main/*"]` plus `import x from '@be/common/io'`:
+```
+  - renderer/tsconfig.json:28: renderer references backend module/path '../main/labyrinth_main/*'
+fullscan EXIT=2
+hook(tsconfig) EXIT=2
+```
+The old end-to-end leak: a `resolve.alias '@backend' → ../main` in vite.config.ts, plus `leak.ts` with `@backend/pyproject.toml?raw` and a template-literal `import()`:
+```
+  - renderer/vite.config.ts:35: renderer path '../main' leaves renderer/ (resolves to main)
+  - renderer/src/leak.ts:4: renderer references backend module/path '../../main/labyrinth_main/build_artifacts.py?raw'
+boundary EXIT=2
+hook(Edit vite.config.ts) EXIT=2
+hook(Edit leak.ts) EXIT=2
+hook(Bash) EXIT=2
+verify.sh boundary EXIT=2
+verify.sh all EXIT=2   (FAIL  boundary:scan; every other stage PASS)
+```
+(Running `vite build` on its own still bundles the text: Vite does not know about the gate. The gate is what fails.)
+
+### Fresh bypass attempts (33)
+```
+n01  '../../../ma' + 'in/x'                                  CAUGHT   (the first half already leaves renderer/)
+n02  '..' + '/../../main/x'                                  MISSED   obfuscation
+n03  ['..','..','..','ma'+'in','x'].join('/')                MISSED   obfuscation
+n04  vite.config: path.join(dirname, '..', 'main')           CAUGHT
+n05  src: path.join(__dirname,'..','..','..','main')         CAUGHT   (bare 'main' is flagged)
+n06  test: readFileSync(resolve(process.cwd(), '../main/pyproject.toml'))   MISSED   N3 (resolved relative to file, not cwd)
+n07  test: readFileSync('../data/raw/wout_w7x_kjm.nc')        MISSED   N3
+n08  import t from '/@fs<abs>/main/pyproject.toml?raw'        MISSED   N1, leaks to dist/
+n09  import t from '<abs>/main/pyproject.toml?raw'            MISSED   N1, leaks to dist/
+n10  import.meta.resolve('../../../main/x.js')               CAUGHT
+n11  CSS @import url(../../../main/x.css)  (unquoted)        MISSED   N6
+n12  CSS @import '../../../main/x.css'                       CAUGHT
+n13  /* don't */ import x from '../../../main/x';            MISSED   N5 (an apostrophe shifts quote pairing)
+n14  <p>Don't</p>; import('../../../main/x')  (same line)    MISSED   N5
+n15  renderer/tsconfig.node.json with paths ../main/*        MISSED   N4 (file not scanned)
+n16  <script type=module src=../../../main/x.js>  (unquoted) MISSED   N6
+n17  '..\\..\\..\\main\\x' (backslashes)                     MISSED   out of scope (does not resolve on Linux)
+n18  new Worker(new URL('../../../main/w.js', import.meta.url))      CAUGHT
+n19  vite alias { '@backend': '/home/user/Labyrinth/main' }  MISSED   N1
+n20  fetch('/@fs/home/user/Labyrinth/data/raw/…')            MISSED   N1
+p01  getattr(importlib, 'import_module')('renderer.src')     MISSED   N7
+p02  exec('import renderer')                                 MISSED   obfuscation
+p03  runpy.run_module('renderer.app')                        MISSED   N7
+p04  runpy.run_path('../renderer/x.py')                      CAUGHT
+p05  Path('..') / ('rend' + 'erer')                          MISSED   obfuscation
+p06  sys.path.insert(0, os.environ['RENDERER_DIR'])          MISSED   out of scope (runtime config)
+p07  MODULE = 'renderer.app'; importlib.import_module(MODULE)  MISSED N7
+p08  importlib.import_module('.src', package='renderer')     CAUGHT
+p09  b'../renderer'.decode()                                 MISSED   obfuscation
+p10  spec_from_file_location('r', '/repo/renderer/x.py')     CAUGHT
+p11  f'{ROOT}/renderer/src'                                  CAUGHT
+p12  pkgutil.resolve_name('renderer.src:app')                MISSED   N7
+p13  '../front' + 'end'                                      MISSED   obfuscation
+s1   symlink renderer/src/be -> ../../main + import './be/pyproject.toml?raw'   CAUGHT (resolve() follows the link)
+s2   same symlink + import.meta.glob('./**/*.toml', {query:'?raw'})  MISSED  N2, leaks to dist/ (count 1)
+s3   file symlink renderer/src/cfg.toml -> main/pyproject.toml + import         CAUGHT
+s4   package.json "labyrinth-main": "file:../main" + 'labyrinth-main/…'          MISSED  N8
+s5   main/pyproject.toml pythonpath = ["../renderer"]                             MISSED  N8 (only .py is scanned in main/)
+fp1  renderer: document.querySelector('main')       -> fullscan=2  FALSE POSITIVE (N10)
+fp2  main: logging.getLogger('renderer')             -> fullscan=2  FALSE POSITIVE (N10)
+```
+N1 end to end (`leaked` imported from `main.tsx`, then `npx vite build`):
+```
+spec=<worktree>/main/pyproject.toml?raw boundary EXIT=0
+✓ built in 141ms
+backend text in bundle: 1
+spec=/@fs<worktree>/main/pyproject.toml?raw boundary EXIT=0
+✓ built in 143ms
+backend text in bundle: 1
+```
+Regression check: the 1cdc976 checker rejects the same files, and HEAD accepts them.
+```
+  - renderer/src/__p/abs.ts:1: absolute import '<worktree>/main/pyproject.toml?raw' is banned in renderer/
+  - renderer/src/__p/abs2.ts:1: absolute import '/home/user/Labyrinth/main/pyproject.toml?raw' is banned in renderer/
+old(1cdc976) EXIT=2
+boundary: OK (2 files scanned)
+new(HEAD) EXIT=0
 ```
 
-### Raw data sha256
+### Stop hook, real runs (`LABYRINTH_VERIFY_CMD="bash scripts/verify.sh main"`, MAX=2, separate state dir, symlink removed so the tree is clean)
 ```
-$ python3 -m pytest main/tests/test_common.py -k sha256 -v
-... 5 PASSED ...
-======================= 5 passed, 4 deselected in 0.02s ========================
-$ sha256sum data/raw/* | grep -v README
-8560015e04a44819d1fdf596b7597f1d7f32254f494c3daa04e0f701bc6f9d4a  data/raw/stella_benchmark_DOI_10_1017_S0022377822000393.h5
-5c156224ded135408879aa7ddec09a66ec99a354b469f9e5ad3967188425602d  data/raw/stella_test2_vmec_geometry.geometry
-ea741f75e855d26238496e0c2594421526dc6e93e467ed009724124745cd011d  data/raw/stella_test2_vmec_geometry.in
-efccb0d34a3d5ba9489e5d0cce9f1c1136909730e52a38e4689e9064bf2dd491  data/raw/stella_test2_vmec_geometry.vmec.geo
-a811669f3eb50e2a7aa006afc591dc7d5b58d6b66b72ba2a5e5933088810fbf6  data/raw/wout_w7x_kjm.nc
-# mutation: printf 'x' >> data/raw/stella_test2_vmec_geometry.in
-FAILED main/tests/test_common.py::test_raw_inputs_match_pinned_sha256[stella_test2_vmec_geometry.in-ea741f…]
-1 failed, 4 passed, 4 deselected in 0.02s
-verify main EXIT=2
+1 clean tree, no last_green -> verify runs, green       EXIT=0  1.83s  counter(A)=0 last_green=0884d0b
+2 clean tree, HEAD==last_green -> skip                  EXIT=0  0.04s  counter(A)=0 last_green=0884d0b
+committed broken HEAD=cf6e4c8 porcelain: []
+3 committed-broken, clean tree, HEAD moved -> verify    EXIT=2  1.81s  counter(A)=1 last_green=0884d0b
+4 session A again                                       EXIT=2  1.74s  counter(A)=2 last_green=0884d0b
+5 session B (independent counter)                       EXIT=2  1.80s  counter(B)=1 last_green=0884d0b
+6 session A third -> released (MAX=2)                   EXIT=0  1.72s  counter(A)=0 last_green=0884d0b
+stop_verify: verify still failing after 2 attempts; releasing the stop. Record the blocker in status.md.
+7 session B second                                      EXIT=2  1.79s  counter(B)=2 last_green=0884d0b
+reset HEAD=0884d0b
+8 fixed (back to green HEAD) session B                  EXIT=0  0.05s  counter(B)=0 last_green=0884d0b
+```
+(The probe commit lived only on the worktree's detached HEAD and was reset away.)
+
+### Docs gate (F5); TASK.md/VERIFY.md mutated in the worktree, then restored
+```
+DONE + final verdict PASS line                                  -> EXIT=0
+DONE + template 'Verdict: PASS | FAIL'                          -> EXIT=2
+DONE + 'Verdict: FAIL (supersedes earlier Verdict: PASS)'       -> EXIT=2
+DONE + PASS line then bare FAIL line                            -> EXIT=2
+DONE + line-start PASS line, final 'Verdict: FAIL — reason'     -> EXIT=0   <- N9
+DONE + PASS line only inside a ``` fence                        -> EXIT=0   <- N9
+DONE + previous FAIL report                                     -> EXIT=2
+Status `DONE` / Done / DONE ✅ (with FAIL VERIFY)                -> EXIT=2 each
+Status '- DONE'                                                 -> EXIT=2 (found '?')
+second '## Status' heading saying DONE (first says VERIFYING)   -> EXIT=0   <- N9 (low)
+restored                                                        -> EXIT=0
 ```
 
-### check_docs.py
+### F9/F10/F11 and mutations
 ```
-docs: OK (10 task folders)                         clean EXIT=0
-DOCS ERROR: decision.md missing or empty           no decision.md EXIT=2
-DOCS ERROR: status.md missing or empty             empty status.md EXIT=2
-DOCS ERROR: tasks/00-scaffold/TASK.md: missing section '## Tests'                   EXIT=2
-DOCS ERROR: … Status DONE but tasks/00-scaffold/VERIFY.md lacks 'Verdict:<sp>PASS' …   DONE without VERIFY EXIT=2
-DOCS ERROR: … (VERIFY.md = "Verdict: FAIL")                                          EXIT=2
-docs: OK   DONE + VERIFY.md "Verdict:<sp>PASS | FAIL" (the verifier.md template line)   EXIT=0   <- should be 2
-docs: OK   DONE + VERIFY.md "Verdict: FAIL (supersedes earlier Verdict:<sp>PASS)"       EXIT=0   <- should be 2
-docs: OK   Status "`DONE`" (backticks), no VERIFY.md                                  EXIT=0   <- should be 2
+data/raw/README.md:10 … | `5c156224…602d` |      sha256sum: 5c156224…425602d   (F9 fixed)
+FAILED main/tests/test_common.py::test_every_raw_file_is_pinned   verify main with unpinned file EXIT=2   (F10 fixed)
+verify.sh: empty scope argument                          empty EXIT=2
+verify.sh: expected at most one scope argument, got 2    extra-arg EXIT=2
+verify.sh: unknown scope 'nope' (…)                      nope EXIT=2                      (F11 fixed)
+
+mutant: STRING without template literals -> self-test EXIT=2
+  self-test FAIL: missed violation in renderer/src/v08.ts …   v09.ts …
+  FAILED test_boundary_self_test_catches_all_known_bypasses, test_boundary_each_violation_individually
+mutant: shared stop counter      -> FAILED test_stop_hook_counters_are_per_session
+mutant: substring verdict check  -> FAILED test_docs_gate_requires_final_verdict_line
 ```
 
 ## Findings
-- **F1 (medium): the boundary checker does not see template-literal dynamic imports.** In `scripts/check_boundaries.py:32-34`, `JS_SPEC` only matches `'` and `"` quotes, so ``import(`../../main/…`)`` passes. Vite resolves it, and the e2e probe above put backend source into the production bundle.
-- **F2 (medium): path aliases bypass the boundary.** A `resolve.alias` in `renderer/vite.config.ts` or `compilerOptions.paths` in `renderer/tsconfig.json` that points into `../main` is not checked. A specifier like `@backend/…` is caught only if it contains `main/`, starts with `main`/`@main`, or contains `labyrinth_main` (`check_boundaries.py:67`). The hook skips `tsconfig.json`, and the scanner does not look inside call expressions such as `resolve(import.meta.dirname, '../main')`.
-- **F3 (medium): common `sys.path` hacks are missed.** In `check_boundaries.py:36`, `PY_PATH_HACK` stops at the first `)`, so `sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "renderer"))` and `…str(Path(__file__).parents[2] / "renderer")` both pass. The first is the usual idiom. `sys.path += […]`, `site.addsitedir(…)` and passing the path through a variable are also missed.
-- **F4 (low): other Python and JS forms are missed.** These pass: `importlib.import_module("renderer…")`, `__import__("renderer")` and a backslash-continued `from \ renderer import` (`check_boundaries.py:35`); `import.meta.glob`, `/// <reference path>` and `new URL(…, import.meta.url)`; and any non-JS file in renderer such as `.vue`, `.svelte` or `index.html` (`check_boundaries.py:28,87-92`). String concatenation in `import(p)` cannot be caught by any static check.
-- **F5 (medium): the DONE gate in `check_docs.py` can be fooled.** (In this file, `<sp>` stands for a single space. The literal string is spelled out nowhere here, so that this FAIL report cannot satisfy the gate it describes.) At `scripts/check_docs.py:39` it accepts any VERIFY.md that contains the substring `Verdict:<sp>PASS`, including the template line `Verdict:<sp>PASS | FAIL` from `.claude/agents/verifier.md` and `Verdict: FAIL (supersedes … Verdict:<sp>PASS)`. At `:35`, a status written as `` `DONE` `` (backticks) or `Done` is not recognised, so the VERIFY requirement is skipped. Suggested fix: match `^Verdict:<sp>PASS\s*$` on the last verdict line.
-- **F6 (low): committing broken code skips the Stop verify loop.** `scripts/hooks/stop_verify.sh:20` skips verification when `git status --porcelain` is empty. An agent that commits a failing change and then stops is never verified.
-- **F7 (low): concurrent agents share one Stop counter.** `stop_verify.sh:14` keeps a single counter at `.claude/state/stop_blocks`. One agent's green run resets another agent's count, and failures from several agents add up toward the release threshold.
-- **F8 (low): edits made through Bash skip the PostToolUse hook.** The matcher at `.claude/settings.json:5` is `Edit|Write|MultiEdit`, so `cat > file` or `sed -i` via Bash is not checked at edit time. The Stop hook's `boundary:scan` still catches it later. There is no automated regression test for either hook or for verify.sh's exit codes; only the checker's own self-test exists.
-- **F9 (low): wrong digest in the data README.** `data/raw/README.md:10` shows the `.geometry` digest as `5c156224…a4d`. The real and pinned value ends in `…425602d`. The test uses the correct full value.
-- **F10 (low): new raw files are never checked.** `main/tests/test_common.py:10-16` checks a fixed dictionary. A new unpinned file in `data/raw/` is never hashed. Suggested fix: assert that the set of files equals `PINNED.keys() | {"README.md"}`.
-- **F11 (low): an empty scope runs everything.** `scripts/verify.sh:17` uses `${1:-all}`, so `verify.sh ''` runs every stage and exits 0 instead of rejecting the empty scope. Extra arguments are silently ignored.
+Previous F1–F11: all fixed. Each was re-probed above.
 
-Verdict: FAIL — outcomes 2–5 hold and the full gate is green at HEAD (`verify.sh all` exit 0). Outcome 1, "imports between them are rejected", does not fully hold: a template-literal `import()` plus a path alias put `main/` source into the renderer production build while `check_boundaries.py` and the post-edit hook both exited 0 (F1, F2). The idiomatic `os.path.join(os.path.dirname(__file__), …, "renderer")` sys.path hack also passes (F3). These are the same kinds of case the self-test claims to cover ("dynamic import", "sys.path hack"). F5 is also a gate weakness that matters for later tasks.
+- **N1 (medium, blocking): absolute and `/@fs/` specifiers are not resolved.** In `scripts/check_boundaries.py:79`, only `./`, `../`, `.` and `..` are resolved. A spec starting with `/` is skipped unless it contains `labyrinth_main` (`:43`). `import t from '/home/user/Labyrinth/main/pyproject.toml?raw'`, the `/@fs/…` form, and a vite alias with an absolute `replacement` all pass with `boundary: OK`. Probes n08 and n09 put `main/` text into the `vite build` bundle. This is one plain line of code, not obfuscation, and it is a **regression**: the 1cdc976 checker banned absolute imports in renderer. Agents in this environment see absolute paths in every tool result, so this is a realistic accidental shape. Fix: strip a leading `/@fs`. For any spec starting with `/`, resolve it as an absolute filesystem path when that path (or its parent directory) exists, and otherwise as relative to `renderer/`. Apply the same inside/contracts/artifacts rule. Add n08, n09 and n19 to `VIOLATIONS`.
+- **N2 (low): a symlink inside renderer/ to main/ is not flagged by itself.** Explicit imports through it are caught (s1, s3), because `resolve()` follows links. But `import.meta.glob('./**/*.toml')` through `renderer/src/be -> ../../main` leaked into `dist/` (s2). Creating that symlink is a deliberate act. Fix: in `iter_files` (`:152`), flag any symlink under `renderer/` or `main/` that resolves to the other side or to `data/`/`scripts/`.
+- **N3 (low-medium): fs paths that are relative to cwd are resolved relative to the file.** `readFileSync('../data/raw/…')` or `resolve(process.cwd(), '../main/…')` in a renderer test resolves, for the checker, to `renderer/src/…` and passes (n06, n07). At runtime the cwd is `renderer/`, so the read reaches `data/raw` or `main`. This is test-time coupling, not bundle coupling. Possible fix: also flag `../<main|data|scripts>/` when resolved against `renderer/` itself.
+- **N4 (low): only `tsconfig.json`, `jsconfig.json` and `package.json` are scanned among JSON files** (`:38`). The `tsconfig.app.json` and `tsconfig.node.json` from the Vite template, and any `tsconfig.*.json`, are skipped (n15). TS `paths` alone does not change Vite resolution unless `vite-tsconfig-paths` is added. Fix: scan `renderer/**/tsconfig*.json`.
+- **N5 (low): the quote tokenizer is not comment- or JSX-aware.** An apostrophe outside a string on the same line (`/* don't */ import …`, `<p>Don't</p>; import(…)`) pairs with the specifier's opening quote, so the path is never seen (n13, n14). A lone backtick in a comment would swallow lines up to the next backtick in the same way. Prettier-formatted code rarely puts these on one line.
+- **N6 (low): unquoted CSS `url(…)` and unquoted HTML attributes are not strings, so they are not seen** (n11, n16).
+- **N7 (low): Python dotted module names are only checked as direct `import_module`/`__import__` arguments** (`:128`, `:44`). `runpy.run_module('renderer.app')`, `pkgutil.resolve_name`, a module name in a variable, or `getattr(importlib,'import_module')` pass. The impact is small: `renderer/` contains no Python, so these cannot load anything today. Fix: flag any string constant matching `^renderer(\.|:|$)`.
+- **N8 (low): non-source config is out of scan.** A package.json dependency `"file:../main"` (the value does not start with `../`) plus a bare `labyrinth-main/…` passes (s4). `main/pyproject.toml` `pythonpath = ["../renderer"]` passes, because only `.py` files in main/ are scanned (`:142`).
+- **N9 (low-medium): the DONE gate's verdict parsing.** In `scripts/check_docs.py:42`, only `^Verdict: (PASS|FAIL)\s*$` counts. A final `Verdict: FAIL — reason` (the format `.claude/agents/verifier.md` asks for: "FAIL with the exact reason") is ignored, so an earlier line-start PASS line, for example quoted output, decides the result. A PASS line inside a code fence also counts. Only the first `## Status` heading is read (`:36`). Fix: take the last line matching `^Verdict:` and require it to be exactly `Verdict: PASS`.
+- **N10 (low, false positives): legitimate strings are flagged.** The bare string `'main'` in renderer (`document.querySelector('main')`, ARIA `role: 'main'`) and the string `'renderer'` in main (`logging.getLogger('renderer')`, argparse choices) both fail the gate (fp1, fp2). This will cause friction once real UI or server code lands.
+- **N11 (low): a gate test writes into the real tree.** `scripts/tests/test_gates.py:38` creates `renderer/src/__gate_test_violation.ts` in the repo. With concurrent agents in the main tree, another agent's boundary scan or Bash-hook run that overlaps the test sees a transient violation. Use `tmp_path` with a copied hook ROOT instead.
+- Out of scope (string-level obfuscation or runtime configuration, which no static lint can reasonably stop): n02, n03, n17, p02, p05, p06, p09, p13. These matter only against an adversarial author, not against accidental coupling.
+
+Outcomes 2–5 hold, and every previous finding F1–F11 is fixed and covered by mutation-checked tests. Outcome 1 still fails for one realistic, non-obfuscated shape: a single absolute-path (or `/@fs/`) import line or vite alias puts `main/` source into the renderer production build while `check_boundaries.py`, both hook payloads and `verify.sh all` stay green (N1, a regression from 1cdc976). Fix N1, and preferably N9, then re-verify.
+
+Verdict: FAIL

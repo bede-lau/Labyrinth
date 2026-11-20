@@ -33,14 +33,14 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(os.environ.get("LABYRINTH_ROOT") or Path(__file__).resolve().parent.parent).resolve()
 RENDERER_EXT = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".html", ".vue", ".svelte", ".css"}
-RENDERER_JSON = {"tsconfig.json", "jsconfig.json", "package.json"}
+RENDERER_JSON = re.compile(r"^(?:tsconfig|jsconfig)(?:\.[\w-]+)?\.json$|^package\.json$")
 SKIP_DIRS = {"node_modules", "dist", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache", "coverage"}
 
 # Any quoted string: '...', "...", `...` (template literals stop at the first ${ for resolution).
 STRING = re.compile(r"""'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|\\.)*)`""")
-BACKEND_SPEC = re.compile(r"^(?:@main|main|labyrinth_main|@labyrinth_main)(?:/|$)|(?:^|/)labyrinth_main(?:/|$)")
+BACKEND_SPEC = re.compile(r"^(?:@main|main)/|^@?labyrinth_main(?:/|$)|(?:^|/)labyrinth_main(?:/|$)")
 RENDERER_PATH = re.compile(r"(?:^|[/\\])renderer(?:$|[/\\])")
 
 
@@ -76,17 +76,30 @@ def check_renderer(path: Path, root: Path) -> list[str]:
         if BACKEND_SPEC.search(spec):
             errors.append(f"{where}: renderer references backend module/path '{raw}'")
             continue
-        if not (spec.startswith("./") or spec.startswith("../") or spec in {".", ".."}):
-            continue
-        target = (path.parent / spec).resolve()
-        if _inside(target, renderer):
-            continue
-        if _inside(target, contracts) and (target.suffix == ".json" or target == contracts):
-            continue
-        if _inside(target, artifacts):
-            continue  # data, not code: artifacts are JSON produced by main/ under contract
-        shown = target.relative_to(root) if _inside(target, root.resolve()) else target
-        errors.append(f"{where}: renderer path '{raw}' leaves renderer/ (resolves to {shown})")
+        # (target, strict): strict = must stay inside renderer/ (or contracts/*.json, artifacts/);
+        # non-strict = flagged only if it lands in a backend-owned tree (main/, scripts/, data/).
+        candidates: list[tuple[Path, bool]] = []
+        if spec.startswith("/@fs/"):
+            candidates.append((Path(spec[len("/@fs"):]).resolve(), False))  # vite raw-filesystem URL
+        elif spec.startswith("/") and len(spec) > 1:
+            # Root-relative URLs ('/artifacts/x.json', '/src/main.tsx') are served from renderer/;
+            # only a real filesystem path into a backend tree matters.
+            candidates.append((Path(spec).resolve(), False))
+        elif spec.startswith("./") or spec.startswith("../") or spec in {".", ".."}:
+            candidates.append(((path.parent / spec).resolve(), True))  # how bundlers resolve it
+            candidates.append(((renderer / spec).resolve(), False))  # how node/vitest resolve it from cwd
+        banned = [(root / d).resolve() for d in ("main", "scripts", "data")]
+        for target, strict in candidates:
+            if strict:
+                if _inside(target, renderer) or _inside(target, artifacts) or not _inside(target, root):
+                    continue
+                if _inside(target, contracts) and (target.suffix == ".json" or target == contracts):
+                    continue
+            elif not any(_inside(target, b) for b in banned):
+                continue
+            shown = target.relative_to(root) if _inside(target, root) else target
+            errors.append(f"{where}: renderer path '{raw}' leaves renderer/ (resolves to {shown})")
+            break
     return errors
 
 
@@ -137,7 +150,7 @@ def check_main(path: Path, root: Path) -> list[str]:
 
 def check_file(path: Path, root: Path) -> list[str]:
     side = _side(path, root)
-    if side == "renderer" and (path.suffix in RENDERER_EXT or path.name in RENDERER_JSON):
+    if side == "renderer" and (path.suffix in RENDERER_EXT or RENDERER_JSON.match(path.name)):
         return check_renderer(path, root)
     if side == "main" and path.suffix == ".py":
         return check_main(path, root)
@@ -194,6 +207,13 @@ VIOLATIONS = {
     "renderer/index.html": '<script type="module" src="../main/x.js"></script>\n',
     "renderer/src/v13.ts": "import x from '@main/foo';\n",
     "renderer/src/v14.ts": "import s from '../../contracts/notjson.ts';\n",
+    # verifier run 2 (N1, N3, N4): absolute paths, vite /@fs/, cwd-relative paths, tsconfig.*.json
+    "renderer/src/v26.ts": "import t from '{ROOT}/main/pyproject.toml?raw';\n",
+    "renderer/src/v27.ts": "import t from '/@fs{ROOT}/main/pyproject.toml?raw';\n",
+    "renderer/vite.config.mts": "export default { resolve: { alias: { '@b': '{ROOT}/main' } } };\n",
+    "renderer/src/v28.test.ts": "const p = resolve(process.cwd(), '../main/labyrinth_main/x.py');\n",
+    "renderer/src/v29.test.ts": "const raw = readFileSync('../data/raw/wout_w7x_kjm.nc');\n",
+    "renderer/tsconfig.app.json": '{ "compilerOptions": { "paths": { "@b/*": ["../main/*"] } } }\n',
     # main: imports
     "main/labyrinth_main/v15.py": "from renderer.src import app\n",
     "main/labyrinth_main/v16.py": "import os, renderer.src as r\n",
@@ -210,7 +230,8 @@ VIOLATIONS = {
 }
 CLEAN = {
     "renderer/src/ok1.ts": "import React from 'react';\nimport s from '../../contracts/geometry.schema.json';\nimport { a } from './lib/a';\n",
-    "renderer/src/ok2.ts": "const r = await fetch('/artifacts/geometry.json');\nconst label = 'the main process';\nconst t = `../${x}`;\n",
+    "renderer/src/ok2.ts": "const r = await fetch('/artifacts/geometry.json');\nconst label = 'the main process';\nconst t = `../${x}`;\n"
+    "const el = document.querySelector('main');\nconst s = '/src/main.tsx';\nconst api = '/api/live/status';\n",
     "renderer/src/ok3.test.ts": "const A = resolve(__dirname, '../../artifacts');\nconst C = resolve(__dirname, '../../contracts');\n",
     "renderer/index.html": None,  # replaced below for the clean pass
     "main/labyrinth_main/ok.py": (
@@ -226,7 +247,7 @@ def self_test() -> int:
         for sub in ("renderer/src/lib", "main/labyrinth_main", "contracts", "artifacts", "scripts", "data/raw"):
             (root / sub).mkdir(parents=True, exist_ok=True)
         for rel, body in VIOLATIONS.items():
-            (root / rel).write_text(body)
+            (root / rel).write_text(body.replace("{ROOT}", str(root)))
             if not check_file(root / rel, root):
                 failures.append(f"missed violation in {rel}: {body.strip()!r}")
         (root / "renderer/index.html").write_text('<script type="module" src="/src/main.tsx"></script>\n')

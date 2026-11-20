@@ -26,7 +26,7 @@ def test_boundary_each_violation_individually(tmp_path):
     for rel, body in check_boundaries.VIOLATIONS.items():
         p = root / rel
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(body)
+        p.write_text(body.replace("{ROOT}", str(root)))
         assert check_boundaries.run([p], root) == 2, rel
 
 
@@ -34,17 +34,24 @@ def test_boundary_bad_flag_exits_2():
     assert run([sys.executable, "scripts/check_boundaries.py", "--nope"]).returncode == 2
 
 
-def test_post_edit_hook_exits_2_on_violation_and_0_when_clean():
-    bad = ROOT / "renderer/src/__gate_test_violation.ts"
-    try:
-        bad.write_text("import x from '../../main/labyrinth_main/foo';\n")
-        payload = json.dumps({"tool_input": {"file_path": str(bad)}})
-        r = run([sys.executable, "scripts/hooks/post_edit_boundary.py"], input=payload)
-        assert r.returncode == 2 and "BOUNDARY VIOLATION" in r.stderr
-    finally:
-        bad.unlink(missing_ok=True)
-    ok = json.dumps({"tool_input": {"file_path": str(ROOT / "renderer/src/main.tsx")}})
-    assert run([sys.executable, "scripts/hooks/post_edit_boundary.py"], input=ok).returncode == 0
+def test_post_edit_hook_exits_2_on_violation_and_0_when_clean(tmp_path):
+    # Runs against a throwaway repo (LABYRINTH_ROOT) so concurrent agents never see the planted file.
+    root = tmp_path.resolve()
+    for sub in ("renderer/src", "main/labyrinth_main"):
+        (root / sub).mkdir(parents=True)
+    bad = root / "renderer/src/bad.ts"
+    bad.write_text("import x from '../../main/labyrinth_main/foo';\n")
+    good = root / "renderer/src/good.ts"
+    good.write_text("import React from 'react';\n")
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "LABYRINTH_ROOT": str(root)}
+    hook = [sys.executable, str(ROOT / "scripts/hooks/post_edit_boundary.py")]
+    r = run(hook, input=json.dumps({"tool_input": {"file_path": str(bad)}}), env=env)
+    assert r.returncode == 2 and "BOUNDARY VIOLATION" in r.stderr
+    assert run(hook, input=json.dumps({"tool_input": {"file_path": str(good)}}), env=env).returncode == 0
+    r = run(hook, input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "x"}}), env=env)
+    assert r.returncode == 2
+    bad.unlink()
+    assert run(hook, input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "x"}}), env=env).returncode == 0
 
 
 def test_verify_rejects_bad_invocations_with_2():
@@ -95,6 +102,10 @@ def test_docs_gate_requires_final_verdict_line(tmp_path):
     assert _docs_tree(tmp_path / "b", "DONE", "template: Verdict: PASS | FAIL\n") == 2
     assert _docs_tree(tmp_path / "c", "DONE", "Verdict: PASS\nlater re-run\nVerdict: FAIL\n") == 2
     assert _docs_tree(tmp_path / "d", "DONE", None) == 2
+    assert _docs_tree(tmp_path / "e", "DONE", "Verdict: PASS\nre-run\nVerdict: FAIL — boundary bypass N1\n") == 2
+    assert _docs_tree(tmp_path / "f", "DONE", "x\n```\nVerdict: PASS\n```\nVerdict: FAIL\n") == 2
+    assert _docs_tree(tmp_path / "g", "DONE", "x\n```\nVerdict: PASS\n```\n") == 2
+    assert _docs_tree(tmp_path / "h", "DONE", "Verdict: PASS — all outcomes hold\n") == 0
 
 
 def test_docs_gate_status_parsing_is_not_bypassable(tmp_path):
