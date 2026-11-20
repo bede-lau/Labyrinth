@@ -41,8 +41,8 @@ def main() -> int:
             errors.append(f"{rel}: Status must be one of {sorted(STATES)}, found {status!r}")
         if status == "DONE":
             v = t.parent / "VERIFY.md"
-            body = re.sub(r"^```.*?^```", "", v.read_text(), flags=re.M | re.S) if v.exists() else ""  # ignore fenced output
-            verdicts = re.findall(r"^Verdict:[ \t]*(PASS|FAIL)\b.*$", body, re.M)
+            body = re.sub(r"^(```|~~~).*?^\1", "", v.read_text(), flags=re.M | re.S) if v.exists() else ""  # ignore fenced output
+            verdicts = re.findall(r"^Verdict:[ \t]*(PASS|FAIL)\b(?![ \t]*\|).*$", body, re.M)  # not the 'PASS | FAIL' template
             if not verdicts or verdicts[-1] != "PASS":
                 errors.append(f"{rel}: Status DONE but {v.relative_to(ROOT)} has no final 'Verdict: PASS' line (outside code fences) from the verifier")
     if errors:

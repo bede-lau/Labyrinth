@@ -106,6 +106,8 @@ def test_docs_gate_requires_final_verdict_line(tmp_path):
     assert _docs_tree(tmp_path / "f", "DONE", "x\n```\nVerdict: PASS\n```\nVerdict: FAIL\n") == 2
     assert _docs_tree(tmp_path / "g", "DONE", "x\n```\nVerdict: PASS\n```\n") == 2
     assert _docs_tree(tmp_path / "h", "DONE", "Verdict: PASS — all outcomes hold\n") == 0
+    assert _docs_tree(tmp_path / "i", "DONE", "Verdict: PASS | FAIL\n") == 2
+    assert _docs_tree(tmp_path / "j", "DONE", "x\n~~~\nVerdict: PASS\n~~~\n") == 2
 
 
 def test_docs_gate_status_parsing_is_not_bypassable(tmp_path):
@@ -114,3 +116,7 @@ def test_docs_gate_status_parsing_is_not_bypassable(tmp_path):
     assert _docs_tree(tmp_path / "c", "**DONE**", None) == 2
     assert _docs_tree(tmp_path / "d", "FINISHED", None) == 2
     assert _docs_tree(tmp_path / "e", "TODO", None) == 0
+
+
+def test_boundary_zero_file_scan_is_an_error(tmp_path):
+    assert check_boundaries.run([], tmp_path) == 2

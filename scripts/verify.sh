@@ -13,6 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+unset LABYRINTH_ROOT  # gates always check this repo; the override is for gate tests only
 cd "$ROOT"
 if [[ $# -gt 1 ]]; then echo "verify.sh: expected at most one scope argument, got $#" >&2; exit 2; fi
 if [[ $# -eq 1 && -z "$1" ]]; then echo "verify.sh: empty scope argument" >&2; exit 2; fi

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://labyrinth.local/contracts/live-run.schema.json",
+  "title": "Saved GX rehearsal run (GET /api/live/runs/<savedRunId>). Only a run whose checks all passed qualifies live mode.",
+  "type": "object",
+  "required": ["savedRunId", "initVerified", "continuationVerified", "checks", "phases"],
+  "properties": {
+    "savedRunId": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,80}$" },
+    "initVerified": { "type": "boolean" },
+    "continuationVerified": { "type": "boolean" },
+    "checks": {
+      "type": "object",
+      "required": ["init", "continuation", "distinctDevices", "overlap"],
+      "additionalProperties": false,
+      "properties": {
+        "init": { "type": "boolean" },
+        "continuation": { "type": "boolean" },
+        "distinctDevices": { "type": "boolean" },
+        "overlap": { "type": "boolean" }
+      }
+    },
+    "phases": {
+      "description": "Phase 1 = from initialization; phase 2 = continuation from checkpoint. Each is a live-status snapshot.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "items": { "$ref": "live-status.schema.json" }
+    }
+  }
+}

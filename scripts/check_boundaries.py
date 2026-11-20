@@ -61,6 +61,14 @@ def _line(text: str, pos: int) -> int:
     return text.count("\n", 0, pos) + 1
 
 
+CWD_FILE = re.compile(r"\.(?:test|spec)\.[cm]?[jt]sx?$|^(?:vite|vitest|playwright)\.config\.[cm]?[jt]s$|\.config\.[cm]?[jt]s$")
+
+
+def _cwd_relative_file(path: Path, renderer: Path) -> bool:
+    """Files whose fs paths run with cwd = renderer/ (tests, configs, scripts/), not bundled imports."""
+    return bool(CWD_FILE.search(path.name)) or _inside(path.resolve(), renderer / "scripts")
+
+
 def check_renderer(path: Path, root: Path) -> list[str]:
     errors: list[str] = []
     text = path.read_text(encoding="utf-8", errors="replace")
@@ -79,15 +87,18 @@ def check_renderer(path: Path, root: Path) -> list[str]:
         # (target, strict): strict = must stay inside renderer/ (or contracts/*.json, artifacts/);
         # non-strict = flagged only if it lands in a backend-owned tree (main/, scripts/, data/).
         candidates: list[tuple[Path, bool]] = []
+        if spec.startswith("file://"):
+            spec = spec[len("file://"):]
         if spec.startswith("/@fs/"):
             candidates.append((Path(spec[len("/@fs"):]).resolve(), False))  # vite raw-filesystem URL
         elif spec.startswith("/") and len(spec) > 1:
-            # Root-relative URLs ('/artifacts/x.json', '/src/main.tsx') are served from renderer/;
-            # only a real filesystem path into a backend tree matters.
+            # As a filesystem path, and as vite reads it: relative to the project root (renderer/).
             candidates.append((Path(spec).resolve(), False))
+            candidates.append(((renderer / spec.lstrip("/")).resolve(), False))
         elif spec.startswith("./") or spec.startswith("../") or spec in {".", ".."}:
             candidates.append(((path.parent / spec).resolve(), True))  # how bundlers resolve it
-            candidates.append(((renderer / spec).resolve(), False))  # how node/vitest resolve it from cwd
+            if _cwd_relative_file(path, renderer):
+                candidates.append(((renderer / spec).resolve(), False))  # node/vitest resolve fs paths from cwd
         banned = [(root / d).resolve() for d in ("main", "scripts", "data")]
         for target, strict in candidates:
             if strict:
@@ -183,6 +194,9 @@ def run(files: list[Path], root: Path) -> int:
         for e in errors:
             print(f"  - {e}", file=sys.stderr)
         return 2
+    if n == 0:
+        print("boundary: scanned 0 files — wrong LABYRINTH_ROOT or empty tree; refusing to report OK", file=sys.stderr)
+        return 2
     print(f"boundary: OK ({n} files scanned)")
     return 0
 
@@ -214,6 +228,10 @@ VIOLATIONS = {
     "renderer/src/v28.test.ts": "const p = resolve(process.cwd(), '../main/labyrinth_main/x.py');\n",
     "renderer/src/v29.test.ts": "const raw = readFileSync('../data/raw/wout_w7x_kjm.nc');\n",
     "renderer/tsconfig.app.json": '{ "compilerOptions": { "paths": { "@b/*": ["../main/*"] } } }\n',
+    # verifier run 3 (R1): vite treats '/x' as renderer-root-relative; file:// URLs
+    "renderer/src/v30.ts": "import t from '/../main/pyproject.toml?raw';\n",
+    "renderer/src/v31.ts": "const m = import.meta.glob('/src/../../main/*');\n",
+    "renderer/src/v32.ts": "const u = 'file://{ROOT}/main/x.py';\n",
     # main: imports
     "main/labyrinth_main/v15.py": "from renderer.src import app\n",
     "main/labyrinth_main/v16.py": "import os, renderer.src as r\n",
@@ -233,6 +251,7 @@ CLEAN = {
     "renderer/src/ok2.ts": "const r = await fetch('/artifacts/geometry.json');\nconst label = 'the main process';\nconst t = `../${x}`;\n"
     "const el = document.querySelector('main');\nconst s = '/src/main.tsx';\nconst api = '/api/live/status';\n",
     "renderer/src/ok3.test.ts": "const A = resolve(__dirname, '../../artifacts');\nconst C = resolve(__dirname, '../../contracts');\n",
+    "renderer/src/features/x/ok4.tsx": "import f from '../data/fixtures';\nimport s from '../scripts/helper';\n",
     "renderer/index.html": None,  # replaced below for the clean pass
     "main/labyrinth_main/ok.py": (
         '"""Must never import from renderer/."""\nimport json\nfrom labyrinth_main.common import io\nmsg = "the renderer plays replay"\n'
@@ -247,6 +266,7 @@ def self_test() -> int:
         for sub in ("renderer/src/lib", "main/labyrinth_main", "contracts", "artifacts", "scripts", "data/raw"):
             (root / sub).mkdir(parents=True, exist_ok=True)
         for rel, body in VIOLATIONS.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
             (root / rel).write_text(body.replace("{ROOT}", str(root)))
             if not check_file(root / rel, root):
                 failures.append(f"missed violation in {rel}: {body.strip()!r}")
@@ -255,6 +275,7 @@ def self_test() -> int:
         (root / "renderer/tsconfig.json").write_text('{ "include": ["src", "vite.config.ts"] }\n')
         for rel, body in CLEAN.items():
             if body is not None:
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
                 (root / rel).write_text(body)
         for rel in [*(k for k, v in CLEAN.items() if v is not None), "renderer/index.html", "renderer/vite.config.ts", "renderer/tsconfig.json"]:
             errs = check_file(root / rel, root)

@@ -118,3 +118,20 @@ matching one number. The forecast fixtures stay `matches: false`, and the fixtur
 PRD scores reproduce under sample-and-hold, with values. A test documents the sample-and-hold result.
 **Open for the product owner.** If the forecast scores are the acceptance criterion, switch the forecast
 feature alone to sample-and-hold and accept that the forecast and transport views then average differently.
+
+## D-017 · Stricter claim gate: no archive window currently permits a saturated-agreement claim
+**Context.** Data review found the original gate allowed claims at N_eff ≈ 5, where the stderr is ~40%
+low and the stationarity test falsely rejects ~27% of stationary windows. Fixed: Sokal τ with
+mean-subtraction bias correction, N_eff evaluated at the one-sigma upper bound of τ, claims need
+N_eff ≥ 20, Student-t intervals, stationarity via max(τ_full, τ_residual), and `compare_window` is a
+TOST equivalence test (agree only if the 90% CI of the difference lies within ±10% of the archive mean;
+otherwise disagree / inconclusive / no claim).
+**Consequence.** The archive's autocorrelation time is ~10–20 time units, so even 400-unit windows hold
+~12–14 effective samples: every archive window shows "saturated claim: not allowed", and stella vs
+GENE on 1500–1893.765 is "no claim". This is the honest answer for these trace lengths, and it is what
+the PRD's "claim saturated agreement only for a covered stationary window with sampling uncertainty"
+implies. A live GX run would need a longer covered window than the archive's 100-unit PRD windows.
+
+## D-018 · Saved rehearsal runs have a contract
+`contracts/live-run.schema.json` describes `GET /api/live/runs/<savedRunId>`; phases are live-status
+snapshots. The "playing saved GX run" label is only used when such a run exists and qualified.
