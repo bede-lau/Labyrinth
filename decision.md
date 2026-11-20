@@ -105,3 +105,16 @@ the pair matches the priced 8 cores / 32 GiB. Mode stays `unavailable` until a r
 Ledger lives outside the repo (`~/.labyrinth/ledger.json`); every launch marks it unreconciled.
 **Consequences.** Planned total with the guard: 8.10 + 2 × 7.73 + 2.65 = **$26.21** (PRD's GPU-only plan:
 $21.83). Still inside $40. Replace the assumptions with measured values after the first rehearsal.
+
+## D-016 · The PRD used two different window-mean definitions; we keep one (refines D-008, D-013)
+**Context.** The 03 forecast verifier tested 4,765 definitions. A time-weighted *sample-and-hold*
+(zero-order hold, edge-clipped) window mean reproduces both PRD forecast scores on the stated windows
+(persistence 0.044418 → 0.0444, frozen 0.042332 → 0.0423; frozen is only 1.8e-5 from the rounding
+edge), but gives stella 300–400 = 2.557 → "2.56" ≠ PRD "2.55". The edge-interpolated mean (D-013)
+reproduces all four archive means but neither forecast score. No single definition reproduces all
+six PRD numbers. D-008's statement "no tested definition reproduces both" was wrong.
+**Decision.** Keep one definition everywhere (edge-interpolated, D-013): consistency across the app beats
+matching one number. The forecast fixtures stay `matches: false`, and the fixture note states that the
+PRD scores reproduce under sample-and-hold, with values. A test documents the sample-and-hold result.
+**Open for the product owner.** If the forecast scores are the acceptance criterion, switch the forecast
+feature alone to sample-and-hold and accept that the forecast and transport views then average differently.
