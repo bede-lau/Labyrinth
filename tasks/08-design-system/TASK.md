@@ -16,6 +16,6 @@ design-lead (`renderer/src/design/`)
 | D1–D5 | `renderer/src/design/**/*.test.ts(x)` |
 
 ## Status
-VERIFYING
+DONE
 
-D1–D5 built, 553 tests; external verifier run was cut off by a usage limit.
+Verified at commit 3faed3a: tasks/08-design-system/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).

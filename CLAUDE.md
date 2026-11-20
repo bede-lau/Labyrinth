@@ -48,9 +48,10 @@ backend-engineer (main/), frontend-engineer (renderer/), design-lead (renderer/s
 review), verifier (external verification, writes VERIFY.md), reviewer (read-only code review).
 
 ## Current stage
-Session 2 (2026-11-20) was stopped by the owner when the usage budget ran low; **nothing is marked DONE**. Wave 1 verified and reviewed everything once
-(01, 03, 05 passed; 02, 04, 08, 09 failed; every review requested changes); wave 2 fixed the design system, the gates and most frontend/backend findings but
-was **not re-reviewed or re-verified**. **Start at the HANDOVER section at the top of `status.md`**: it lists what is open and the exact next steps.
+Since 2026-11-20 (session 3) **all ten tasks are DONE**: reviewed (all six areas approved) and externally verified at commit `3faed3a`.
+What remains is listed under "Current state" at the top of `status.md`: one PRD gap (the live comparison of new GX samples with the archive is not
+computed), minor findings, owner decisions, and blockers that need a human (Modal rehearsal, missing upstream data).
+Working style the owner asked for: one focused reviewer per area and one verifier per task — no multi-round adversarial panels.
 
 ## Honesty rules (non-negotiable)
 - Never present replayed or PRD-reported numbers as live or as recomputed.

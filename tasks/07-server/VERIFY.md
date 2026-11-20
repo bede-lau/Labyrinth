@@ -1,9 +1,10 @@
 # Verify: 07-server
 
-This file holds two external verifier runs.
+This file holds three external verifier runs.
 
 - **Run 1** (2026-11-19/20) covered H1–H6 on the working tree of that day; its result was PASS. It predates fix rounds 2–5.
-- **Run 2** (2026-11-20, commit `c6244ec`) covers the whole task again. The verdict of this file is its last line.
+- **Run 2** (2026-11-20, commit `c6244ec`) covered the whole task again; it found S2-1 … S2-8.
+- **Run 3** (2026-11-20, commit `3faed3a`) re-checks the whole task after the review round. The verdict of this file is its last line.
 
 The text of run 1 is kept as written; headings were moved one level down and its closing line is now labelled as
 the run-1 verdict.
@@ -398,3 +399,209 @@ Line numbers are those of commit `c6244ec`.
 - Not checkable here: anything that needs a real Modal account (see the 06 file).
 
 Verdict: FAIL — H5 fails: POST /api/live/terminate answers 200 and the server exits 0 after a late spawn error with a failed kill-switch put while a worker may still be running, and two confirmCostUsd values crash the handler instead of 409; H1–H4 and H6 hold, with a flaky H1 test
+
+## Run 3 — whole task
+
+Verifier run: 2026-11-20, commit 3faed3a
+
+Scope kept short at the owner's request: no `verify.sh all` of my own, one real-server probe for all six outcomes,
+five targeted mutations. `git status --short` showed only ` M status.md` (not an owned file), so
+`main/labyrinth_main/server/` is exactly commit 3faed3a. Tests ran on the shared tree with
+`PYTHONDONTWRITEBYTECODE=1`; mutations ran in a copy from `scripts/probe-copy.sh vt-07-server` (7 files compared with
+`git show 3faed3a:<path> | cmp`: 0 differ; the copy's tests imported the copy's package), deleted at the end. The
+real server ran as `python3 -m labyrinth_main.server --port 18737` on 127.0.0.1 with `HOME` and
+`LABYRINTH_STATE_DIR` under my scratch dir `$S` (`…\scratchpad\vt-07-server`), no `MODAL_*` variables and no
+`modal` package; it was stopped with SIGTERM and `pgrep` found no server afterwards. No network, no credentials.
+
+Gate evidence (not re-run, per the task): the maintainer ran `verify.sh all` at 3faed3a on this tree: exit 0,
+11/11 stages (boundary self-test 134 shapes, scripts 71 passed, ruff clean, main 331 passed, artifacts schema +
+fresh, tsc clean, vitest 1350 passed, vite build OK).
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| H1 | `python3 -m labyrinth_main.server` serves on 127.0.0.1:8787 (stdlib only) | 16 × `test_H1_*` in `test_server.py` (entrypoint subprocess + default 8787 + AST import check; signals; in-flight shutdown; dead stdout; exit codes). Mutation M4 (bind 0.0.0.0): red in 0.23 s, no hang | Real server: first line `…listening on http://127.0.0.1:18737`; `ss -ltn` lists only `127.0.0.1:18737`; 172.28.59.13 and ::1 refuse; `parse_args([]).port` 8787; importing the server modules adds only `labyrinth_main` to `sys.modules` beyond stdlib; SIGTERM → exit 0, `Labyrinth API stopped; no worker was launched.`, port closed | PASS |
+| H2 | `GET /api/health` → `{"ok": true, "version": ...}` | `test_H2_health` | 200, `application/json`, `{"ok": true, "version": "0.1.0"}` | PASS |
+| H3 | `GET /api/live/status` → schema-valid live status (unavailable without credentials) | `test_H3_live_status_is_schema_valid_and_unavailable_without_credentials` | 200, valid with my own Draft 2020-12 validator over `contracts/*.schema.json`; `mode: unavailable`, reason names "no Modal credentials"; budget 40.0 / 0.0 / 8.1 / 2.65 / false / 1500; negative control (`mode` running-hot) rejected | PASS |
+| H4 | `GET /api/live/stream` → Server-Sent Events of status snapshots | `test_H4_stream_is_server_sent_events_of_status_snapshots`, `test_H4_concurrent_streams_are_capped` | raw socket for 2.6 s: `text/event-stream`, 5 events, each `data: <schema-valid status>` with mode unavailable | PASS |
+| H5 | `POST /api/live/launch` needs `{"confirmCostUsd": <estimate>}` and a passing guard, else 409 with reason; `POST /api/live/terminate` always allowed | 13 × `test_H5_*` in `test_server.py` and the 14 `service+server` cells of `test_L6_terminated_is_reported_only_after_a_cancel_that_succeeded` in `test_live_gx.py` (run-2 S2-1 case: spawn fails late, put fails → 502, exit 2). Mutations M1 (S2-1 back), M2 (S2-2 back), M3 (409 without status): all red | Real server: right cost, 1.00, 1e308, 400-digit integer, NaN, text/plain, form, JSON array, `{}` → 409 each with `launch refused: …` and a schema-valid `status`; terminate → 200 "Nothing running."; TRACE → 405 `Allow: GET`; foreign Host on terminate → 403; no ledger written | PASS (S2-1, S2-2, S2-4, S2-7 resolved; see Findings) |
+| H6 | `GET /artifacts/<file>` serves artifacts/ with path-traversal protection | `test_H6_artifacts_served_with_path_traversal_protection`, `test_H6_symlink_escaping_artifacts_is_refused`, `test_H6_artifacts_dir_is_repo_artifacts`. Mutation M5 (drop `is_relative_to`): red | manifest and all 5 manifest artifacts byte-identical; 12 traversal paths sent byte for byte (`..`, `%2e%2e`, `%2E%2E%2F`, `%252e%252e`, `..%5c`, `//` absolute, `%2f` absolute, `../../../../etc/passwd`, `manifest.json/../../`, `%00`, `..`, `../main/…`) → 404; Host evil.example / 127.0.0.1.evil.example / 10.0.0.5:8787 and a foreign Origin → 403 | PASS |
+
+### Real output
+Task tests on the shared tree (`$S/run_tests.sh`: cwd `main/`, the `-v` output piped through
+`grep -E 'PASSED|FAILED|ERROR|SKIPPED|passed|failed|error'`, the second command through `tail -n 3`):
+```
+$ python3 -m pytest -v -p no:cacheprovider tests/test_server.py
+tests/test_server.py::test_H1_module_entrypoint_serves_on_loopback_default_8787_stdlib_only PASSED [  2%]
+tests/test_server.py::test_H2_health PASSED                              [  5%]
+tests/test_server.py::test_H3_live_status_is_schema_valid_and_unavailable_without_credentials PASSED [  8%]
+tests/test_server.py::test_H4_stream_is_server_sent_events_of_status_snapshots PASSED [ 11%]
+tests/test_server.py::test_H4_concurrent_streams_are_capped PASSED       [ 13%]
+tests/test_server.py::test_H5_launch_refused_without_credentials_even_with_correct_cost PASSED [ 16%]
+tests/test_server.py::test_H5_launch_requires_exact_confirmed_cost_and_passing_guard PASSED [ 19%]
+tests/test_server.py::test_H5_absurd_confirm_cost_is_a_409_with_the_status_and_reserves_nothing PASSED [ 22%]
+tests/test_server.py::test_H5_ledger_that_cannot_be_written_is_a_409_with_the_status_and_launches_nothing[write] PASSED [ 25%]
+tests/test_server.py::test_H5_ledger_that_cannot_be_written_is_a_409_with_the_status_and_launches_nothing[lock] PASSED [ 27%]
+tests/test_server.py::test_H5_every_launch_refusal_is_a_409_carrying_the_status PASSED [ 30%]
+tests/test_server.py::test_H5_a_stalled_client_is_dropped_and_terminate_never_waits_for_a_body PASSED [ 33%]
+tests/test_server.py::test_H5_concurrent_launches_start_exactly_one_session PASSED [ 36%]
+tests/test_server.py::test_H5_terminate_failure_is_reported_not_ok PASSED [ 38%]
+tests/test_server.py::test_H5_terminate_while_a_spawn_rpc_hangs_answers_502_termination_pending PASSED [ 41%]
+tests/test_server.py::test_H5_a_report_that_overflows_archive_units_never_costs_an_answer PASSED [ 44%]
+tests/test_server.py::test_H5_saved_run_route_and_fallback_wording PASSED [ 47%]
+tests/test_server.py::test_H5_only_get_post_on_known_routes_and_loopback_hosts PASSED [ 50%]
+tests/test_server.py::test_H6_artifacts_served_with_path_traversal_protection PASSED [ 52%]
+tests/test_server.py::test_H6_symlink_escaping_artifacts_is_refused PASSED [ 55%]
+tests/test_server.py::test_H6_artifacts_dir_is_repo_artifacts PASSED     [ 58%]
+tests/test_server.py::test_H1_signal_terminates_running_workers_before_exit[SIGINT] PASSED [ 61%]
+tests/test_server.py::test_H1_signal_terminates_running_workers_before_exit[SIGTERM] PASSED [ 63%]
+tests/test_server.py::test_H1_signal_terminates_running_workers_before_exit[SIGHUP] PASSED [ 66%]
+tests/test_server.py::test_H1_signal_terminates_running_workers_before_exit[SIGINT+SIGTERM] PASSED [ 69%]
+tests/test_server.py::test_H1_a_stop_signal_ignored_at_start_up_stays_ignored PASSED [ 72%]
+tests/test_server.py::test_H1_exit_code_survives_stop_signals_after_the_last_line PASSED [ 75%]
+tests/test_server.py::test_H1_later_stop_signals_are_no_ops_and_the_handler_never_changes_a_disposition PASSED [ 77%]
+tests/test_server.py::test_H1_shutdown_during_in_flight_launch[spawn-outlives-shutdown] PASSED [ 80%]
+tests/test_server.py::test_H1_shutdown_during_in_flight_launch[late-spawn-cancelled] PASSED [ 83%]
+tests/test_server.py::test_H1_a_fallback_status_carries_the_marker_while_its_cancel_is_in_flight PASSED [ 86%]
+tests/test_server.py::test_H1_a_dead_stdout_never_changes_the_exit_code[closed-pipe-exit-0] PASSED [ 88%]
+tests/test_server.py::test_H1_a_dead_stdout_never_changes_the_exit_code[closed-pipe-exit-2] PASSED [ 91%]
+tests/test_server.py::test_H1_a_dead_stdout_never_changes_the_exit_code[hung-up-terminal-exit-2] PASSED [ 94%]
+tests/test_server.py::test_H1_api_keeps_answering_with_the_unconfirmed_status_while_the_shutdown_waits PASSED [ 97%]
+tests/test_server.py::test_H1_hard_cancel_failure_exits_2_at_once_after_one_round_instead_of_sleeping_on_it PASSED [100%]
+============================= 36 passed in 24.63s ==============================
+exit=0
+$ python3 -m pytest -q -p no:cacheprovider tests/test_live_gx.py -k "service+server"
+..............                                                           [100%]
+14 passed, 201 deselected in 4.44s
+exit=0
+```
+
+Real server probe (`$S/run_probe.sh` → `python3 -I $S/p_server.py`, port 18737):
+```
+== H1 import closure of labyrinth_main.server: 8787 127.0.0.1 / ['__main__', 'sitecustomize']
+  ok   default port 8787 on 127.0.0.1
+  BAD  no third-party module is loaded by importing the server
+== H1 server stdout: 'Labyrinth API listening on http://127.0.0.1:18737'
+  ok   listening line names 127.0.0.1
+   ss -ltn listening sockets: ['127.0.0.1:18737']
+  ok   the only listening socket is 127.0.0.1
+  ok   connect 172.28.59.13:18737 -> ConnectionRefusedError
+  ok   connect ::1:18737 -> ConnectionRefusedError
+== H2 200 application/json b'{"ok": true, "version": "0.1.0"}\n'
+  ok   health 200 {ok: true, version: 0.1.0}
+== H3 200 mode unavailable budget {'ceilingUsd': 40.0, 'billedUsd': 0.0, 'pendingUsd': 8.1, 'slotEstimateUsd': 2.65, 'slotFits': False, 'hardTimeoutS': 1500}
+   reason: Live GX unavailable: no Modal credentials (MODAL_TOKEN_ID/MODAL_TOKEN_SECRET or ~/.modal.toml); the `modal` pa
+  ok   status schema-valid with my validator ([])
+  ok   mode unavailable without credentials
+  ok   negative control rejected: ["'running-hot' is not one of ['unavailable', 'idle', 'launching', 'live', 'fallback', 'terminated']"]
+== H4 HTTP/1.0 200 OK ['Content-Type: text/event-stream'] 5 events in 2.6 s
+  ok   SSE content type and >= 2 events
+  ok   every event is `data: <schema-valid status>`
+== H5 launch refusals (real server, no credentials)
+   right cost       -> 409 'launch refused: Live GX unavailable: no Modal credentials (MODAL_TOKEN_ID/MODAL_TOKEN_SECR' status=yes
+  ok   right cost: 409 with reason and schema-valid status
+   wrong cost 1.00  -> 409 'launch refused: Live GX unavailable: no Modal credentials (MODAL_TOKEN_ID/MODAL_TOKEN_SECR' status=yes
+  ok   wrong cost 1.00: 409 with reason and schema-valid status
+   1e308            -> 409 'launch refused: Live GX unavailable: no Modal credentials (MODAL_TOKEN_ID/MODAL_TOKEN_SECR' status=yes
+  ok   1e308: 409 with reason and schema-valid status
+   400-digit int    -> 409 'launch refused: Live GX unavailable: no Modal credentials (MODAL_TOKEN_ID/MODAL_TOKEN_SECR' status=yes
+  ok   400-digit int: 409 with reason and schema-valid status
+   NaN              -> 409 'launch refused: Live GX unavailable: no Modal credentials (MODAL_TOKEN_ID/MODAL_TOKEN_SECR' status=yes
+  ok   NaN: 409 with reason and schema-valid status
+   text/plain       -> 409 'launch refused: Content-Type must be application/json' status=yes
+  ok   text/plain: 409 with reason and schema-valid status
+   form             -> 409 'launch refused: Content-Type must be application/json' status=yes
+  ok   form: 409 with reason and schema-valid status
+   JSON array       -> 409 'launch refused: body must be a JSON object' status=yes
+  ok   JSON array: 409 with reason and schema-valid status
+   missing key      -> 409 'launch refused: body must be {"confirmCostUsd": <current slot estimate>}' status=yes
+  ok   missing key: 409 with reason and schema-valid status
+   terminate -> 200 Nothing running.
+  ok   terminate allowed, 200 Nothing running.
+   TRACE /api/health -> 405 GET
+  ok   TRACE is a 405 Allow: GET (not the stdlib 501)
+  ok   no ledger written (state dir: absent)
+== H6 artifacts
+  ok   manifest.json 200 byte-identical
+  ok   all 5 manifest artifacts byte-identical: ['geometry.json', 'transport.json', 'forecast.json', 'budget.json', 'spatial.json']
+  ok   12 traversal paths (sent byte-for-byte) -> 404
+  ok   Host evil.example -> 403
+  ok   Host 127.0.0.1.evil.example -> 403
+  ok   Host 10.0.0.5:8787 -> 403
+  ok   foreign Origin -> 403
+  ok   terminate with foreign Host -> 403
+== H1 SIGTERM: exit 0 last line 'Labyrinth API stopped; no worker was launched.' stderr ''
+  ok   exit 0, nothing launched
+  ok   port closed after exit (ConnectionRefusedError)
+PROBE DONE: 1 bad
+probe exit=1
+--- after: processes of labyrinth_main.server:
+none
+```
+The one "BAD" line is my probe's mistake, not the server's: `__main__` and `/usr/lib/python3.12/sitecustomize.py` are
+loaded by every interpreter. Measured against a bare interpreter (`$S/closure.sh`):
+```
+bare interpreter, non-stdlib modules: ['__main__', 'sitecustomize'] /usr/lib/python3.12/sitecustomize.py
+after importing labyrinth_main.server (__main__ + app): ['labyrinth_main']
+```
+
+Mutations in the probe copy (`$S/run_mut.sh`; each applied alone, then restored):
+```
+copy vs commit 3faed3a: 0 of 7 files differ
+package imported from /home/qqbot/.cache/labyrinth-probes/vt-07-server/main/labyrinth_main/__init__.py
+=== M1 H5 (S2-1 regression): a late client-side spawn error after a queued cancel is settled as confirmed
+$ pytest -q -x tests/test_live_gx.py -k service+server
+  E       AssertionError: assert ['spawn bean'...spawn failed'] == ['spawn bean'...l-switch put']
+  FAILED tests/test_live_gx.py::test_L6_terminated_is_reported_only_after_a_cancel_that_succeeded[spawn-fails-late,put-ok,cancel-none-service+server]
+  1 failed, 10 passed, 201 deselected in 2.20s
+  -> RED
+=== M2 H5 (S2-2 regression): confirmCostUsd converted with float(); OverflowError no longer caught
+$ pytest -q -x tests/test_server.py -k absurd
+  FAILED tests/test_server.py::test_H5_absurd_confirm_cost_is_a_409_with_the_status_and_reserves_nothing
+  1 failed, 35 deselected in 0.40s
+  -> RED
+=== M3 H5 (S2-4 regression): launch refusals answer 409 without `status`
+$ pytest -q -x tests/test_server.py -k every_launch_refusal or requires_exact
+  FAILED tests/test_server.py::test_H5_launch_requires_exact_confirmed_cost_and_passing_guard
+  1 failed, 34 deselected in 0.38s
+  -> RED
+=== M4 H1: bind 0.0.0.0 instead of 127.0.0.1 (run 2: detected only by a hang)
+$ pytest -q -x tests/test_server.py -k module_entrypoint
+  FAILED tests/test_server.py::test_H1_module_entrypoint_serves_on_loopback_default_8787_stdlib_only
+  1 failed, 35 deselected in 0.23s
+  -> RED
+=== M5 H6: containment check dropped (is_relative_to)
+$ pytest -q -x tests/test_server.py -k H6
+  FAILED tests/test_server.py::test_H6_artifacts_served_with_path_traversal_protection
+  1 failed, 33 deselected in 0.21s
+  -> RED
+=== restored copy: 6 passed, 30 deselected in 0.93s
+```
+The probe copy was then deleted (`ls ~/.cache/labyrinth-probes | grep -c vt-07-server` → 0).
+
+### Findings
+Line numbers are those of commit `3faed3a`. No new defect found in `main/labyrinth_main/server/`.
+
+- Run-2 S2-1 (the H5 blocker) is resolved: `main/labyrinth_main/features/live_gx/modal_backend.py:247-250` settles a
+  late client-side spawn error as unconfirmed. The service+server surface of the termination matrix
+  (`main/tests/test_live_gx.py:2022-2025` cells, `:2171-2227` HTTP codes and exit code through the server entrypoint)
+  asserts 502 and exit 2 for "fails late"; it passes, and mutant M1 makes it red. M1 changes the line both "fails
+  late" cells share; with `-x` the run stopped at the put-ok cell, so the put-fails cell's own red was not shown.
+- Run-2 S2-2 is resolved: `main/labyrinth_main/features/live_gx/service.py:241-254` (`cost_matches`) never raises;
+  `main/tests/test_server.py:322-339` sends 1e308, 400- and 4000-digit integers, inf, NaN and others to an armed
+  server and expects 409 with `status`; M2 makes it red. My real-server probe sent the same values, but with no
+  credentials the availability gate refuses them before the cost is compared, so that path is evidenced by the
+  armed test and M2, not by the probe.
+- Run-2 S2-4 is resolved: every refusal carries `status` (`main/labyrinth_main/server/app.py:172-173`), and any
+  method other than GET/POST is a 405 (`app.py:88-93`, `:200`); tested at `main/tests/test_server.py:435-476` and
+  `:664-695`; M3 red; my TRACE probe got 405 `Allow: GET`.
+- Run-2 S2-7: the socket timeout (`app.py:84-86`) and terminate-before-body (`app.py:168-170`) are tested at
+  `main/tests/test_server.py:479-496` (passed). Run-2 S2-8: bind 0.0.0.0 is now a plain red in 0.23 s
+  (`test_server.py:137-145` kills the process before reading its output).
+- Run-2 S2-3 (flaky wait): the test now waits for the TERMINATION PENDING marker itself (`test_server.py:575-578`).
+  I ran it once (green), not in a loop.
+- Not repeated this run (short checks): run 2's armed real-CLI attack with a stand-in `modal` package, the signal
+  stress loops, `verify.sh all` (maintainer's run quoted above). Anything needing a real Modal account stays
+  uncheckable here.
+
+Verdict: PASS

@@ -16,6 +16,6 @@ frontend-engineer (`renderer/src/shell/`, `renderer/src/lib/`)
 | A1–A5 | `renderer/src/shell/*.test.tsx`, `renderer/src/lib/*.test.ts` |
 
 ## Status
-IN-PROGRESS
+DONE
 
-A1–A5 built with tests; unverified.
+Verified at commit 3faed3a: tasks/09-app-shell/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).

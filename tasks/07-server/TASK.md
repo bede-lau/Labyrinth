@@ -17,6 +17,6 @@ backend: backend-engineer (`main/labyrinth_main/server/`)
 | H1–H6 | `main/tests/test_server.py` (real server on an ephemeral port) |
 
 ## Status
-VERIFYING
+DONE
 
-H1–H6: verifier PASS in round 1; re-verification after fix rounds 2–4 pending (depends on task 06 items).
+Verified at commit 3faed3a: tasks/07-server/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).

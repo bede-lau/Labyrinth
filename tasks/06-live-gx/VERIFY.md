@@ -743,3 +743,228 @@ expect; real device UUIDs; how long a real kill switch or cancel takes; what Mod
 estimates. My stub reproduces the *protocol* the code expects, not Modal.
 
 Verdict: FAIL — L6 fails (a late spawn that errors after a failed kill-switch put is reported terminated with a worker possibly running; the status claims termination before any cancel returned); L9–L10 NOT CHECKED (they await the frontend fix round)
+
+## Run 3 — whole task
+
+Verifier run: 2026-11-20, commit 3faed3a
+
+**Scope.** All ten outcomes, L1–L8 (backend) and L9–L10 (frontend), at commit `3faed3a`. The owner asked for short,
+non-redundant checks, so this run is deliberately lean: each outcome's tests run once, one probe script of my own covers
+L1–L8, and five targeted mutations aim at the run-2 blockers (R2-1, R2-2), the run-2 weak-test finding R2-4, and L9/L10.
+The 163-mutation sweep, signal matrix and real-server probes of run 2 were not repeated.
+
+**Where things ran.** Windows + WSL, every command through `wsl.exe -e bash scripts/dev.sh …`. `git status --short` on
+the owned paths (`main/labyrinth_main/features/live_gx/`, `renderer/src/features/live-gx/`) was empty at the start: the
+tree under test is the commit. Tests and my read-only probe ran on the shared tree `D:\Labyrinth`. Mutations ran only in
+`~/.cache/labyrinth-probes/vt-06-live-gx` from `scripts/probe-copy.sh`; it was compared file by file with the commit
+before and after (0 differ) and deleted at the end. `modal` was not installed and no Modal credentials were set. An
+audit hook in my probe recorded no socket connect or DNS lookup. No server was started. `~/.labyrinth` does not exist.
+
+**Gates.** Not re-run by me (the caller said so, and nine verifiers share this machine). The maintainer ran
+`verify.sh all` at `3faed3a` on this tree: exit 0, 11/11 stages (boundary self-test 134 shapes, scripts 71 passed,
+ruff clean, main 331 passed, artifacts schema + fresh, tsc clean, vitest 1350 passed, vite build OK). That is quoted
+evidence, not my own output.
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| L1 | Slot estimate = rate × (slot + setup + idle) + storage; refuses when billed + pending + estimate > $40; hard timeout; refuses an unreconciled ledger | 80 × `test_L1_*` (incl. the new both-entrypoints and too-large-amount tests): 80 passed | My recompute 6.10 × 25/60 + 0.10 = 2.641667 → $2.65 = guard. 37.35 and 30 + 7.35 approved; 37.36, 20 + 17.36 and 37.354 refused (run-1 F4 is fixed); unreconciled, NaN, negative refused; hard timeout 1500 s. Mutation M3 (rehearsal ignores a refusing guard, the run-2 survivor R15) is now caught by 14 tests | PASS |
+| L2 | Two workers concurrently, GPU 0 bean / GPU 1 triangular, device IDs, overlapping intervals, monotone simTime, samples in archive units | 7 × `test_L2_*`: 7 passed | My own backend (not `FakeBackend`): launch order bean/0 then triangular/1; my device IDs recorded as reported; overlap 0.180 s (my threads) and 0.145 s (orchestrator); clocks monotone to 60·√2; all 6 samples per worker equal my t·√2 and Q/(2√2) | PASS |
+| L3 | Either worker failing → `fallback`, label, `savedRunId` (null without a rehearsal), error kept, other worker terminated | 15 × `test_L3_*`: 15 passed | My backend, bean crashes at step 2: mode fallback, label "Worker failed. No qualified GX rehearsal recorded …", savedRunId null, my error text kept, triangular terminate called once and its thread stopped while still running. With a saved run id, label and savedRunId name it | PASS |
+| L4 | No credentials or no `modal` → `unavailable`, zero network calls | 3 × `test_L4_*`: 3 passed | Subprocess with no `MODAL_*` and an empty HOME under a socket audit hook: `LiveService.status()` unavailable ("no Modal credentials"), launch refused, 0 socket events, no `modal` module loaded, no ledger written | PASS |
+| L5 | A run resumed from a checkpoint continues simTime from the checkpoint | 7 × `test_L5_*`: 7 passed | My backend resumed at raw 77: first simTime 123.04 ≥ 77·√2, last 165.4630 = 117·√2. My backend restarting at 0 → fallback, "simulation clock went backwards (10.0 < 77.0 from checkpoint)" | PASS |
+| L6 | Workers always terminated after retrieval (also on exception) | 92 × `test_L6_*`: 92 passed | My backend: normal end → terminate [1, 1], threads stopped; KeyboardInterrupt out of the run loop propagates and both are still terminated. Mutation M1 (re-introduces R2-1: a late client-side spawn error settled as confirmed) caught by 6 cells of the termination matrix on all three surfaces; M2 (re-introduces R2-2: fallback reason without the pending marker while cancels run) caught by 2 tests | PASS |
+| L7 | Every status snapshot validates against `contracts/live-status.schema.json` | `test_L7_every_status_snapshot_validates`: passed (it asserts all six modes occur) | My own jsonschema validator over the 73 snapshots of my probe (modes fallback, launching, live, terminated): 0 invalid; a negative control (mode "running-hot") is rejected | PASS |
+| L8 | `modal_app.py`: A100-40GB worker, hard timeout, explicit launch only, GX inputs for both tubes; never imported by tests or replay; UNREHEARSED | 10 × `test_L8_*`: 10 passed | Text scan of `main/` and `scripts/`: `import modal` only in `modal_app.py:48` and inside functions of `modal_backend.py` (226, 270, 305); nothing imports `modal_app`. AST: exactly two decorators, both `app.function(gpu=GPU, timeout=…, retries=0, max_containers=2, startup_timeout=…)`; `GPU = "A100-40GB"`; docstring starts "UNREHEARSED" | PASS |
+| L9 | Live panel polls `/api/live/status`; unavailable/fallback show an unmistakable label and play the replay; live shows both device IDs, both clocks advancing, sample counts | 26 vitest cases named L9 (`LiveView.test.tsx`, `liveStatusStore.test.ts`): all passed | `liveStatus.ts:243` polls `/api/live/status`. Mutation M5 (`isLive` also true for mode fallback) is caught by 6 L9 cases (8 cases in all) | PASS (note F3-1) |
+| L10 | Launch enabled only when mode is `idle` and `budget.slotFits`; explicit confirmation showing the slot cost | 38 vitest cases named L10: all passed | Mutation M4 (the `slotFits` check removed from `launchBlockedReason`) is caught by 5 cases. The tests check the dialog text "$2.65" and the POST body `{confirmCostUsd: 2.65}` | PASS (note F3-1) |
+
+### Real output
+
+Start of run:
+```
+$ wsl.exe -e bash scripts/dev.sh python3 --version
+Python 3.12.3
+$ wsl.exe -e git status --short
+ M status.md
+$ wsl.exe -e git log --oneline -1
+3faed3a Review round: all six areas approved; 91 confirmed findings fixed
+```
+
+Backend tests, once, on the shared tree (`01_tests.sh`):
+```
+HEAD: 3faed3a
+$ python3 -m pytest -q -rA -p no:cacheprovider main/tests/test_live_gx.py
+exit=0
+215 passed in 32.39s
+L1: 80 passed, 0 failed
+L2: 7 passed, 0 failed
+L3: 15 passed, 0 failed
+L4: 3 passed, 0 failed
+L5: 7 passed, 0 failed
+L6: 92 passed, 0 failed
+L7: 1 passed, 0 failed
+L8: 10 passed, 0 failed
+```
+
+Frontend tests, once, on the shared tree (`02_fe.sh`):
+```
+$ (in /mnt/d/Labyrinth/renderer) npx vitest run --reporter=verbose src/features/live-gx src/lib/liveStatusStore.test.ts
+exit=0
+ Test Files  2 passed (2)
+      Tests  91 passed (91)
+L9: 26 passed, 0 failed
+L10: 38 passed, 0 failed
+```
+
+My probe (`p_backend.py`: my own `WorkerBackend`, unit math, schema validator and socket audit hook; read-only against
+the shared tree). The first pass printed one red line for L8. That was a bug in my probe: it searched the whole file for
+the text `local_entrypoint`, which appears in the module docstring ("There is no local_entrypoint …"). I replaced that check with
+an AST check of the decorators, and the second pass shows the corrected L8 lines:
+```
+== L1 budget guard (own recompute: rate 6.10 $/h x (15+5+5) min + $0.10, ceil to cent)
+  ok   slot estimate raw 2.641667 -> mine 2.65, guard 2.65
+  ok   billed 37.35 pending 0 reconciled True: approved=True (want True) | Budget guard approves: billed $37.35 + pending $0.00 + slot $2.65 = $4
+  ok   billed 30.0 pending 7.35 reconciled True: approved=True (want True) | Budget guard approves: billed $30.00 + pending $7.35 + slot $2.65 = $4
+  ok   billed 37.36 pending 0 reconciled True: approved=False (want False) | Budget guard refused: billed $37.36 + pending $0.00 + slot $2.65 = $40
+  ok   billed 20.0 pending 17.36 reconciled True: approved=False (want False) | Budget guard refused: billed $20.00 + pending $17.36 + slot $2.65 = $4
+  ok   billed 37.354 pending 0 reconciled True: approved=False (want False) | Budget guard refused: billed $37.35 + pending $0.00 + slot $2.65 = $40
+  ok   billed 8.1 pending 0 reconciled False: approved=False (want False) | Budget guard refused: ledger not reconciled (billed $8.10, pending $0.
+  ok   billed nan pending 0 reconciled True: approved=False (want False) | Budget guard refused: ledger.json is unusable (billed/pending must be
+  ok   billed -1.0 pending 0 reconciled True: approved=False (want False) | Budget guard refused: ledger.json is unusable (billed/pending must be
+  ok   hard timeout for an approved slot: 1500 s (planned 25 min = 1500 s)
+== L2 own backend: concurrency, devices, clocks, units
+  ok   launch order [('bean', 0), ('triangular', 1)]
+  ok   device IDs recorded as reported: ['MYGPU-0-ad93ca', 'MYGPU-1-c1167d']
+  ok   overlap: my threads 0.180 s, orchestrator intervals 0.145 s
+  ok   GPU 0 simTime monotone over 17 readings, last 84.8528 (60*sqrt2 = 84.8528)
+  ok   GPU 0: 6 samples = my (t*sqrt2, Q/(2 sqrt2)); first 14.142136,1.096016 vs 14.142136,1.096016
+  ok   GPU 1 simTime monotone over 16 readings, last 84.8528 (60*sqrt2 = 84.8528)
+  ok   GPU 1: 6 samples = my (t*sqrt2, Q/(2 sqrt2)); first 14.142136,1.449569 vs 14.142136,1.449569
+  ok   L6 after retrieval: mode terminated, terminate calls [1, 1], threads alive [False, False]
+== L3 own backend: bean fails at step 2
+  ok   mode fallback, fallback {'active': True, 'label': 'Worker failed. No qualified GX rehearsal recorded — showing archived stella/GENE evidence', 'savedRunId': None}
+  ok   error kept: 'my-probe crash on bean'
+  ok   triangular terminated: calls 1, alive False, state running
+  ok   final reason: 'GPU 0 (bean) worker failed: my-probe crash on bean. Other worker terminated.'
+  ok   with a saved run: {'active': True, 'label': 'Worker failed — playing saved GX run rehearsal-0123456789ab', 'savedRunId': 'rehearsal-0123456789ab'}
+== L5 own backend: resume from checkpoint raw 77
+  ok   GPU 0: first simTime 123.0366 (77*sqrt2 = 108.8944), last 165.4630 (117*sqrt2 = 165.4630)
+  ok   GPU 1: first simTime 123.0366 (77*sqrt2 = 108.8944), last 165.4630 (117*sqrt2 = 165.4630)
+  ok   restart from 0 -> fallback: 'simulation clock went backwards (10.0 < 77.0 from checkpoint); checkpoint continuation broken'
+== L6 own backend: exception out of the run loop
+  ok   propagated KeyboardInterrupt, terminate calls [1, 1], alive [False, False]
+== L7 my validator over every snapshot of this probe
+  ok   73 snapshots, modes ['fallback', 'launching', 'live', 'terminated'], invalid []
+  ok   negative control (mode running-hot) rejected
+== L4 subprocess: no credentials, HOME empty, audit hook on sockets
+  ok   mode unavailable | Live GX unavailable: no Modal credentials (MODAL_TOKEN_ID/MODAL_TOKEN_SECRET or ~/.modal.t | launch False (Live GX unavailable: no Modal credentials (MODAL_TOKEN_ID/MO) | socket events [] | modal modules []
+== L8 imports of modal / modal_app across main/ and scripts/ (text scan)
+       main/labyrinth_main/features/live_gx/modal_app.py:48: import modal
+       main/labyrinth_main/features/live_gx/modal_backend.py:226: import modal
+       main/labyrinth_main/features/live_gx/modal_backend.py:270: import modal
+       main/labyrinth_main/features/live_gx/modal_backend.py:305: import modal
+  ok   only modal_backend.py (inside functions) and modal_app.py itself import modal; nothing imports modal_app
+       decorator: app.function(image=image, gpu=GPU, cpu=CPU_PER_WORKER, memory=MEMORY_MIB_PER_WORKER, timeout=LIVE_TIMEOUT_S, retries=0, max_containers=2, scaledown_wi
+       decorator: app.function(image=image, gpu=GPU, cpu=CPU_PER_WORKER, memory=MEMORY_MIB_PER_WORKER, timeout=REHEARSAL_PHASE_TIMEOUT_S, retries=0, max_containers=2, s
+  ok   modal_app.py: UNREHEARSED docstring, GPU A100-40GB, exactly two decorators, both app.function with gpu, timeout, retries=0 (no entrypoint/schedule/web decorator)
+== network audit events in this process: []
+  ok   zero socket connects / DNS lookups in the probe process
+BACKEND PROBE: ALL OK
+```
+
+Five mutations in the probe copy (`03_mutations.sh`; one at a time, each restored before the next):
+```
+--- probe copy vs commit 3faed3a (task 06 owned files + liveStatus.ts + schema):
+18 files compared, 0 differ
+=== M1: main/labyrinth_main/features/live_gx/modal_backend.py
+    -                     _settle(h, False, verdict)
+    +                     _settle(h, True, None)
+    exit=1
+    FAILED main/tests/test_live_gx.py::test_L6_terminated_is_reported_only_after_a_cancel_that_succeeded[spawn-fails-late,put-ok,cancel-none-orchestrator]
+    FAILED main/tests/test_live_gx.py::test_L6_terminated_is_reported_only_after_a_cancel_that_succeeded[spawn-fails-late,put-ok,cancel-none-service+server]
+    FAILED main/tests/test_live_gx.py::test_L6_terminated_is_reported_only_after_a_cancel_that_succeeded[spawn-fails-late,put-ok,cancel-none-rehearse-cli]
+    FAILED main/tests/test_live_gx.py::test_L6_terminated_is_reported_only_after_a_cancel_that_succeeded[spawn-fails-late,put-fails,cancel-none-orchestrator]
+    FAILED main/tests/test_live_gx.py::test_L6_terminated_is_reported_only_after_a_cancel_that_succeeded[spawn-fails-late,put-fails,cancel-none-service+server]
+    FAILED main/tests/test_live_gx.py::test_L6_terminated_is_reported_only_after_a_cancel_that_succeeded[spawn-fails-late,put-fails,cancel-none-rehearse-cli]
+    6 failed, 209 passed in 22.72s
+=== M2: main/labyrinth_main/features/live_gx/orchestrator.py
+    -             if open_ and self.mode == "fallback":  # the fallback
+    +             if False:  # the fallback
+    exit=1
+    FAILED main/tests/test_live_gx.py::test_L6_a_fallback_reads_termination_pending_from_the_instant_its_mode_is_set[worker]
+    FAILED main/tests/test_live_gx.py::test_L6_a_fallback_reads_termination_pending_from_the_instant_its_mode_is_set[timeout]
+    2 failed, 213 passed in 22.67s
+=== M3: main/labyrinth_main/features/live_gx/rehearse.py
+    -             if not decision.approved:
+    +             if False:
+    exit=1
+    FAILED main/tests/test_live_gx.py::test_L6_rehearse_cli_in_process_pass_and_crash_paths
+    FAILED main/tests/test_live_gx.py::test_L1_a_ledger_amount_too_large_for_a_float_is_refused_and_never_raises
+    FAILED main/tests/test_live_gx.py::test_L1_both_entrypoints_refuse_every_ledger_that_is_not_reconciled_with_room[missing-rehearsal]
+    FAILED main/tests/test_live_gx.py::test_L1_both_entrypoints_refuse_every_ledger_that_is_not_reconciled_with_room[unreconciled-rehearsal]
+    FAILED main/tests/test_live_gx.py::test_L1_both_entrypoints_refuse_every_ledger_that_is_not_reconciled_with_room[over the ceiling-rehearsal]
+    FAILED main/tests/test_live_gx.py::test_L1_both_entrypoints_refuse_every_ledger_that_is_not_reconciled_with_room[truncated-rehearsal]
+    FAILED main/tests/test_live_gx.py::test_L1_both_entrypoints_refuse_every_ledger_that_is_not_reconciled_with_room[a list-rehearsal]
+    FAILED main/tests/test_live_gx.py::test_L1_both_entrypoints_refuse_every_ledger_that_is_not_reconciled_with_room[a key missing-rehearsal]
+    14 failed, 201 passed in 23.65s
+=== M4: renderer/src/features/live-gx/model.ts
+    -   if (d.budget.slotFits !== true) return guardRefusal(d);
+    +   void guardRefusal;
+    exit=1
+       × L10 Launch is disabled when idle but the budget guard refuses the slot 19ms
+       × L10 Launch is enabled only for mode idle with budget.slotFits on a fresh snapshot 12ms
+       × L10 FA-4 after a 409 Launch stays disabled while the snapshots do not allow launching, and returns with the first one that does 199ms
+       × L10 the confirmation closes itself when launching stops being allowed or the cost changes; nothing is sent 1033ms
+       × cross-RX-5 a guard refusal reads as the guard refusing the slot and quotes its clause; it is not called a ceiling fit 9ms
+          Tests  5 failed | 86 passed (91)
+=== M5: renderer/src/lib/liveStatus.ts
+    -   return s.status === 'ready' && s.data.mode === 'live';
+    +   return s.status === 'ready' && (s.data.mode === 'live' || s.data.mode === 'fallback');
+    exit=1
+       × L9 unreachable / unavailable / fallback show an unmistakable label and play the replay (never LIVE) 1226ms
+       × L9 fallback shows the cause the backend reports (a hard timeout is not "Worker failed"), and no saved run is claimed when none exists 30ms
+       × L9 mode fallback whose reason contains TERMINATE FAILED is a danger alert titled from the marker, never just a badge (FA-1) 1030ms
+       × L9 mode fallback whose reason contains TERMINATION PENDING is a danger alert titled from the marker, never just a badge (FA-1) 1025ms
+       × L9 FA-3 the provenance badge reads Live only for a fresh, valid mode "live" snapshot; otherwise "Recorded run" 1024ms
+       × L9 a saved run with a broken shape is rejected by the loader and archived evidence plays instead (FE-8) 1005ms
+          Tests  8 failed | 83 passed (91)
+--- restored: probe copy vs commit again
+differ after restore: 0
+```
+(M3 lists the first 8 of its 14 failing tests; M5 the first 6 of its 8.) Afterwards:
+`rm -rf ~/.cache/labyrinth-probes/vt-06-live-gx` and no `vt-06-live-gx` copy is left. `~/.labyrinth` does not exist.
+
+### Findings
+
+- **Run-2 blockers are fixed at `3faed3a`.** R2-1: `modal_backend.py:239-251` now settles a late client-side spawn
+  error as unconfirmed (`_settle(h, False, verdict)`, line 250). Putting back the old confirmed settle (M1) turns 6
+  cells of `test_L6_terminated_is_reported_only_after_a_cancel_that_succeeded` red (`test_live_gx.py:2282`). R2-2:
+  `orchestrator.py:353-367` adds the TERMINATING marker to the fallback reason while workers are still open, and adds the
+  "terminated" clause only from the records. Removing that (M2) turns
+  `test_L6_a_fallback_reads_termination_pending_from_the_instant_its_mode_is_set` red (`test_live_gx.py:2342`).
+- **R2-4 (weak tests for the money-guard wiring) is fixed for the case I re-checked.** In run 2, the rehearsal
+  ignoring a refusing guard (R15) survived. At `3faed3a` the same mutation (M3, `rehearse.py:108`) turns 14 tests red.
+  I did not re-run the other run-2 survivors (S02, S04–S06, S09 and the R2-16 list) or the run-2 minor findings
+  R2-5 … R2-18. Their status at this commit is unverified by me.
+- **F3-1 (minor, documentation; L10).** TASK.md:20 says Launch is enabled "only when mode is `idle` and
+  `budget.slotFits`". `renderer/src/features/live-gx/model.ts:164-187` also enables it for a *settled* `fallback` of a
+  qualified service, with `slotFits` still required and no termination or stop marker present (line 181; the cross-RX-4
+  test is at `LiveView.test.tsx:550-557`). This matches the backend contract: interface.md:111 says `fallback` is
+  "shown until the next launch". Without it, the UI could never relaunch after a fallback. It is not a defect, but
+  TASK.md L10 and decision.md do not record the change. Suggested fix: reword L10 to match.
+- **F3-2 (minor, documentation).** TASK.md:28-31 still reads "IN-PROGRESS … reviewer round 4 CHANGES REQUESTED …
+  Frontend L9–L10: built, unverified". At this commit the commit message says all review areas were approved. The
+  status text is the owner's to update after this run.
+- **Probe-side note.** The first pass of my L8 check was red because of my own substring search (see Real output),
+  not because of the code.
+- **Not run by me:** `verify.sh all` and `check_boundaries.py`, by instruction. Their evidence is the maintainer's
+  run quoted above. Also not run: run 2's signal matrix, real-server HTTP probes and the 163-mutation sweep.
+- **Cannot be checked without a real Modal account (stays UNREHEARSED, D-011):** that `modal==1.6.4` has the API the
+  code calls (`FunctionCall.cancel(terminate_containers=True)`, `App.function(startup_timeout=…)`, `Dict.from_name`,
+  `FunctionCall.get(timeout=0)`); the image and GX build at the pinned commit; GX TOML parameter names and netCDF layouts
+  (`_read_flux`, `_restart_time`); real device UUIDs; real cancel and kill-switch latency; whether two real A100
+  containers actually overlap; what Modal bills against the $2.65 / $7.73 estimates. Everything here ran against fakes,
+  my own backend or the repo's stub.
+
+Verdict: PASS

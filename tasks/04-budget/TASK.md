@@ -21,6 +21,6 @@ Frontend:
 | B6–B7 | `renderer/src/features/budget/*.test.tsx` |
 
 ## Status
-IN-PROGRESS
+DONE
 
-Backend B1–B5: verifier PASS + reviewer APPROVE. Frontend B6–B7: built with tests, unverified.
+Verified at commit 3faed3a: tasks/04-budget/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).

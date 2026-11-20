@@ -1,12 +1,53 @@
 # Labyrinth · status
 
-> **Single source of truth for handoff. Read this first, then `interface.md`, `architecture.md`, `decision.md`.**
-> Last updated: 2026-11-20 by the maintainer (Claude Code in the owner's checkout `D:\Labyrinth`, Windows + WSL), resuming after the hand-over.
-> Branch **`main`**, pushed to `github.com/bede-lau/Labyrinth` (D-021). `claude/focused-cori-6s5ucw` on GitHub is the hand-over snapshot (`f0ca8e6`).
-> **Environment changed:** every command runs inside WSL through `scripts/dev.sh` — see CLAUDE.md "Running commands on this machine" and D-020.
+> **Single source of truth for handoff. Read "Current state" first, then `interface.md`, `architecture.md`, `decision.md`.**
+> Last updated: 2026-11-20 ~23:10 by the maintainer (Claude Code in the owner's checkout `D:\Labyrinth`, Windows + WSL).
+> Branch **`main`**. Everything below "Current state" is history, newest first.
+> Every command runs inside WSL through `scripts/dev.sh` — CLAUDE.md "Running commands on this machine" (D-020).
+
+## Current state
+
+**All ten tasks are `DONE`.** Each has a final external-verifier run at commit `3faed3a` ending in `Verdict: PASS`, with a `PASS` row for every outcome
+(`tasks/<NN>/VERIFY.md`), and the code passed the 2026-11-20 review round with all six areas approved. `scripts/check_docs.py` enforces this (D-022): any
+later change to a task's owned files reopens it until a verifier runs again. `verify.sh all` at `3faed3a`: exit 0, 11/11 stages — boundary self-test
+134 violation shapes, 71 gate tests, 331 backend tests, artifacts schema-valid and byte-fresh, tsc clean, 1350 frontend tests, vite build.
+
+| # | Task | State | Verified at |
+|---|---|---|---|
+| 00 | scaffold, boundary, gates | DONE | `3faed3a` |
+| 01 | geometry | DONE (acceptance-129 BLOCKED by design, D-007) | `3faed3a` |
+| 02 | transport | DONE | `3faed3a` |
+| 03 | forecast | DONE (PRD MAE mismatch shown, D-016) | `3faed3a` |
+| 04 | budget | DONE | `3faed3a` |
+| 05 | spatial | DONE (PRD-reported/blocked: no checkpoints in repo) | `3faed3a` |
+| 06 | live GX | DONE against fakes — **never run on Modal** (§6 runbook) | `3faed3a` |
+| 07 | HTTP server | DONE | `3faed3a` |
+| 08 | design system | DONE | `3faed3a` |
+| 09 | app shell | DONE | `3faed3a` |
+
+**GitHub:** `origin/main` is still `f0ca8e6`. Local `main` carries every session-2/3 commit plus the DONE commit; **the owner said "先不推送"
+(don't push yet) — ask before pushing.**
+
+**Open, not blocking DONE** (details in the Session 3 log below and in each VERIFY.md "Findings"):
+- **PRD gap — live comparison (cross-RX-2):** new GX bean samples are converted and can be overlaid, but the PRD's live comparison against the archive
+  (time-weighted means on 200–300 / 300–400 when covered, stationarity, saturated-agreement gate) is not computed; the backend says so in `reason`.
+  Next step: a decision entry + live-status contract field, then apply the transport statistics to the live trace. (`interface.md` §10)
+- Minors from the final reviews (FR-FE-LIVE-1/2, design-r3-N1, RV-G21/22/23, RV-G5 part, be-live-r4-1) and the verifiers' minors (2–3 per task, mostly
+  test wording and doc lines).
+
+**Needs a human:** §5 owner decisions (D-016 forecast definition, D-015 allowances) and §6 blockers (129 stella samples, Modal credentials and the
+first rehearsal, GENE-X checkpoints, `ANTHROPIC_API_KEY` for PR review in CI).
+
+**How work is run here (lessons from sessions 2–3):** one engineer per territory, one external verifier per task, one focused reviewer per area;
+the owner found multi-round adversarial panels redundant. Every agent prompt states the owner's standing authorisation (mid-run chat questions were
+read by agents as a new, narrower request). Never message a running workflow agent by id (it starts a duplicate).
 
 ## Session 3 (2026-11-20, maintainer on Opus) — live log, newest first
 
+- **Verification complete: 10/10 tasks PASS** (workflow `labyrinth-verify-all-tasks`, run `wf_19902763-abc`, 10 verifiers, 12 min, short checks as the
+  owner asked: targeted test runs, one independent probe per outcome, ≤ 5 mutations per task). All ten `TASK.md` set to `DONE`; docs gate OK.
+  Verifier minors: TASK.md wording (00 test rows and stage list — fixed; 01 status line — replaced), G3 printed-precision margin 0.9736 of the half-unit
+  (information only; float64 agreement 2.9e-13), and per-task notes in each VERIFY.md.
 - **Review round complete: all six areas APPROVED** (workflow `labyrinth-final-fix-and-review`, run `wf_293e54ad-a02`, 11 agents, 23 min).
   49 of the 50 open confirmed findings fixed (fe-features 18, gates 19, be-data 6, be-live 5, design 1); `verify.sh all` exit 0 (71 gate, 331 backend,
   1349 frontend tests; boundary self-test now 134 violation shapes). Final reviewers found no blocker/major. **Open, accepted as minor / follow-up:**
@@ -47,7 +88,7 @@
   scripts/gates, backend live-GX, backend data/contracts; each finding adversarially verified; fix → re-review until APPROVE) → push to `main` (D-021)
   → verification workflow (every task 00–09 on the committed tree, D-022 format) → mark DONE → commit, push.
 
-## HANDOVER (2026-11-20, session 2 → next agent) — read this section first, it overrides anything older below
+## History — session 2 hand-over (superseded by "Current state")
 
 The owner stopped session 2 because the usage budget was nearly exhausted. **Nothing is half-dispatched: no agent is running.** No task is `DONE`.
 **`verify.sh all` exits 0 at the wave-2 commit** (11/11 stages: 59 gate tests, 205 backend tests, 1017 frontend tests, artifacts byte-identical, build OK) — green gates are
@@ -135,7 +176,7 @@ each Result cell starting with `PASS`; and the file's last non-blank line exactl
   | reviewer 00 scaffold + `2b1607e` | CHANGES REQUESTED on both (§4c); SC-10, SC-12, SC-13 and the setup half of SC-11 already fixed by the maintainer |
   | design-lead review | FIX FIRST (§4b) |
 
-## 1. Where the build stands (one paragraph)
+## History — build state at the session-1 hand-over (sections 1–4 below are historical; everything in them is closed or listed in "Current state")
 
 The PRD is built end to end *in code*: five replay features (geometry, transport, forecast, budget, spatial) produce
 deterministic, schema-valid artifacts; a live-GX orchestrator + guarded HTTP API exist (never run against Modal); the

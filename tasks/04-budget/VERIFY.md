@@ -584,3 +584,164 @@ Could not check: the guard panel against a running main process (the API was stu
 the static build), and widths below 800 px.
 
 Verdict: FAIL — B7: at 1024–1920 px the fixture rows inside the scenario cards overlap their own labels and the range outcome is cut off ("Inside PRD r"), so claimed, computed, PRD range and outcome are not legibly shown (finding 1); the B1–B6 outcomes pass
+
+## Run 3 — whole task
+Verifier run: 2026-11-20, commit 3faed3a
+Scope: B1–B7 at commit 3faed3a, kept short at the owner's request: the task's own tests, one independent probe per
+outcome, three mutations, and a real-browser layout check of the Run 2 blocker. `git status --short` at the start
+showed only ` M status.md`, so no file owned by task 04 differed from the commit. Since Run 2 (2b1607e) the owned
+files changed (`git diff --stat 2b1607e HEAD`: 7 files, +1363 / −262), with D-023 (`claimedRange`, `basis`,
+`guardPlan`).
+Gate: not re-run here (the orchestrator said not to run `verify.sh all` while nine verifiers share the machine).
+The maintainer ran `verify.sh all` at 3faed3a on this tree: exit 0, 11/11 stages (boundary self-test 134 shapes,
+scripts 71 passed, ruff clean, main 331 passed, artifacts schema + fresh, tsc clean, vitest 1350 passed, vite
+build OK). That run is quoted, not reproduced.
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| B1 | 15 min at $6.10/h → $1.53; 2 rehearsals + slot → $13.73; + $8.10 → $21.83; remaining $18.17 of $40 | `test_B1_live_demo_ledger_recomputed_with_half_up_cents` and `test_B1_live_fixture_mismatch_drives_scenario_verdict` (rate 6.20 makes the fixture and scenario go red); `test_B8_every_claim_is_printed_by_the_source_it_names` (18.17 sourced to TASK.md). Passed | Decimal recompute from PRD constants typed in the probe (no project import): 1.53 / 13.73 / 21.83 / 18.17; artifact top level 40.0 / 8.1 / 21.83 / 18.17 and all four fixtures agree | PASS |
+| B2 | 161 h × 288 = 46,368 CPU-h | `test_B2_published_stella_cpu_hours`. Passed | 161 × 288 = 46368; fixture claimed 46368, computed 46368.0, matches true | PASS |
+| B3 | Full grid inside 14–15 d and $3,100–3,200; halved timestep inside 28–30 d and $6,200–6,400 | `test_B3_full_grid_days_and_dollars_inside_prd_ranges` (claimed null, `claimedRange`, basis arithmetic, a negative case) and `test_B3_range_fixture_drives_scenario_verdict` (step time ×1.1 goes outside). Passed | Decimal: 346.75 h = 14.447917 d, $3,172.7625; halved 693.5 h = 28.895833 d, $6,345.5250, all inside; artifact range fixtures have claimed null and the PRD ranges in `claimedRange`. Mutation BE-M1 killed | PASS |
+| B4 | GX benchmark (28 min 1 GPU 4×8; 90 min 4 GPUs 8×16) as `prd-reported` context only | `test_B4_gx_benchmark_is_prd_reported_context_only`. Passed | Artifact: both GX fixtures computed null, matches null, no basis; scenario prd-reported / not-applicable; the PRD prints "28 minutes" and "90 minutes" | PASS |
+| B5 | Pricing constants exported for the live budget guard | `test_B5_pricing_constants_exported_for_budget_guard`; `test_B7_guard_plan_*` (3 tests: guardPlan equals the guard's own answers, is recomputed when the guard's allowances or posted change, and says when it does not fit). Passed | `live_gx/budget_guard.py` imports `CEILING_USD, LIVE_RATE_USD_PER_H, LIVE_SLOT_MIN, REHEARSAL_H` from `budget.pricing`; D-015 recomputed by hand: slot 2.65, rehearsal 7.73, planned 26.21 = artifact `guardPlan` and decision.md | PASS |
+| B6 | Ledger bar to the $40 ceiling: posted, planned, remaining | `BudgetView.test.tsx` four "B6 …" tests: committed artifact, a modified artifact (ceiling 50 / posted 9.99; ceilings 25, 20, 27), provenance pills following the data, live estimate vs plan. Passed | Built app in a real browser (1920 px): bar label "Modal ledger against the $40.00 ceiling: Posted earlier $8.10, Planned: 2 rehearsals + 1 live slot $13.73, Remaining $18.17. Planned total $21.83.", widths 20.25 / 34.325 / 45.425 %. Mutations FE-M1 (posted hard-coded 8.1) and FE-M2 (PRD / Guard headers swapped), both survivors in Run 2, are now killed | PASS |
+| B7 | Scenario cards with headline, derivation and interpretation; prd-reported vs derived distinguished | `BudgetView.test.tsx` "B7 scenario cards …", "B7 range rows follow a modified artifact …", "FB-1 …", "B7 … kind live …", "DS-1 / DS-19 …". Passed | Run 2 blocker re-checked in the built app (real browser, all 11 fixture rows): at 1024 px (cards 431 px), 1440 px (639 px) and 1920 px (879 px) no two text boxes overlap, nothing is cut off, no text leaves its card, and the page has no horizontal scroll. Range rows read e.g. "PRD range 14–15 days, Computed 14.45 days, Δ to range 0.00, Arithmetic in PRD range". The 4 committed cards are prd-reported; the kind switch is exercised by the modified-artifact test | PASS |
+
+### Real output
+```
+$ wsl.exe -e bash scripts/dev.sh python3 --version
+Python 3.12.3
+$ wsl.exe -e git status --short          (start)
+ M status.md
+$ git rev-parse --short HEAD
+3faed3a
+$ git diff --stat 2b1607e HEAD -- main/labyrinth_main/features/budget main/tests/test_budget.py artifacts/budget.json renderer/src/features/budget
+ artifacts/budget.json                            |   2 +-
+ main/labyrinth_main/features/budget/artifact.py  | 123 +++-
+ main/tests/test_budget.py                        | 151 ++++-
+ renderer/src/features/budget/BudgetView.test.tsx | 723 +++++++++++++++++++++--
+ renderer/src/features/budget/BudgetView.tsx      | 352 ++++++++---
+ renderer/src/features/budget/budget.css          |  66 +--
+ renderer/src/features/budget/model.ts            | 208 +++++--
+ 7 files changed, 1363 insertions(+), 262 deletions(-)
+
+$ wsl.exe -e bash scripts/dev.sh python3 -m pytest -v -p no:cacheprovider main/tests/test_budget.py
+main/tests/test_budget.py::test_B1_live_demo_ledger_recomputed_with_half_up_cents PASSED [  7%]
+main/tests/test_budget.py::test_B1_live_fixture_mismatch_drives_scenario_verdict PASSED [ 15%]
+main/tests/test_budget.py::test_B9_no_budget_scenario_claims_archive_derivation PASSED [ 23%]
+main/tests/test_budget.py::test_B2_published_stella_cpu_hours PASSED     [ 30%]
+main/tests/test_budget.py::test_B3_full_grid_days_and_dollars_inside_prd_ranges PASSED [ 38%]
+main/tests/test_budget.py::test_B3_range_fixture_drives_scenario_verdict PASSED [ 46%]
+main/tests/test_budget.py::test_B6_fixture_basis_marks_arithmetic_only_checks PASSED [ 53%]
+main/tests/test_budget.py::test_B8_every_claim_is_printed_by_the_source_it_names PASSED [ 61%]
+main/tests/test_budget.py::test_B7_guard_plan_comes_from_the_live_budget_guard PASSED [ 69%]
+main/tests/test_budget.py::test_B7_guard_plan_is_recomputed_not_a_literal PASSED [ 76%]
+main/tests/test_budget.py::test_B7_guard_plan_says_when_it_does_not_fit PASSED [ 84%]
+main/tests/test_budget.py::test_B4_gx_benchmark_is_prd_reported_context_only PASSED [ 92%]
+main/tests/test_budget.py::test_B5_pricing_constants_exported_for_budget_guard PASSED [100%]
+============================== 13 passed in 0.82s ==============================
+EXIT=0
+
+$ wsl.exe -e bash scripts/dev.sh npm --prefix renderer run -s test -- src/features/budget --reporter=verbose      (colour codes removed)
+ ✓ src/features/budget/BudgetView.test.tsx > B6 ledger bar to the $40 ceiling: posted, planned, remaining; live guard estimate distinguished from PRD GPU-only 643ms
+ ✓ src/features/budget/BudgetView.test.tsx > B6 the ledger, its title and the plan-versus-ceiling statement follow a modified artifact 211ms
+ ✓ src/features/budget/BudgetView.test.tsx > B6 the ledger provenance pills follow the live-demo scenario kind in the artifact, never a hard-coded "derived" 136ms
+ ✓ src/features/budget/BudgetView.test.tsx > B6 a live guard estimate that differs from the artifact guard plan marks the plan figures as possibly out of date 106ms
+ ✓ src/features/budget/BudgetView.test.tsx > B7 scenario cards show headline, derivation and interpretation; PRD-reported vs derived; ranges never midpoints 112ms
+ ✓ src/features/budget/BudgetView.test.tsx > B7 range rows follow a modified artifact: outside the range, matches false, matches null, and a flag that disagrees 59ms
+ ✓ src/features/budget/BudgetView.test.tsx > FB-1 a range is read from claimedRange only: no range and no claim shows "—", prose is never parsed, an old midpoint is never shown 88ms
+ ✓ src/features/budget/BudgetView.test.tsx > B7 a scenario whose provenance kind is "live" is shown as a recorded run: an artifact can never earn the LIVE pill 48ms
+ ✓ src/features/budget/BudgetView.test.tsx > A3 budget: a missing or invalid artifact shows an error naming the file, never a blank view 17ms
+ (… 11 FF-1 / FF-8 / cross-RX-6 / FF-11 / FF-10 lines, all ✓ …)
+ ✓ src/features/budget/BudgetView.test.tsx > DS-1 / DS-19 fixture rows reflow by the width of their card, and the scenario grid never orphans a card 8ms
+ Test Files  1 passed (1)
+      Tests  21 passed (21)
+EXIT=0
+
+$ wsl.exe -e bash scripts/dev.sh python3 -I <scratch>/probe_backend.py      (Decimal, PRD constants typed in the probe, reads artifacts/budget.json)
+B1 slot 1.53 plan 13.73 planned 21.83 remaining 18.17
+B1 artifact top 40.0 8.1 21.83 18.17
+  live-slot-usd              claimed 1.53 computed 1.53 matches True agree True
+  rehearsals-plus-slot-usd   claimed 13.73 computed 13.73 matches True agree True
+  planned-usd                claimed 21.83 computed 21.83 matches True agree True
+  remaining-usd              claimed 18.17 computed 18.17 matches True agree True
+B2 161*288 = 46368 | fixture 46368 46368.0 True
+B3 x1: hours 346.75 days 14.447917 usd 3172.7625 in-days True in-usd True
+  full-grid-days  claimed None claimedRange [14.0, 15.0] computed 14.44792 matches True basis arithmetic
+  full-grid-usd   claimed None claimedRange [3100.0, 3200.0] computed 3172.763 matches True basis arithmetic
+B3 halved: hours 693.5 days 28.895833 usd 6345.5250 in-days True in-usd True
+  halved-dt-days  claimed None claimedRange [28.0, 30.0] computed 28.89583 matches True basis arithmetic
+  halved-dt-usd   claimed None claimedRange [6200.0, 6400.0] computed 6345.525 matches True basis arithmetic
+B4 gx-1gpu-min claimed 28.0 computed None matches None basis None
+B4 gx-4gpu-min claimed 90.0 computed None matches None basis None
+B4 scenario prd-reported not-applicable | 28 minutes on one GPU (4 Laguerre × 8 Hermite); 90 minutes on four GPUs (8 × 16)
+B4 PRD prints 28 minutes / 90 minutes: True True
+B5 guard D-015 recompute slot 2.65 rehearsal 7.73 planned 26.21
+B5 artifact guardPlan {'plannedTotalUsd': 26.21, 'rehearsalEstimateUsd': 7.73, 'rehearsalHardTimeoutS': 4500, 'slotEstimateUsd': 2.65, 'slotHardTimeoutS': 1500}
+B5 decision.md mentions $2.65 $7.73 $26.21: True True True
+B5 budget_guard imports from budget.pricing: ['from ..budget.pricing import CEILING_USD, LIVE_RATE_USD_PER_H, LIVE_SLOT_MIN, REHEARSAL_H']
+scenario kinds: {'live-demo': ('prd-reported', 'not-applicable'), 'stella-published': ('prd-reported', 'not-applicable'), 'full-grid-modal': ('prd-reported', 'not-applicable'), 'gx-benchmark': ('prd-reported', 'not-applicable')}
+EXIT=0
+
+# Built app: renderer/dist (built from the committed tree; dist/artifacts/budget.json byte-identical to
+# artifacts/budget.json; CSS bundle has ".bg-fixtures{...container-type:inline-size}" and no ".bg-range"),
+# copied to scratch and served by python3 -m http.server on 127.0.0.1; Browser pane at #/budget.
+# Per fixture row: element boxes of every text leaf compared pairwise; text wider than its box; text past the card.
+1024 px: {"innerWidth":1024,"docScrollW":1009,"cards":[431,431,431,431], 11 rows, every row "boxOverlaps":0,"cut":[],"outRowPx":0,"outCardPx":0}
+         range rows: "Full-grid stella wall time PRD range 14–15days Computed 14.45days Δ to range 0.00 Arithmetic in PRD range …"
+                     "Full-grid stella cost PRD range 3100–3200USD Computed 3172.76USD Δ to range 0.00 Arithmetic in PRD range …"
+1440 px: {"innerWidth":1440,"docScrollW":1425,"cards":[639,639,639,639], 11 rows, "textOutsideRowPx":0,"textOutsideCardPx":0}
+         (a text-range measure counted the 2-line-clamped note's hidden 3rd line under "Show full note" in two rows;
+          element boxes do not overlap: note 454–486 px, button from 486 px; the screenshot shows both legible)
+1920 px: {"innerWidth":1920,"docScrollW":1905,"cards":[879,879,879,879],"rows":11,"overlaps":0,"outCardPx":0,"cut":0}
+1920 px ledger: "Modal ledger against the $40.00 ceiling: Posted earlier $8.10, Planned: 2 rehearsals + 1 live slot $13.73, Remaining $18.17. Planned total $21.83." widths ["20.25%","34.325%","45.425%"]
+         plan-vs-ceiling: "Both plans stay inside the $40.00 ceiling: PRD GPU-only plan $21.83, Guard plan $26.21."
+
+# Mutations: probe copy from scripts/probe-copy.sh vt-04-budget, each applied, tested, restored; copy deleted after
+$ python3 -I <scratch>/mutate.py      (PYTHONDONTWRITEBYTECODE=1, __pycache__ cleared; vitest colour codes removed)
+### BE-M1 range check always inside [main/labyrinth_main/features/budget/artifact.py] -> exit=1 RED (killed)
+    FAILED main/tests/test_budget.py::test_B3_full_grid_days_and_dollars_inside_prd_ranges
+    1 failed, 12 passed in 0.09s
+    restore: copy f1b6833f5ea6 shared f1b6833f5ea6 same=True
+### FE-M1 posted hard-coded to 8.1 [renderer/src/features/budget/model.ts] -> exit=1 RED (killed)
+    Tests  1 failed | 20 passed (21)
+    FAIL  src/features/budget/BudgetView.test.tsx > B6 the ledger, its title and the plan-versus-ceiling statement follow a modified artifact
+    restore: copy b92a05782719 shared b92a05782719 same=True
+### FE-M2 PRD / Guard column headers swapped [renderer/src/features/budget/BudgetView.tsx] -> exit=1 RED (killed)
+    Tests  1 failed | 20 passed (21)
+    FAIL  src/features/budget/BudgetView.test.tsx > B6 ledger bar to the $40 ceiling: posted, planned, remaining; live guard estimate distinguished from PRD GPU-only
+    restore: copy 3602a060dfcc shared 3602a060dfcc same=True
+### control after restore (py): (0, ['13 passed in 0.10s'])
+$ wsl.exe -e git status --short          (end; the two VERIFY.md files belong to other verifiers)
+ M status.md
+ M tasks/00-scaffold/VERIFY.md
+ M tasks/07-server/VERIFY.md
+```
+
+### Findings
+1. The Run 2 blocker (finding 1 there: fixture rows overlapping their labels, range outcome cut off at 1024–1920 px)
+   is fixed. `renderer/src/features/budget/budget.css` makes `.bg-fixtures` a size container and the hand-built
+   `.bg-range` row is gone; in the built app no fixture row overlaps or overflows at 1024, 1440 or 1920 px (above).
+2. Weak test, does not block: `renderer/src/features/budget/BudgetView.test.tsx:739-750` (DS-1 / DS-19) checks the
+   CSS source text for `container-type: inline-size` and the grid rule. jsdom has no layout, so it cannot see an
+   overlap; it only guards against the old rules returning. The layout itself is backed only by the browser check
+   above. Suggest a real-browser overlap assertion (Playwright or similar) if layout regressions matter.
+3. Information: in `main/labyrinth_main/features/budget/artifact.py:62` the local `inside` only words the note;
+   `matches` for range fixtures is computed by the shared `prov.range_fixture` helper (outside this task's files).
+   BE-M1 was therefore caught by the note assertion at `main/tests/test_budget.py:97`, and the range test of
+   `matches` itself is covered at `main/tests/test_budget.py:108`.
+4. Information: since D-023 / cross-RX-3 every committed budget scenario is `prd-reported` / `not-applicable`
+   (arithmetic re-checks of PRD inputs are not "derived"). B7's "prd-reported vs derived distinguished" is therefore
+   shown by the renderer following the artifact's kind, which `BudgetView.test.tsx:407-455` exercises with a scenario
+   switched to derived.
+5. Run 2 findings 2–6 are addressed in this commit: the surviving mutations of Run 2 that were re-tried here (BM4
+   as FE-M1, BM7 as FE-M2) are now killed; the plan-versus-ceiling sentence is derived from the data
+   (`BudgetView.test.tsx:184-213`); the renderer's D-015 constants are replaced by the artifact's `guardPlan`
+   (D-023 §5); $18.17 is labelled "Claimed (TASK.md)" from `claimSource`; range fixtures use `claimedRange`, not
+   prose. Not re-tried this run: the other Run 2 survivors (BM2b, BM3, BM3b, BM3c, BM10, BM15, BM17, BM18); the
+   new tests at `BudgetView.test.tsx:122-131`, `:244-297`, `:338-456` assert the behaviour each of them changed.
+6. Could not check: the guard panel against a running main process (API stubbed in jsdom, absent from the static
+   build), and widths below 1024 px.
+
+Verdict: PASS

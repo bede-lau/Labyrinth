@@ -1,6 +1,6 @@
 # Verify: 03-forecast
-Runs 1–2 (below) cover outcomes F1–F3 (`main/`). **Run 3 at the end of this file covers the whole task, F1–F5,
-and its verdict is the last line of the file.** Editorial note from Run 3: the text of Runs 1–2 is kept as
+Runs 1–2 (below) cover outcomes F1–F3 (`main/`). **Runs 3 and 4 cover the whole task, F1–F5; Run 4 is at the
+end of this file and its verdict is the last line of the file.** Editorial note from Run 3: the text of Runs 1–2 is kept as
 written, except that the title and the scope paragraph were reworded, because `scripts/check_docs.py:46` reads
 their original wording as a partial verification. Nothing else in Runs 1–2 was changed.
 
@@ -429,5 +429,166 @@ EXIT=0
 
 Could not check: the view in a screen reader (the live region was read through the DOM only), and widths
 below 800 px.
+
+Verdict: PASS
+
+## Run 4 — whole task
+Verifier run: 2026-11-20, commit 3faed3a
+Scope, kept short at the owner's request: the task's own tests, one independent probe per side, and five
+targeted mutations aimed at the holes Run 3 found. `verify.sh all` was **not** re-run here; the maintainer ran it
+at 3faed3a on this tree (quoted below). `git status --short` at the start and at the end shows no change under
+`main/labyrinth_main/features/forecast/` or `renderer/src/features/forecast/` (only `status.md` and other tasks'
+VERIFY.md files, edited by other agents). Since Run 3 (2b1607e) only the four frontend files changed; the
+backend, `main/tests/test_forecast.py`, `artifacts/forecast.json` and `contracts/forecast.schema.json` are
+unchanged. Mutations ran in `/home/qqbot/.cache/labyrinth-probes/vt-03-forecast` (from `scripts/probe-copy.sh`),
+deleted at the end. Besides appending this run, the verifier changed only the pointer sentence at the top of this
+file (Run 3 to Runs 3 and 4).
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| F1 | Eight steps [1500,1550) … [1850,1900), stella bean, init [1450,1500) | `test_F1_eight_50_unit_steps_…` (re-run, passed); it pins the window list, the init window, the trace id and the provenance coverage | Own h5py read of the pinned h5 (sha256 equals the provenance), own dedupe 1441 to 1433 strictly increasing samples; artifact windows, init [1450,1500], traceId `stella-bean`, 8 steps all agree | PASS |
+| F2 | Persistence and frozen forecasts, per-step abs errors, MAE, exact `method` | `test_F2_…` (re-run, passed): recomputes every step, pins MAE 0.043968 / 0.041794, checks causality and the `method` phrases | Own integrals (edge-interpolated observed, right edge held at the last sample at or before b for forecasts): MAE 0.04396792 / 0.04179437, equal to the artifact; largest per-step difference 4.89e-7 (7 significant figures in storage). `method` states the held edge and the time-weighted mean. Backend mutations not repeated: code unchanged since Runs 2–3, whose 8 backend mutations were all red | PASS |
+| F3 | Claimed 0.0444 / 0.0423 vs computed ≈0.0440 / 0.0418 shown as mismatch; note on sample-and-hold and the 2.55 break (D-016) | `test_F3_prd_mae_fixtures_reported_as_mismatch`, `test_F3_sample_and_hold_…` (re-run, passed) | Artifact: `matches:false` twice, verification `failed`, own values print 0.0440 / 0.0418. Own sample-and-hold implementation gives 0.044418 / 0.042332 and stella 300–400 = 2.5569, the numbers the note states | PASS |
+| F4 | Predict, Reveal, Update; keyboard operable; reset; observed hidden until revealed | `ForecastView.test.tsx:51` (keyboard Tab / Enter / Space, reset), `:99` (`visibility()` for rows below, at and above the index in all phases), `:122` (every row, the current-window block and the live region in all 25 states), `:330` (no steps). Real component, real artifact, only `fetch` stubbed. All passed | Own probe test in the copy, with its own state rule and own number formatting and no import of `model.ts`: drives all 24 activations by keyboard alone (Enter and Space alternating, focus stays on the primary button), and in all 25 states finds no unrevealed observed value or abs error anywhere in the document text or any attribute; a keyboard Reset after 13 activations hides every value again and disables Reset. Mutations MU1 (future observed shown), MU2 (live region speaks the observed value early) both red; these are the two leak kinds that survived in Run 3 | PASS |
+| F5 | Running MAE for both forecasters; final claimed vs computed with mismatch flag | `ForecastView.test.tsx:188` (running MAE after 1 and 8 windows, both Mismatch rows, D-016 note), `:222` (Failed pill, Mismatch rows first, wording rule), `:276`, `:357`, `:371`, `:385` (the mismatch follows the data). All passed | Own running MAE in every state (scored windows only) equals the rendered value: 0.0140/0.0140, 0.0160/0.0230, … 0.0440/0.0418 after 8. Final panel shows claimed 0.0444 / 0.0423, computed 0.0440 / 0.0418, Mismatch, Failed, 2.56 vs 2.55. Mutations MU3 (verification pill forced to passed), MU4 (note says forecast = previous observed value), MU5 (computed set to the claim) all red | PASS |
+| gate | `verify.sh all` exits 0 | — | Quoted from the maintainer at 3faed3a, not re-run here: exit 0, 11 of 11 stages (boundary self-test 134 shapes, scripts 71 passed, ruff clean, main 331 passed, artifacts schema and fresh, tsc clean, vitest 1350 passed, vite build OK) | PASS (quoted) |
+
+### Real output
+```
+$ wsl.exe -e bash scripts/dev.sh python3 --version
+Python 3.12.3
+
+$ wsl.exe -e git status --short; git rev-parse --short HEAD      (start)
+ M status.md
+3faed3a
+$ wsl.exe -e git diff --stat 2b1607e 3faed3a -- main/labyrinth_main/features/forecast renderer/src/features/forecast main/tests/test_forecast.py artifacts/forecast.json contracts/forecast.schema.json main/labyrinth_main/features/transport/stats.py
+ .../src/features/forecast/ForecastView.test.tsx    | 396 ++++++++++++++++-
+ renderer/src/features/forecast/ForecastView.tsx    | 469 ++++++++++++---------
+ renderer/src/features/forecast/forecast.css        |   6 +-
+ renderer/src/features/forecast/model.ts            |  36 +-
+ 4 files changed, 705 insertions(+), 202 deletions(-)
+
+$ wsl.exe -e bash scripts/dev.sh python3 -m pytest -v -p no:cacheprovider main/tests/test_forecast.py
+main/tests/test_forecast.py::test_F1_eight_50_unit_steps_from_1500_to_1900_initialised_on_1450_1500 PASSED [ 25%]
+main/tests/test_forecast.py::test_F2_persistence_and_frozen_forecasts_errors_and_mae PASSED [ 50%]
+main/tests/test_forecast.py::test_F3_prd_mae_fixtures_reported_as_mismatch PASSED [ 75%]
+main/tests/test_forecast.py::test_F3_sample_and_hold_reproduces_prd_mae_but_not_stella_300_400 PASSED [100%]
+============================== 4 passed in 0.82s ===============================
+EXIT=0
+
+$ wsl.exe -e bash scripts/dev.sh npm --prefix renderer run -s test -- src/features/forecast --reporter=verbose --no-color
+ ✓ src/features/forecast/ForecastView.test.tsx > F4 step-through Predict → Reveal → Update is keyboard operable, hides observed until revealed, and resets 310ms
+ ✓ src/features/forecast/ForecastView.test.tsx > F4 no peeking: visibility() for every window below, at and above the current one, in all three phases 4ms
+ ✓ src/features/forecast/ForecastView.test.tsx > F4 no peeking in the view: every row, the current-window block and the live region, in all 25 states 395ms
+ ✓ src/features/forecast/ForecastView.test.tsx > F5 running MAE for both forecasters and final computed vs claimed scores with mismatch flag 267ms
+ ✓ src/features/forecast/ForecastView.test.tsx > F5 the failed verification and the mismatch are the first thing on the page, and the wording never equates forecast and observation 21ms
+ ✓ src/features/forecast/ForecastView.test.tsx > FB-3 what a score match is backed by is the fixture basis (D-023): arithmetic reads as such, never softens a mismatch 19ms
+ ✓ src/features/forecast/ForecastView.test.tsx > F5 the mismatch narrative follows the artifact: it goes away when both scores match and stays when one does not 59ms
+ ✓ src/features/forecast/ForecastView.test.tsx > F5 an artifact whose provenance kind is "live" is shown as a recorded run: replayed scores never earn the LIVE pill 16ms
+ ✓ src/features/forecast/ForecastView.test.tsx > F4 an artifact with no steps shows an empty state instead of crashing 13ms
+ ✓ src/features/forecast/ForecastView.test.tsx > A3 forecast: a missing or invalid artifact shows an error naming the file, never a blank view 12ms
+ ✓ src/features/forecast/ForecastView.test.tsx > FF-14 the mismatch count follows the rows: a flag that disagrees with the printed values counts as a mismatch 14ms
+ ✓ src/features/forecast/ForecastView.test.tsx > FF-7 a score that cannot be recomputed (matches null) is not a mismatch: no callout, a "Not recomputable" row 12ms
+ ✓ src/features/forecast/ForecastView.test.tsx > FF-9 the sample-and-hold callout says "matching the PRD" only when its printed values are the PRD claims 29ms
+ ✓ src/features/forecast/ForecastView.test.tsx > FF-1 / cross-RX-1 the forecast replay pill withholds the zero-cost label for mode live with two running workers, as the header does 17ms
+ ✓ src/features/forecast/ForecastView.test.tsx > FF-1 / cross-RX-1 the forecast replay pill withholds the zero-cost label for a fallback with TERMINATE FAILED, as the header does 14ms
+ ✓ src/features/forecast/ForecastView.test.tsx > FF-1 / cross-RX-1 the forecast replay pill withholds the zero-cost label for a fallback with TERMINATION PENDING, as the header does 13ms
+ ✓ src/features/forecast/ForecastView.test.tsx > FF-1 / cross-RX-1 the forecast replay pill withholds the zero-cost label for a stop that is not confirmed, as the header does 18ms
+ ✓ src/features/forecast/ForecastView.test.tsx > FF-1 / cross-RX-1 the forecast replay pill withholds the zero-cost label for mode idle with workers listed, as the header does 19ms
+ ✓ src/features/forecast/ForecastView.test.tsx > FF-1 / cross-RX-1 the forecast replay pill withholds the zero-cost label for mode launching, as the header does 17ms
+ ✓ src/features/forecast/ForecastView.test.tsx > FF-1 / cross-RX-1 the forecast replay pill withholds the zero-cost label for a connection lost after mode live, as the header does 116ms
+ ✓ src/features/forecast/ForecastView.test.tsx > FF-1 the forecast replay pill keeps "$0" where the header does, and drops it once a launch from this page is accepted 39ms
+ ✓ src/features/forecast/ForecastView.test.tsx > DS-2 the steps table keeps its visually hidden caption inside the scrolling well 6ms
+ Test Files  1 passed (1)
+      Tests  22 passed (22)
+EXIT=0
+
+$ wsl.exe -e bash scripts/dev.sh python3 -I <scratch>/probe_backend.py      (own h5py read, own dedupe and integrals, no labyrinth_main import)
+h5 sha256 matches provenance: True
+raw 1441 kept 1433 strictly increasing True
+F1 artifact windows True | init [1450.0, 1500.0] | traceId stella-bean | n 8
+F2 own MAE persistence 0.04396792 frozen 0.04179437 | artifact 0.04396792 0.04179437 | max |own - artifact| per step 4.89e-07
+F2 method mentions 'last sample <= b': True | 'time-weighted mean': True
+F3 mae-persistence claimed 0.0444 computed 0.04396792 matches False | own printed 0.0440
+F3 mae-frozen claimed 0.0423 computed 0.04179437 matches False | own printed 0.0418
+F3 note has sample-and-hold 0.044418 -> 0.0444, 0.042332 -> 0.0423, 2.5569 / PRD 2.55: True
+F3 verification outcome: failed
+F3 own sample-and-hold MAE persistence 0.044418 frozen 0.042332 | stella 300-400 2.5569
+EXIT=0
+
+$ python3 <scratch>/mutate.py probe      (verifier's zz_probe.test.tsx copied into the probe copy, run, removed)
+PROBE states 25 | running MAE (scored/phase:pers,frozen)  1/0:0.0140,0.0140 2/0:0.0160,0.0230 3/0:0.0530,0.0469 4/0:0.0500,0.0486 5/0:0.0405,0.0501 6/0:0.0410,0.0438 7/0:0.0448,0.0454 8/0:0.0440,0.0418
+PROBE final panel text: Forecast replayFinal scores: recomputed vs PRD claimMAE over all 8 windows, at the PRD's printed precision.DerivedFailedstella MAE, persistence forecastClaimed (PRD)0.0444Computed0.0440QgB,iΔ−0.0004MismatchComputed with the stated method and the time-weighted edge-interpolated window mean (D-013), forecasts held at the right edge (no look-ahead); not tuned to the PRD (D-008); the MAE fixtures do n
+ ✓ src/features/forecast/zz_probe.test.tsx > PROBE whole-document no-peek, running MAE and keyboard over every state; keyboard reset mid-run 680ms
+PROBE after keyboard reset: observed values on page 0 | Reset disabled true
+ ✓ src/features/forecast/zz_probe.test.tsx > PROBE keyboard reset after 13 activations hides everything again 205ms
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+exit=0
+
+$ python3 <scratch>/mutate.py mutate      (copy only; each mutation applied, ForecastView.test.tsx run alone, original restored)
+### MU1 future windows' observed values shown in the table (view only) [renderer/src/features/forecast/ForecastView.tsx:378] -> exit=1 RED (killed)
+    × F4 no peeking in the view: every row, the current-window block and the live region, in all 25 states 37ms
+    Tests  1 failed | 21 passed (22)
+### MU2 live region speaks the observed value in the predicted phase [renderer/src/features/forecast/ForecastView.tsx:234] -> exit=1 RED (killed)
+    × F4 no peeking in the view: every row, the current-window block and the live region, in all 25 states 57ms
+    Tests  1 failed | 21 passed (22)
+### MU3 final-scores verification pill forced to passed [renderer/src/features/forecast/ForecastView.tsx:120] -> exit=1 RED (killed)
+    × F5 the failed verification and the mismatch are the first thing on the page, and the wording never equates forecast and observation 29ms
+    Tests  1 failed | 21 passed (22)
+### MU4 note says the forecast equals the previous observed value [renderer/src/features/forecast/ForecastView.tsx:388] -> exit=1 RED (killed)
+    × F5 the failed verification and the mismatch are the first thing on the page, and the wording never equates forecast and observation 34ms
+    Tests  1 failed | 21 passed (22)
+### MU5 final scores rendered as the PRD claim (computed := claimed, matches := true) [renderer/src/features/forecast/ForecastView.tsx:126] -> exit=1 RED (killed)
+    × F5 running MAE for both forecasters and final computed vs claimed scores with mismatch flag 265ms
+    × F5 the failed verification and the mismatch are the first thing on the page, and the wording never equates forecast and observation 25ms
+    × FB-3 what a score match is backed by is the fixture basis (D-023): arithmetic reads as such, never softens a mismatch 20ms
+    × F5 the mismatch narrative follows the artifact: it goes away when both scores match and stays when one does not 39ms
+    × FF-14 the mismatch count follows the rows: a flag that disagrees with the printed values counts as a mismatch 18ms
+    × FF-7 a score that cannot be recomputed (matches null) is not a mismatch: no callout, a "Not recomputable" row 32ms
+    Tests  6 failed | 16 passed (22)
+### restore check (copy vs shared tree)
+    renderer/src/features/forecast/ForecastView.tsx: copy 18331d36181d shared 18331d36181d same=True
+    renderer/src/features/forecast/model.ts: copy 366945ed3761 shared 366945ed3761 same=True
+    renderer/src/features/forecast/ForecastView.test.tsx: copy 2b193bf6c544 shared 2b193bf6c544 same=True
+### 5 of 5 red
+(The "FAIL src/..." summary lines vitest repeats under each mutation are left out; the lines shown are verbatim.)
+
+$ rm -rf /home/qqbot/.cache/labyrinth-probes/vt-03-forecast      (after checking its marker file)
+deleted
+$ wsl.exe -e git status --short; git rev-parse --short HEAD      (end)
+ M status.md
+ M tasks/00-scaffold/VERIFY.md
+ M tasks/04-budget/VERIFY.md
+ M tasks/07-server/VERIFY.md
+ M tasks/08-design-system/VERIFY.md
+3faed3a
+
+# Gate: not re-run (owner's instruction). Maintainer's bash scripts/verify.sh all at 3faed3a, as reported to
+# this verifier: exit 0, 11/11 stages (boundary self-test 134 shapes, scripts 71 passed, ruff clean,
+# main 331 passed, artifacts schema + fresh, tsc clean, vitest 1350 passed, vite build OK).
+```
+
+### Findings
+1. **Resolved since Run 3: the four test holes.**
+   - Run 3 finding 1 (no-peek only checked on the current row): now covered by `ForecastView.test.tsx:99-120`
+     (unit test of `visibility()`) and `:122-186` (every row, the current-window block and the live region in
+     all 25 states). MU1 and MU2 go red. These are the leak kinds of the earlier FM2 and FM15.
+   - Run 3 finding 2 (verification outcome not pinned): `:232-236` pins the Failed pill and the badge name. MU3 goes red.
+   - Run 3 finding 3 (wording rule untested): `:249-257`. MU4 goes red.
+   - Run 3 finding 4 (`steps: []` blanked the view): `ForecastView.tsx:69` now renders `NoSteps`, tested at
+     `:330-341`. The contract still has no `minItems` (`contracts/forecast.schema.json` unchanged), so the view
+     handles that case instead.
+2. **Info: shared state rule in the 25-state test.** `ForecastView.test.tsx:138,180` takes the next expected
+   state from `nextAction` / `advance` in `model.ts`, the code under test, but codes the expected cell contents
+   on its own and also checks the button labels. The verifier's probe used its own state rule and its own
+   formatting, and scanned all text and attributes in the document, and it agrees.
+3. **Info: the final scores are shown before the replay starts.** This is now deliberate and tested
+   (`ForecastView.test.tsx:222-247`, DS-4). It is the 8-window aggregate, not any window's observation.
+4. **Info: not checked in this run.** The built app in a real browser, a screen reader and narrow widths. Run 3
+   covered the browser at 1440 px and 800 px on the earlier frontend. The keyboard was checked here in jsdom
+   only, with `userEvent`. The backend was not mutation-tested again because its code is unchanged since the
+   runs that did.
 
 Verdict: PASS

@@ -20,6 +20,6 @@ Frontend:
 | S5–S6 | `renderer/src/features/spatial/*.test.tsx` |
 
 ## Status
-IN-PROGRESS
+DONE
 
-Backend S1–S4: verifier PASS + reviewer APPROVE. Frontend S5–S6: built with tests, unverified.
+Verified at commit 3faed3a: tasks/05-spatial/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).
