@@ -6,16 +6,16 @@
 ## Where things stand
 | Task | Owner | State | Verify | Review | Notes |
 |---|---|---|---|---|---|
-| 00 scaffold | orchestrator | VERIFYING | run1 FAIL (13 bypasses) → run2 FAIL (absolute paths N1, verdict parse N9) → fixed 86a5142; run 3 running | — | |
-| 01 geometry | backend-engineer / frontend-engineer | IN-PROGRESS: backend cleared (verifier PASS + reviewer APPROVE after fix round; float64 stella match 2.9e-13); frontend TODO | backend PASS | backend APPROVE | UI must show acceptance-129 BLOCKED |
-| 02 transport | backend-engineer / frontend-engineer | IN-PROGRESS: backend fix round (reviewer blockers: small-N stderr, stationarity over-rejection, no equivalence margin in compare) | backend PASS | CHANGES REQUESTED | stella vs GENE disagree on 1500–1893.8 (z≈−9): UI must not imply they agree |
-| 03 forecast | backend-engineer / frontend-engineer | IN-PROGRESS: backend fix round (note: sample-and-hold reproduces PRD MAE, breaks 2.55) | backend FAIL (premise) | CHANGES REQUESTED | D-016 pending |
-| 04 budget | backend-engineer / frontend-engineer | IN-PROGRESS: backend minors in fix round | backend PASS | CHANGES REQUESTED (minor) | range fixtures: never render midpoint as a PRD figure |
-| 05 spatial | backend-engineer / frontend-engineer | IN-PROGRESS: backend minors in fix round | backend PASS | CHANGES REQUESTED (minor) | |
-| 06 live-gx | backend-engineer / frontend-engineer | IN-PROGRESS: backend fix round (B1 Ctrl-C leaves GPUs running; M1 Modal cap vs guard; M2–M6; L3 malformed poll) | backend FAIL (L3) | CHANGES REQUESTED | UNREHEARSED |
-| 07 server | backend-engineer | VERIFYING: fix round (SIGINT/SIGTERM shutdown, terminate result) | PASS | CHANGES REQUESTED (via 06) | |
-| 08 design system | design-lead | IN-PROGRESS (resumed after usage limit; tokens.css/tokens.ts agreement test failing mid-work) | — | — | |
-| 09 app shell | frontend-engineer | TODO | — | — | |
+| 00 scaffold | orchestrator | VERIFYING: run 3 PASS; R1/R3/R4/R5 fixed after; awaiting reviewer | PASS (run 3) | — | |
+| 01 geometry | backend-engineer / frontend A | IN-PROGRESS: backend cleared; frontend A building | backend PASS | backend APPROVE | UI must show acceptance-129 BLOCKED |
+| 02 transport | backend-engineer / frontend B | IN-PROGRESS: backend fix round done (TOST compare, N_eff≥20 gate, D-017: no archive window permits a claim); frontend B building | re-verify running | re-review running | |
+| 03 forecast | backend-engineer / frontend B | IN-PROGRESS: backend fix done (one-sided edge; sample-and-hold note, D-016); frontend B building | re-verify running | re-review running | |
+| 04 budget | backend-engineer / frontend B | IN-PROGRESS: backend minors fixed; frontend B building | backend PASS | re-review running | |
+| 05 spatial | backend-engineer / frontend A | IN-PROGRESS: backend minors fixed; frontend A building | backend PASS | re-review running | |
+| 06 live-gx | backend-engineer / frontend B | IN-PROGRESS: backend fix round done (shutdown terminates GPUs, Modal cap = guard, saved-run route D-018); frontend B building | re-verify running | re-review running | UNREHEARSED |
+| 07 server | backend-engineer | VERIFYING: fix round done | re-verify running | re-review running | |
+| 08 design system | design-lead | VERIFYING: D1–D5 built, 553 tests | verifier pending | review pending | |
+| 09 app shell | frontend A | IN-PROGRESS | — | — | |
 
 States: TODO → IN-PROGRESS → VERIFYING → DONE (needs VERIFY.md `Verdict: PASS` + reviewer APPROVE) · BLOCKED.
 
