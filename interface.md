@@ -16,7 +16,7 @@ only *data*:
 |---|---|---|---|
 | main → renderer, replay (static, $0) | `artifacts/<id>.json` fetched as `/artifacts/<id>.json` | `contracts/<id>.schema.json` | `scripts/validate_artifacts.py` (jsonschema) + `renderer/src/lib/contracts.test.ts` (ajv) |
 | main ⇄ renderer, live | HTTP `/api/*` on `127.0.0.1:8787` | `contracts/live-status.schema.json`, `contracts/live-run.schema.json` | `main/tests/test_server.py`, `test_live_gx.py` |
-| source-level coupling | **none allowed** | — | `scripts/check_boundaries.py` (37 violation shapes, exit 2), PostToolUse hook, `verify.sh` |
+| source-level coupling | **none allowed** | — | `scripts/check_boundaries.py` (self-tested against every known violation shape, exit 2), PostToolUse hook, `verify.sh` |
 
 The renderer may reference outside `renderer/` only: `contracts/*.json` (type-level reference) and
 `artifacts/` (data; served by vite in dev, copied into `dist/artifacts/` by the build).
@@ -144,7 +144,9 @@ cd main && python3 -m labyrinth_main.features.live_gx.rehearse            # prin
 ## 8. Gates (all exit 2 on failure)
 
 `verify.sh` stages: boundary self-test + scan · docs handoff · scripts tests · ruff · pytest · artifact schema · artifact freshness (byte-identical rebuild) · tsc · vitest · vite build.
-`check_docs.py`: a task may be `DONE` only if `tasks/<NN>/VERIFY.md` ends with a `Verdict: PASS` line (outside code fences) **and does not mention an unverified half** ("not yet built", "backend half", …).
+`check_docs.py` (D-022): a task may be `DONE` only if the last run in `tasks/<NN>/VERIFY.md` (a) ends the file with exactly `Verdict: PASS`, (b) has a `| Result |` table with a `PASS` row for every outcome ID in TASK.md, and (c) names a `commit <sha>` at which the task's owned files (backticked paths under `## Owner`) are identical to the working tree. Format: `.claude/agents/verifier.md`.
+`check_boundaries.py` is an allow-list (wave 2): any path, glob, URL or shell string in one tree that resolves into the other is a violation unless it is `contracts/*.json` or documented `artifacts/` data access; every text file under `main/` and `renderer/` is scanned; verdicts are identical under native Windows Python and WSL.
+Helper scripts (D-020): `dev.sh` (toolchain PATH wrapper), `setup-dev.sh` (pinned, sha256-checked toolchain install), `probe-copy.sh` (isolated copy for mutation probes), `hooks/stop_launcher.py` (cross-platform Stop hook entry).
 
 ## 9. How to change an interface
 

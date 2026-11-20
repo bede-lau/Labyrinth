@@ -5,6 +5,69 @@
 > Branch **`main`**, pushed to `github.com/bede-lau/Labyrinth` (D-021). `claude/focused-cori-6s5ucw` on GitHub is the hand-over snapshot (`f0ca8e6`).
 > **Environment changed:** every command runs inside WSL through `scripts/dev.sh` — see CLAUDE.md "Running commands on this machine" and D-020.
 
+## HANDOVER (2026-11-20, session 2 → next agent) — read this section first, it overrides anything older below
+
+The owner stopped session 2 because the usage budget was nearly exhausted. **Nothing is half-dispatched: no agent is running.** No task is `DONE`.
+**`verify.sh all` exits 0 at the wave-2 commit** (11/11 stages: 59 gate tests, 205 backend tests, 1017 frontend tests, artifacts byte-identical, build OK) — green gates are
+not verification: wave 2 has had **no reviewer and no verifier** yet.
+
+**Where the code is.** `origin/main` = `f0ca8e6` (the hand-over snapshot). Everything from session 2 is in **local commits on `main`, not pushed**
+(`2b1607e` environment, `c6244ec` wave 1, then the wave-2 commit at HEAD — `git log --oneline -5`). They are unpushed because D-021 says "push only after
+green gates **and** reviewer approval" and the wave-2 re-reviews have not run. **Ask the owner before pushing unreviewed work**, or finish step 1–3 below and push then.
+
+**What session 2 did.** Fixed the Windows checkout (D-020). Wave 1: 9 agents (results table in §0). Wave 2 fix round: see "Wave 2 results" just below.
+All open findings are tabulated in §4a (frontend review), §4b (design review), §4c (scaffold review), §4d (verifier findings), §4e (backend review round 5).
+
+**Next steps, in order** (each is one agent; briefs can be written straight from the tables named):
+1. **Finish what wave 2 left open** — the "NOT done" lists in "Wave 2 results" below. Engineers: frontend A (`renderer/src/{shell,lib,features/live-gx}`), frontend B
+   (`renderer/src/features/{transport,forecast,budget,spatial,geometry}`), backend (`main/`). The design system and the gates are finished.
+2. **Maintainer:** `verify.sh all` must exit 0; commit. Update `interface.md` §3/§5 and `architecture.md` "Live GX" from the stale-docs list at the end of §4e and from the engineers' API notes.
+3. **Re-review** (reviewer agent, read-only): (a) frontend diff `c6244ec..HEAD -- renderer/src/{shell,lib,features}`; (b) design system diff `-- renderer/src/design`;
+   (c) `scripts/` + `.github/` diff (scaffold round 2, SC-1…SC-9 and the maintainer's SC-10…SC-13); (d) live-GX backend round 6 `-- main/`. Fix rounds until each says `APPROVE`.
+4. **Push to `main`** once (2) is green and (3) approved.
+5. **Verify** (verifier agent, one per task, on the **committed** tree — the docs gate now checks the commit, see below): 02, 04, 08, 09 failed in wave 1 and need a full new run;
+   06 needs its first whole-task run (L1–L10); 07 a run on the round-6 backend; 01, 03, 05 passed in wave 1 but their owned files changed in wave 2, so they need a new run too (the gate's currency rule);
+   00 needs a run after the scaffold re-review.
+6. For each task with a current whole-task `Verdict: PASS` **and** reviewer `APPROVE`: set `## Status` to `DONE` in `tasks/<NN>/TASK.md`, update §2, commit, push.
+7. Owner decisions still open: §5 (D-016 forecast definition, D-015 allowances) and the `claimedRange` / `acceptance129: const blocked` contract tightenings in `interface.md` §10
+   (each needs a `decision.md` entry before `contracts/` is touched). Blockers needing a human: §6 (129 stella samples, Modal rehearsal, GENE-X checkpoints, `ANTHROPIC_API_KEY`).
+
+**Docs gate changed in wave 2 (decision D-022) — verifiers must write VERIFY.md in this shape or `DONE` is refused:**
+a line `Verifier run: <date>, commit <sha>` naming the **committed** tree that was verified; an outcomes table whose header ends in `| Result |` with one row per outcome ID in TASK.md,
+each Result cell starting with `PASS`; and the file's last non-blank line exactly `Verdict: PASS`. The task's owned files (backticked paths under `## Owner`) must be unchanged between that commit and the working tree.
+`.claude/agents/verifier.md` describes the format.
+
+**How to run things here** — CLAUDE.md "Running commands on this machine". Traps that cost time in session 2:
+- The project's named agents (`backend-engineer`, `verifier`, …) had **no shell tool** in a session started before their `tools:` line gained `PowerShell`. Probe one first
+  ("list your tools"); if it says no shell, dispatch `general-purpose` agents told to act as `.claude/agents/<role>.md` (that is how every agent in session 2 ran).
+- **The Stop hook runs `verify.sh all` on the shared tree.** While several agents are testing, it fails with "Failed to start forks worker" (CPU contention, zero failing tests) and adds load.
+  Do not end the turn while a wave is running: stay in the turn and wait for the agents' reports. `scripts/dev.sh` caps `VITEST_MAX_WORKERS` at 4 for the same reason.
+- Never run `npm ci` or `scripts/setup-dev.sh --force`-style reinstalls while agents are testing: it empties `renderer/node_modules` under them (`setup-dev.sh` now skips it when current).
+- Verifiers and reviewers mutate only an isolated copy: `wsl.exe -e bash scripts/probe-copy.sh <name>`. Engineers own disjoint folders in the shared tree.
+- Commit with a message **file** (`git commit -F <file>`): PowerShell mangles quotes in `-m` here-strings. `git` for commits/pushes is GitHub Desktop's
+  (`%LOCALAPPDATA%\GitHubDesktop\app-*\resources\app\git\cmd\git.exe`); a push that needs a new sign-in must run in the owner's terminal.
+- Headless screenshots: Edge (`msedge.exe --headless=new --screenshot=…`); a true 390 px layout needs DevTools device emulation (plain `--window-size=390` lays out at ~500 px).
+  Serve the build with `wsl.exe -e bash scripts/dev.sh npm --prefix renderer run preview -- --host 127.0.0.1 --port 4173`.
+
+### Wave 2 results (fix round on top of `c6244ec`)
+
+| Agent | Result |
+|---|---|
+| gates engineer (`scripts/**`, `.github/`) | **done.** SC-1…SC-9 closed; `test_gates.py` 19 → 59 tests; all 12 reviewer mutations + 14 more go red. Boundary scanner rewritten as an allow-list (98 violation shapes, 25 clean shapes; OS-independent; full scan 0.36 s native / 1.1 s WSL, was 51 s). New DONE rules = D-022. `ci.yml` `fetch-depth: 0`; `claude-review.yml` valid. **Not re-reviewed.** Residuals: main side is still a `renderer`-name rule; variable/concatenation obfuscation (R7) unchanged; "every change reviewed" has no mechanical gate under D-021 |
+| design-lead (`renderer/src/design/**`) | **done**, `verify.sh renderer` exit 0. 08 findings F1–F12 and DS-1, DS-7, DS-13, DS-14, DS-17, DS-18, DS-21 (gallery) fixed, each with a test; 49/49 mutations red. Contrast now: text 4.81 light / 4.77 dark, non-text 3.14 / 3.10; min CVD ΔE00 16.42 / 15.50. **Not re-verified, not re-reviewed.** Open: F13 (vitest worker flake; `vite.config.ts` is engineer A's), a gridline can cross the vertical "unsampled" label, badge "Units" line prints raw `Q_gB` |
+| frontend A (`shell/`, `lib/`, `features/live-gx/`, `main.tsx`, `vite.config.ts`) | **done, wrapped up early.** FE-1…FE-8, FE-10, FE-12, FE-11 (live-gx + ModeIndicator), every 09 row of §4d, DS-5, DS-10, DS-21 (Advance). Tests carry the IDs ("A2 danger…", "FE-5…", "L9…", "L10…"). **Open:** mutation proof cut off (37 mutants red; LiveView/model and vite mutants never ran; the sticky-LIVE test in `lib.test.tsx` was rewritten after its mutant survived and not re-checked); after a refused launch (409) Launch stays disabled until the mode changes (reload to retry) — confirm that is wanted; `LiveView.tsx:169` must pass `ProvenanceBadge`'s new `live` prop; no danger pill/alert primitive exists in the design system; `DESIGN.md` §5 and `interface.md` §3–4 need the new API. `shell/liveFetch.ts` was deleted (backoff moved into the store) |
+| frontend B (five feature folders) | **done, wrapped up early.** All 02/03/04/05 rows of §4d, FE-9, FE-11, A3 error branches, DS-1/2/3/4/6/8/9/11/12/13/15/16/19/20, and the six geometry test gaps from the 01 verifier (real `three` in `FluxScene.test.tsx`, lazy-load guards). 78 of 88 mutants run, all red. **Open:** `budget/model.ts` `GUARD_PLAN_D015` still constants (flagged when the live estimate differs; removal needs a contract field); `geometry/model.ts` `float64Match` still parses prose (no artifact field); `claimedRange` contract untouched (a missing range shows "unavailable"); `design/components/ProvenanceBadge.tsx:130` still links `PRD.md` (design-lead's file) |
+| backend round 6 (`main/`) | **done.** BE-1…BE-7 fixed, each seen failing under mutation; 205 backend tests. Invariant: "terminated" only after a cancel that succeeded; **a kill-switch-only stop is never `ok: true`** — 502, exit 2, unconfirmed until the server restarts. Contract untouched; new/changed `reason` strings: `kill switch raised, stop not confirmed: …`, `… kill switch could not be set: …` (under `TERMINATE FAILED`), pending reasons ending `the run kill switch is raised` / `could NOT be set (…)`, prefix `Stop requested; terminating workers — not confirmed yet.`; launch 409s `…to the cent (got …)` and `The ledger could not be updated (…)`. **Not re-reviewed.** |
+| verifier 06 (L1–L8) + 07, on `c6244ec` (before round 6) | **07 FAIL (H5)**, **06 FAIL (L6; L9–L10 not checked)** — both for BE-1, which round 6 has since fixed. L1–L5, L7, L8 and H1–H4, H6 pass. 163 mutations: 126 red, 13 by hang, 24 survived. **Findings that round 6 was not asked to fix** (give them to the backend engineer): `orchestrator.py:325-326,432` says "terminated" before any cancel returns (check against the new invariant); flaky signal tests `test_server.py:545-548`, `:338-341` (loop 29/30) and three tests that fail when SIGINT is inherited as ignored (`test_server.py:496-524`); weak tests with surviving mutants R14, R15, S02, S04, S05, S06, S09 (`rehearse.py:87,90`, `service.py:86-91,203,254`); 409 without `status` (`app.py:148-152`); 501 instead of 405 (`app.py:161`); exit-status race and unguarded print (`server/__main__.py:54-58`); `budget_guard.py:115`; idle 507 s shutdown (`service.py:284-297`) |
+
+**Design-system changes the frontend engineers must absorb (from the design-lead's report):**
+- `ProvenanceBadge`: kind `live` renders "Recorded run" (replay pill) unless the caller passes the new `live` prop. **`features/live-gx/LiveView.tsx:169` must pass it**, or its badge reads "Recorded run" even when live.
+- `FixtureCheck`: notes moved from `.lab-fixture__label` to `.lab-fixture__notes` after the outcome; long notes get `data-clamped` + a "Show full note" button; root gains `data-basis`; new `basis="arithmetic"` prop
+  (use it for arithmetic-only checks on PRD-reported inputs: Spatial 1.27×, Budget 46,368 — DS-13 call sites are engineer B's); no unit after "—".
+- `plotLayout`: overrides deep-merge; optional third argument `{narrow}`; at ≤ 640 px the legend sits below the plot.
+- `.lab-panel__body` is a container-query container; `.lab-seg` wraps instead of scrolling. `plot.windowEdge` is now hex; new `plot.unsampledAlpha`, icon `equals`, export `provenanceStatus`.
+- `npm run tokens` also rewrites `DESIGN.md` §12.
+
 ## 0. Resume log (newest first — if a session dies, the next agent continues from the top entry)
 
 - **2026-11-20, session 2 (maintainer).** Pushed the hand-over branch, fast-forwarded `main`. Fixed the Windows checkout (LF line endings,
@@ -63,7 +126,7 @@ Frontend outcome → test coverage: every ID A1–A5, G7–G10, S5–S6, T8–T1
 
 - Backend halves of 01–05 and 07 (round 1): independent verifier re-implemented the maths in its own code (VMEC evaluator with bisection, window means, MAE, budget in Decimal), ran mutation tests on copies, and wrote `tasks/<NN>/VERIFY.md` with real output.
 - Statistical gate for transport: reviewer Monte-Carlo (AR(1) at N=68/277/1000/2000): claims open only at N_eff ≳ 20, false stationarity rejections 2–4 %, TOST false-disagree ≈ 4–6 %. Result: no archive window may claim saturated agreement (D-017) — this is correct, not a bug.
-- Gates themselves are tested (`scripts/tests/`, 11 tests; boundary self-test has 37 violation shapes).
+- Gates themselves are tested (`scripts/tests/test_gates.py`; the boundary self-test plants every known violation shape — counts are printed by the `scripts:tests` and `boundary:self-test` stages, not repeated here).
 
 ## 4. Open work, in priority order (the next agent starts here)
 
@@ -171,6 +234,27 @@ Fix owner: maintainer (`scripts/` is orchestrator-owned). Holding and fine: R1 l
 | 09 | **blocker** | `shell/ModeIndicator.tsx:20-22`, `live-gx/model.ts:87-90` | = FE-1/FE-2 → shared `terminationProblem()` in `lib/liveStatus.ts`, failed pill + `role="alert"` on every route |
 | 09 | major | `lib/liveStatus.ts:37,39,50`, `ModeIndicator.tsx:37,39`, `main.tsx:10`, `shell/ProvenanceLegend.tsx:4-7`, `App.test.tsx:136` | body `{"schemaVersion":1,"mode":"fallback"}` blanks the whole page (validate the full payload; error boundary around the header); legend lacks `not-applicable` although `#/budget` draws it (derive the test from the contract enums); sticky LIVE after a failed poll and non-2xx accepted both stay green; "Playing saved run" with `savedRunId: null` |
 | 09 | minor | `liveStatus.ts:47-51`, `App.tsx:82`, `routes.ts:20`, `shell/liveFetch.ts:29-30`, `main.tsx:8` | late answer re-shows LIVE for one poll; boundary and `key={route}` untested; `#/advance` names `/api/live/status` for a bad transport artifact; backoff reset by a 200-HTML answer, no test; gallery stays on screen after Back |
+
+### 4e. Open review findings — live-GX backend round 5 (reviewer on `2b1607e..c6244ec`, 2026-11-20: **CHANGES REQUESTED**)
+
+R1 and R2 confirmed fixed and guarded (20 targeted mutants killed, signal tests 10/10 over 10 loops, budget guard / server / test hooks checked with no finding).
+Fix owner: backend-engineer (round 6). Then reviewer round 6 and a delta verifier run for 06 (L1–L8) and 07.
+
+| # | Sev | Where | Defect → fix |
+|---|---|---|---|
+| BE-1 | **major** | `live_gx/modal_backend.py:186-191`, `:256-263` | a spawn that outlives the client bound and then errors client-side is settled as confirmed ("nothing was started") even when the kill-switch put failed; `terminate()` drops `abort_error` when raising `TerminationPending` → CLI prints "workers terminated", `/api/live/terminate` answers 200, server exits 0, nothing cancelled, no switch raised. Keep the abort result on the handle, settle `(False, …)` when it failed so the next terminate retries the put; add the failed-put case beside `test_L6_late_spawn_that_errors_settles_as_nothing_started` (`test_live_gx.py:786`, which never asserts the switch) |
+| BE-2 | minor | `live_gx/service.py:53-54`, `orchestrator.py:337,425` | 497 s is not an upper bound: a poll failure in the stop round runs the terminate round twice (910 s on a virtual clock) → skip the `finally` round when `_fallback` already ran one, or count two; test with a virtual clock (the current test re-derives the formula) |
+| BE-3 | minor | `live_gx/rehearse.py:156`, `service.py:285,297` | when a cancel fails hard with nothing pending both exit paths sleep the whole confirmation wait (507 s) without retrying, print nothing until the end, and `/api/live/status` + `/api/health` time out meanwhile (UI falls to "REPLAY $0" while GPUs may bill) → print the warning before waiting; wait only while something is pending, or retry during the wait; keep status answering |
+| BE-4 | minor | `live_gx/modal_backend.py:265-268` | kill-switch-only stop is reported as "terminated" unqualified (no cancel exists; the worker stops only if it reads the switch; `modal_app.py:94-99` treats a failed read as not aborted) → word it "kill switch raised, stop not confirmed" in `/terminate` and the exit line |
+| BE-5 | minor | `live_gx/service.py:164,253-264` | two launch refusals crash the handler instead of answering 409: a ledger write `OSError`, and a 400-digit integer `confirmCostUsd` (`OverflowError`) → catch, return 409 |
+| BE-6 | minor | `live_gx/service.py:166` | "exact-cent" confirmation accepts ±0.5 cent (2.6549 → 202 for $2.65) → require equality at two decimals |
+| BE-7 | major (test) | `main/tests/test_geometry.py:271-294` | from the 01 verifier: G5 test is loose (mutations B13–B16 survive: duplicated seams, mesh at s 0.5, boundary at s 0.9) → compare all vertices and boundaries with an independent evaluation, assert no seam |
+
+Cannot be verified without a real Modal (unchanged, needs the rehearsal): `inspect.signature(App.function)` exposing `startup_timeout` on modal 1.6.4; modal not touching signal handlers;
+`cancel(terminate_containers=True)` ⇒ billing stopped; which client-side spawn errors prove nothing started; Dict put visible within `POLL_S`; `startup_timeout`/`timeout` semantics with `retries=0`.
+Stale docs to fix after round 6 (maintainer): interface.md §3/§5 and architecture.md "Live GX" — kill-switch-only path vs "never reported confirmed until a cancel succeeded"; `LaunchInFlight` also raised for client-side failure;
+SIGHUP + cooperative stop; `modal_app` executed by one subprocess test against a stub; abort key raised first on every terminate; `request_stop`/`stop_and_terminate`/`StopRequest`, test hooks, `POLL_INTERVAL_S`, 497 s;
+run-id pattern `^(rehearsal|live)-[0-9a-f]{12}$`; "409 for any refusal".
 
 ## 5. Decisions waiting on the product owner
 

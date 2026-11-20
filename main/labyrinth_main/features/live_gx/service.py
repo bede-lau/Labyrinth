@@ -19,6 +19,19 @@ bounded by CALL_TIMEOUT_S), raise the run's kill switch, and then wait up to WOR
 the queued cancel to be confirmed; if it is not, they exit with code 2 printing "NOT confirmed terminated —
 check Modal". In that case open the Modal dashboard, stop any running `labyrinth-gx` function calls, and
 record what was billed in ledger.json before the next allocation.
+
+What "terminated" means (modal_backend has the table): only a cancel of the spawned call that succeeded.
+A spawn that failed client-side leaves nothing to cancel; such a stop reads "kill switch raised, stop not
+confirmed" under TERMINATE FAILED and is never `ok: true` — not in /api/live/terminate (502), not in the exit
+code (2). The same holds when the put of the kill switch failed; every later terminate retries the put.
+
+One terminate round per stop. A stop request makes the session thread finish its step and run one round
+(every worker: kill-switch put + cancel, retried with backoff), which is all WORST_CASE_STOP_S counts.
+`terminate()` runs a round itself only for a session whose thread had already ended (the operator's retry),
+and once more for a queued cancel that settled as failed (there is a call to cancel now). It announces an
+unconfirmed stop BEFORE it waits, and it waits only while a cancel is queued: a cancel that failed hard is
+reported at once, never slept on. During the server's shutdown the HTTP API keeps answering, so
+/api/live/status goes on reading TERMINATE FAILED / TERMINATION PENDING until the process exits.
 """
 from __future__ import annotations
 
@@ -32,6 +45,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
 from pathlib import Path
 
@@ -45,14 +59,17 @@ BackendFactory = Callable[[str, int], WorkerBackend]  # (run_id, hard_timeout_s)
 RUN_ID = re.compile(r"^(rehearsal|live)-[0-9a-f]{12}$")
 LOCK_TIMEOUT_S = 5.0
 POLL_INTERVAL_S = 2.0
-# Worst case for a session to notice a stop and finish terminating when every Modal call takes its full
+# Upper bound for a session to notice a stop and finish terminating when every Modal call takes its full
 # client-side bound: the step in flight when the stop is requested — one launch, or a poll of both workers
-# followed by the poll sleep (the orchestrator checks for the stop before the next spawn / poll) — plus one
-# round of terminate retries for both workers (kill-switch put + cancel per attempt). A terminate that still
-# fails after that is reported unconfirmed, never as terminated, however long the caller waited.
-WORST_CASE_STOP_S = (max(LAUNCH_CALLS, len(TUBES) * POLL_CALLS) * CALL_TIMEOUT_S + POLL_INTERVAL_S
-                     + len(TUBES) * (sum(TERMINATE_BACKOFF_S) + (1 + len(TERMINATE_BACKOFF_S)) * TERMINATE_CALLS * CALL_TIMEOUT_S))
+# followed by the poll sleep (the orchestrator checks for the stop before the next spawn / poll) — plus ONE
+# round of terminate retries for both workers (kill-switch put + cancel per attempt). The orchestrator never
+# runs a second round for the same stop (a step that fails runs the round itself and the session's exit does
+# not repeat it), which a test drives on a virtual clock. A terminate that still fails after that is reported
+# unconfirmed, never as terminated, however long the caller waited.
+TERMINATE_ROUND_S = len(TUBES) * (sum(TERMINATE_BACKOFF_S) + (1 + len(TERMINATE_BACKOFF_S)) * TERMINATE_CALLS * CALL_TIMEOUT_S)
+WORST_CASE_STOP_S = max(LAUNCH_CALLS, len(TUBES) * POLL_CALLS) * CALL_TIMEOUT_S + POLL_INTERVAL_S + TERMINATE_ROUND_S
 RUN_KEYS = {"savedRunId", "initVerified", "continuationVerified", "checks", "phases"}
+CENT = Decimal("0.01")
 
 
 def default_state_dir() -> Path:
@@ -161,9 +178,28 @@ def load_qualification(state_dir: Path) -> dict | None:
 
 
 def cost_matches(confirm, estimate: float) -> bool:
-    if isinstance(confirm, bool) or not isinstance(confirm, (int, float)) or not math.isfinite(confirm):
+    """Exact-cent confirmation, no tolerance: `confirm` must be an int or a finite float whose decimal form
+    (the shortest one that names that float) EQUALS the estimate at two places — 2.65 and 2.650 match $2.65,
+    2.6549 and 2.6451 do not. Never raises: anything else (bool, string, list, nan, inf, an integer of any
+    size) is simply not a match."""
+    if isinstance(confirm, bool) or not isinstance(confirm, (int, float)):
         return False
-    return round(confirm * 100) == round(estimate * 100)
+    if isinstance(confirm, float) and not math.isfinite(confirm):
+        return False
+    try:
+        value = Decimal(confirm) if isinstance(confirm, int) else Decimal(repr(confirm))
+        return value == Decimal(repr(float(estimate))).quantize(CENT, rounding=ROUND_HALF_UP)
+    except (ArithmeticError, ValueError):
+        return False
+
+
+def describe(value, limit: int = 40) -> str:
+    """A short, safe echo of a caller-supplied value for a refusal message (never raises, never long)."""
+    try:
+        text = repr(value)
+    except Exception:  # noqa: BLE001 - e.g. an integer too large to print
+        text = f"<{type(value).__name__}>"
+    return text if len(text) <= limit else f"{text[:limit]}… ({type(value).__name__}, {len(text)} characters)"
 
 
 def _default_backend_factory(run_id: str, hard_timeout_s: int) -> WorkerBackend:
@@ -250,6 +286,7 @@ class LiveService:
             mode, reason, qual = self._gate()
             if mode != "idle":
                 return False, reason
+            reserved = False
             try:
                 with self.ledger.locked():
                     ledger = self.ledger.load()
@@ -258,10 +295,14 @@ class LiveService:
                         return False, decision.reason
                     if not cost_matches(confirm_cost_usd, decision.slot_estimate_usd):
                         return False, (f"confirmCostUsd must equal the current slot estimate ${decision.slot_estimate_usd:.2f} "
-                                       f"(got {confirm_cost_usd!r}).")
+                                       f"to the cent (got {describe(confirm_cost_usd)}).")
                     self.ledger.save(ledger.reserve(decision.slot_estimate_usd))
+                    reserved = True
             except LedgerLocked as e:
                 return False, str(e)
+            except OSError as e:  # the reservation could not be recorded (or its lock released): never launch on it
+                kept = "the reservation was written and stays pending" if reserved else "nothing reserved"
+                return False, f"The ledger could not be updated ({type(e).__name__}: {e}); {kept}, nothing launched."
             run_id = f"live-{uuid.uuid4().hex[:12]}"
             backend = self.backend_factory(run_id, decision.hard_timeout_s)
             self._run = Orchestrator(backend, hard_timeout_s=decision.hard_timeout_s, saved_run_id=qual["savedRunId"])
@@ -270,28 +311,45 @@ class LiveService:
             self._thread.start()
             return True, f"Launched {run_id}; ${decision.slot_estimate_usd:.2f} reserved as pending."
 
-    def terminate(self, *, confirm_wait_s: float | None = None) -> tuple[bool, str]:
-        """Stop and terminate. -> (confirmed, message). Safe to call repeatedly (retries unconfirmed
-        terminations). Waits for the session thread up to the worst-case stop time and for queued cancels
-        (e.g. a late spawn) up to `confirm_wait_s`; anything still unsettled is reported unconfirmed."""
+    def terminate(self, *, confirm_wait_s: float | None = None,
+                  on_unconfirmed: Callable[[str], None] | None = None) -> tuple[bool, str]:
+        """Stop and terminate. -> (confirmed, message); confirmed only as the module docstring defines it.
+        Safe to call repeatedly: each call retries what is still unconfirmed.
+
+        The session thread gets up to the worst-case stop time to finish its step and its one terminate round.
+        A round is run here only if the thread did not run one for this stop (the session had already ended).
+        If the stop is then unconfirmed, `on_unconfirmed(reason)` is called FIRST; after that the call waits
+        only while a cancel is queued (e.g. a late spawn), at most `confirm_wait_s`, and gives a queued cancel
+        that settled as failed one more round. Anything still unsettled is reported unconfirmed."""
         with self._lock:
             run, thread = self._run, self._thread
         if run is None:
             return True, "Nothing running."
+        wait_s = self.confirm_wait_s if confirm_wait_s is None else confirm_wait_s
+        rounds = run.terminate_rounds
         run.request_stop()
         if thread is not None:
             thread.join(timeout=self.join_timeout_s)
-        confirmed = run.stop_and_terminate()
-        if not confirmed and run.wait_terminated(self.confirm_wait_s if confirm_wait_s is None else confirm_wait_s):
-            confirmed = run.stop_and_terminate()
-        if thread is not None and thread.is_alive():
-            return False, (f"Session thread still running after {self.join_timeout_s:.0f} s; termination unconfirmed. "
+            if thread.is_alive():
+                message = (f"Session thread still running after {self.join_timeout_s:.0f} s; termination unconfirmed. "
                            + run.reason)
+                if on_unconfirmed:
+                    on_unconfirmed(message)
+                return False, message
+        confirmed = run.confirm_stop() if run.terminate_rounds != rounds else run.stop_and_terminate()
+        if not confirmed:
+            if on_unconfirmed:
+                on_unconfirmed(run.reason)
+            if run.termination_pending:
+                run.wait_terminated(wait_s)
+                if not run.termination_pending:  # settled: confirmed, or failed with a call that can now be cancelled
+                    confirmed = run.stop_and_terminate()
         return (True, "Workers terminated.") if confirmed else (False, run.reason)
 
-    def shutdown(self) -> bool:
+    def shutdown(self, on_unconfirmed: Callable[[str], None] | None = None) -> bool:
         """Process exit path (SIGINT/SIGTERM/server shutdown): refuse new launches, never leave GPU workers
-        running, and wait up to the worst-case stop time for queued cancels to be confirmed."""
+        running, and wait up to the worst-case stop time — only while a cancel is queued — for it to be
+        confirmed. `on_unconfirmed(reason)` is called before that wait. status() keeps answering throughout."""
         with self._lock:
             self._closed = True
-        return self.terminate(confirm_wait_s=self.join_timeout_s)[0]
+        return self.terminate(confirm_wait_s=self.join_timeout_s, on_unconfirmed=on_unconfirmed)[0]

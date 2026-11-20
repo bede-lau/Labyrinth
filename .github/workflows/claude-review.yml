@@ -1,21 +1,44 @@
-# Automated agent review of every PR. Requires the repo secret ANTHROPIC_API_KEY
-# (Settings → Secrets and variables → Actions). Without it this job is skipped.
+# Automated agent review of pull requests (decision D-012). It needs the repository secret
+# ANTHROPIC_API_KEY (Settings -> Secrets and variables -> Actions). Without the secret the job still
+# starts, prints a notice and ends green: nothing is reviewed.
+#
+# What this does NOT do: under decision D-021 the maintainer pushes straight to `main`, and a push is
+# not a pull request, so this workflow never runs for those commits. "Every change is reviewed" is then
+# a process rule (the reviewer agent approves before the push; status.md records it) - no workflow
+# enforces it. Only ci.yml (verify.sh on every push and PR) is a mechanical gate.
+#
+# Secret handling:
+#   * `secrets` cannot be read in a job-level `if:`. The job maps "is the secret set?" to the env value
+#     HAVE_KEY ("true"/"false", never the key itself) and every step tests that.
+#   * The trigger is `pull_request`, never `pull_request_target`: a pull request from a fork runs
+#     without secrets, and the job-level `if:` skips forks altogether.
+#   * The key is passed to the review action only. No step installs dependencies, builds or runs code
+#     from the pull request.
 name: claude-review
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+permissions:
+  contents: read
 jobs:
   review:
-    if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
       id-token: write
+    env:
+      HAVE_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
     steps:
+      - name: Skip when the secret is absent
+        if: env.HAVE_KEY != 'true'
+        run: echo "::notice::ANTHROPIC_API_KEY is not set - the automated review was skipped."
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        if: env.HAVE_KEY == 'true'
+        with: { fetch-depth: 0, persist-credentials: false }
       - uses: anthropics/claude-code-action@v1
+        if: env.HAVE_KEY == 'true'
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |

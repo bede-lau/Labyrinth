@@ -86,10 +86,10 @@
   --lab-status-derived-border: #a9d4d2;
   --lab-status-prd-reported-fg: #6c5715;
   --lab-status-prd-reported-bg: #f7f2e3;
-  --lab-status-prd-reported-border: #cfbd84;
+  --lab-status-prd-reported-border: #96803a;
   --lab-status-unverified-fg: #56686f;
   --lab-status-unverified-bg: #f6f8f9;
-  --lab-status-unverified-border: #8a9ba2;
+  --lab-status-unverified-border: #73868e;
   --lab-status-passed-fg: #1d6a39;
   --lab-status-passed-bg: #e5f3e9;
   --lab-status-passed-border: #a3d2b1;
@@ -125,8 +125,9 @@
   --lab-plot-axis: #73868e;
   --lab-plot-zero: #c3ced3;
   --lab-plot-window-shade: rgba(11, 127, 128, 0.07);
-  --lab-plot-window-edge: rgba(11, 127, 128, 0.45);
+  --lab-plot-window-edge: #238c8d;
   --lab-plot-unsampled: #c9d2d6;
+  --lab-plot-unsampled-alpha: 0.35;
   --lab-plot-band-alpha: 0.18;
   --lab-scene-background: #ffffff;
   --lab-scene-surface-line: #b8c6cc;
@@ -168,8 +169,8 @@
     --lab-color-focus: #5cc2c1;
     --lab-color-shadow: rgba(0, 0, 0, 0.5);
     --lab-status-live-fg: #ffffff;
-    --lab-status-live-bg: #cf1739;
-    --lab-status-live-border: #cf1739;
+    --lab-status-live-bg: #da2a48;
+    --lab-status-live-border: #da2a48;
     --lab-status-replay-fg: #b4c2c8;
     --lab-status-replay-bg: #18252b;
     --lab-status-replay-border: #34464e;
@@ -184,7 +185,7 @@
     --lab-status-derived-border: #245e5d;
     --lab-status-prd-reported-fg: #dcc78c;
     --lab-status-prd-reported-bg: #241f12;
-    --lab-status-prd-reported-border: #6b5b2d;
+    --lab-status-prd-reported-border: #8f7c40;
     --lab-status-unverified-fg: #a9b8be;
     --lab-status-unverified-bg: #141f24;
     --lab-status-unverified-border: #62777f;
@@ -223,8 +224,9 @@
     --lab-plot-axis: #62777f;
     --lab-plot-zero: #34464e;
     --lab-plot-window-shade: rgba(65, 178, 178, 0.09);
-    --lab-plot-window-edge: rgba(65, 178, 178, 0.5);
+    --lab-plot-window-edge: #379495;
     --lab-plot-unsampled: #3a4a51;
+    --lab-plot-unsampled-alpha: 0.35;
     --lab-plot-band-alpha: 0.22;
     --lab-scene-background: #111b20;
     --lab-scene-surface-line: #3c4d55;
@@ -266,8 +268,8 @@
   --lab-color-focus: #5cc2c1;
   --lab-color-shadow: rgba(0, 0, 0, 0.5);
   --lab-status-live-fg: #ffffff;
-  --lab-status-live-bg: #cf1739;
-  --lab-status-live-border: #cf1739;
+  --lab-status-live-bg: #da2a48;
+  --lab-status-live-border: #da2a48;
   --lab-status-replay-fg: #b4c2c8;
   --lab-status-replay-bg: #18252b;
   --lab-status-replay-border: #34464e;
@@ -282,7 +284,7 @@
   --lab-status-derived-border: #245e5d;
   --lab-status-prd-reported-fg: #dcc78c;
   --lab-status-prd-reported-bg: #241f12;
-  --lab-status-prd-reported-border: #6b5b2d;
+  --lab-status-prd-reported-border: #8f7c40;
   --lab-status-unverified-fg: #a9b8be;
   --lab-status-unverified-bg: #141f24;
   --lab-status-unverified-border: #62777f;
@@ -321,8 +323,9 @@
   --lab-plot-axis: #62777f;
   --lab-plot-zero: #34464e;
   --lab-plot-window-shade: rgba(65, 178, 178, 0.09);
-  --lab-plot-window-edge: rgba(65, 178, 178, 0.5);
+  --lab-plot-window-edge: #379495;
   --lab-plot-unsampled: #3a4a51;
+  --lab-plot-unsampled-alpha: 0.35;
   --lab-plot-band-alpha: 0.22;
   --lab-scene-background: #111b20;
   --lab-scene-surface-line: #3c4d55;
@@ -373,6 +376,25 @@ button, input, select, textarea { font: inherit; color: inherit; }
   outline-offset: 2px;
   border-radius: var(--lab-radius-xs);
 }
+/* Chart modebar buttons. Plotly injects its own focus rule for them at runtime (a 1px black
+ * outline), after this sheet and more specific than the rule above; on the dark plot that ring
+ * is 1.2:1. This selector out-ranks Plotly's (tokens.test.ts compares the two), so chart buttons
+ * take the same themed ring as every other control. */
+.js-plotly-plot .plotly .modebar .modebar-btn:focus-visible {
+  outline: 2px solid var(--lab-color-focus);
+  outline-offset: 1px;
+  border-radius: var(--lab-radius-xs);
+}
+/* Disclosure summaries are pointer targets: at least 24px tall (WCAG 2.5.8). Done with padding
+ * and min-height, never display:flex, so the disclosure triangle stays. */
+summary {
+  min-height: 24px;
+  padding-block: var(--lab-space-1);
+  cursor: pointer;
+}
+/* Subscripts in units (Q_gB, a/v_th,i) must not grow the line box, or a row of numbers loses
+ * its shared baseline. */
+sub, sup { line-height: 0; }
 
 /* ---- utilities ------------------------------------------------------------------------- */
 /* Numbers: tabular, lining figures so columns of values align digit-for-digit. */

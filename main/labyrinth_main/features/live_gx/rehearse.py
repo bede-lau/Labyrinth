@@ -13,12 +13,15 @@ Exit path. SIGINT (Ctrl-C), SIGTERM and SIGHUP request a COOPERATIVE stop: the h
 never raises. (The phases run on the main thread; an exception raised there while a spawn RPC is in flight
 would drop that spawn's handle and exit with a GPU call nobody can cancel.) The backend call in flight ends
 within its own bound, nothing further is reserved or spawned, and every started phase is terminated. While
-workers are being terminated the signals are ignored, and the process waits up to CONFIRM_WAIT_S for each
-termination to be CONFIRMED (including a late spawn's queued cancel). Each phase prints "workers terminated"
-or "NOT confirmed terminated — check Modal dashboard" with its reason, and the exit code is 2 whenever the
-rehearsal did not pass or anything is unsettled. A spawn RPC that never returns therefore ends in exit 2: the
-operator must check the Modal dashboard and stop the app there. A signal that was ignored when the process
-started (nohup, a shell's background job) stays ignored.
+workers are being terminated the signals are ignored. A phase whose termination is not confirmed is announced
+at once ("termination not confirmed yet — check the Modal dashboard now"), BEFORE anything is waited for, and
+the process then waits only while a cancel is queued (a late spawn), at most CONFIRM_WAIT_S; a cancel that
+failed hard is not slept on. Each phase finally prints "workers terminated" or "NOT confirmed terminated —
+check Modal dashboard" with its reason, and the exit code is 2 whenever the rehearsal did not pass or anything
+is unsettled. "Terminated" means a cancel of the spawned call succeeded (modal_backend): a spawn that failed
+client-side reads "kill switch raised, stop not confirmed" and ends in exit 2, like a spawn RPC that never
+returns — the operator must check the Modal dashboard and stop the app there. A signal that was ignored when
+the process started (nohup, a shell's background job) stays ignored.
 """
 from __future__ import annotations
 
@@ -83,6 +86,7 @@ def run_rehearsal(backend_factory: Callable[[str, int], WorkerBackend], *, state
         return p
 
     store = LedgerStore(state_dir / "ledger.json")
+    reserved = False
     try:
         with store.locked():
             ledger = store.load()
@@ -90,12 +94,17 @@ def run_rehearsal(backend_factory: Callable[[str, int], WorkerBackend], *, state
             if not decision.approved:
                 return False, {"reason": decision.reason}
             if not cost_matches(confirm_cost_usd, decision.slot_estimate_usd):
-                return False, {"reason": f"--confirm-cost-usd must equal the rehearsal estimate ${decision.slot_estimate_usd:.2f}."}
+                return False, {"reason": f"--confirm-cost-usd must equal the rehearsal estimate ${decision.slot_estimate_usd:.2f} "
+                                         "to the cent."}
             if stop.is_set():
                 return False, {"reason": "Stopped before launch: nothing reserved, nothing launched."}
             store.save(ledger.reserve(decision.slot_estimate_usd))
+            reserved = True
     except LedgerLocked as e:
         return False, {"reason": str(e)}
+    except OSError as e:  # the reservation could not be recorded (or its lock released): never launch on it
+        kept = "the reservation was written and stays pending" if reserved else "nothing reserved"
+        return False, {"reason": f"The ledger could not be updated ({type(e).__name__}: {e}); {kept}, nothing launched."}
     run_id = f"rehearsal-{uuid.uuid4().hex[:12]}"
     phase_timeout: float = int(decision.hard_timeout_s * guard.PHASE_FRACTION)
     if phase_timeout_s is not None:
@@ -150,12 +159,24 @@ def _say(line: str, *, to_stderr: bool = False) -> None:
 
 
 def terminate_phases(started: list[Orchestrator], confirm_wait_s: float) -> bool:
-    """Terminate every started phase and wait for confirmation; print one loud line per phase."""
+    """Make sure every started phase is terminated; print one loud line per phase.
+
+    A phase that ran has already had its terminate round (Orchestrator.run), which is not repeated here: only
+    a worker no round has tried yet is terminated now. If a phase is then unconfirmed, that is said BEFORE any
+    waiting, and the wait lasts only while a cancel is queued; a queued cancel that settled as failed gets one
+    more round (there is a call to cancel now)."""
     confirmed_all = True
     for i, p in enumerate(started, 1):
-        ok = p.stop_and_terminate() or p.wait_terminated(confirm_wait_s)
-        if ok:
-            ok = p.stop_and_terminate()
+        p.request_stop()
+        p.terminate_all(retry=False)
+        ok = p.confirm_stop()
+        if not ok and p.termination_pending:
+            for to_stderr in (False, True):
+                _say(f"phase {i}: termination not confirmed yet — check the Modal dashboard now; waiting up to "
+                     f"{confirm_wait_s:.0f} s for the queued cancel. {p.reason}", to_stderr=to_stderr)
+            p.wait_terminated(confirm_wait_s)
+            if not p.termination_pending:
+                ok = p.stop_and_terminate()
         confirmed_all &= ok
         verdict = "workers terminated" if ok else "NOT confirmed terminated — check Modal dashboard"
         line = f"phase {i}: {verdict}. {p.reason}"

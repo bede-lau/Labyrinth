@@ -5,6 +5,7 @@ import ast
 import http.client
 import json
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -53,9 +54,10 @@ def no_modal_env(monkeypatch, tmp_path):
     return tmp_path
 
 
-def serve(svc: service.LiveService):
-    srv = make_server(0, service=svc, stream_interval_s=0.05)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
+def serve(svc: service.LiveService, **kw):
+    srv = make_server(0, service=svc, **{"stream_interval_s": 0.05, **kw})
+    # poll_interval: how long srv.shutdown() waits for the accept loop (stdlib default 0.5 s, per test)
+    threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
     return srv
 
 
@@ -180,8 +182,7 @@ def test_H4_stream_is_server_sent_events_of_status_snapshots(default_server, val
 
 
 def test_H4_concurrent_streams_are_capped(no_modal_env):
-    srv = make_server(0, service=service.LiveService(), stream_interval_s=0.05, max_streams=2)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    srv = serve(service.LiveService(), max_streams=2)
     port, conns = srv.server_address[1], []
     try:
         for _ in range(2):
@@ -227,15 +228,21 @@ def test_H5_launch_requires_exact_confirmed_cost_and_passing_guard(armed_server,
     _, _, st = get_json(port, "/api/live/status")
     assert st["mode"] == "idle" and st["budget"]["slotFits"] is True
     est = st["budget"]["slotEstimateUsd"]
+    assert est == 2.65
     for bad in ({}, {"confirmCostUsd": est - 0.01}, {"confirmCostUsd": est + 0.01}, {"confirmCostUsd": str(est)},
-                {"confirmCostUsd": True}, "not json"):
+                {"confirmCostUsd": True}, "not json",
+                # exact to the cent, no tolerance: half a cent either way is a different number
+                {"confirmCostUsd": 2.6549}, {"confirmCostUsd": 2.6451}, {"confirmCostUsd": 2.6500001}, {"confirmCostUsd": 2.6499999}):
         status, _, data = request(port, "POST", "/api/live/launch", bad)
-        assert status == 409 and json.loads(data)["reason"].startswith("launch refused"), bad
+        body = json.loads(data)
+        assert status == 409 and body["ok"] is False and body["reason"].startswith("launch refused"), bad
+        assert_valid(validator, body["status"])  # every refusal carries the status
     status, _, data = request(port, "POST", "/api/live/launch", json.dumps({"confirmCostUsd": est}),
                               headers={"Content-Type": "text/plain"})
-    assert status == 409 and "Content-Type" in json.loads(data)["reason"]
-    assert backends == []
-    status, _, data = request(port, "POST", "/api/live/launch", {"confirmCostUsd": round(est, 2)})
+    body = json.loads(data)
+    assert status == 409 and "Content-Type" in body["reason"] and body["status"]["mode"] == "idle"
+    assert backends == [] and service.LedgerStore(state / "ledger.json").load() == guard.Ledger(8.10, 0.0, True)
+    status, _, data = request(port, "POST", "/api/live/launch", '{"confirmCostUsd": 2.650}')  # the same amount, written longer
     body = json.loads(data)
     assert status == 202 and body["ok"] is True, body
     assert_valid(validator, body["status"])
@@ -257,6 +264,74 @@ def test_H5_launch_requires_exact_confirmed_cost_and_passing_guard(armed_server,
     service.LedgerStore(state / "ledger.json").save(guard.Ledger(8.10 + est, 0.0, True))
     status, _, data = request(port, "POST", "/api/live/launch", {"confirmCostUsd": est})
     assert status == 202 and len(backends) == 2, data
+
+
+ABSURD_COSTS = {  # JSON literals for confirmCostUsd (Python's json reads NaN / Infinity / 1e999 as floats)
+    "400-digit integer": "1" + "0" * 399,
+    "4000-digit integer": "9" * 4000,
+    "largest float": "1.7976931348623157e308",
+    "overflowing float": "1e999",
+    "NaN": "NaN",
+    "Infinity": "Infinity",
+    "-Infinity": "-Infinity",
+    "bool": "true",
+    "string": '"2.65"',
+    "list": "[2.65]",
+    "object": '{"usd": 2.65}',
+    "null": "null",
+    "negative": "-2.65",
+}
+
+
+def test_H5_absurd_confirm_cost_is_a_409_with_the_status_and_reserves_nothing(armed_server, validator):
+    """Review BE-5: none of these may crash the handler (a 400-digit integer used to: OverflowError)."""
+    port, svc, backends, state = armed_server
+    for name, literal in ABSURD_COSTS.items():
+        raw = '{"confirmCostUsd": ' + literal + "}"
+        assert len(raw) <= 4096, name
+        status, headers, data = request(port, "POST", "/api/live/launch", raw)
+        assert status == 409 and headers["Content-Type"] == "application/json", (name, status, data[:200])
+        body = json.loads(data)
+        assert body["ok"] is False, name
+        assert body["reason"].startswith("launch refused: confirmCostUsd must equal the current slot estimate $2.65 to the cent (got "), name
+        assert len(body["reason"]) < 250, name  # the echoed value is clipped
+        assert_valid(validator, body["status"])
+        assert body["status"]["mode"] == "idle" and body["status"]["budget"]["pendingUsd"] == 0.0, name
+        assert backends == [] and service.LedgerStore(state / "ledger.json").load() == guard.Ledger(8.10, 0.0, True), name
+    assert service.cost_matches(10 ** 400, 2.65) is False and service.cost_matches(float("nan"), 2.65) is False
+    # the server is unharmed: the right cost still launches
+    assert request(port, "POST", "/api/live/launch", {"confirmCostUsd": guard.slot_estimate_usd()})[0] == 202
+
+
+@pytest.mark.parametrize("broken", ["write", "lock"])
+def test_H5_ledger_that_cannot_be_written_is_a_409_with_the_status_and_launches_nothing(broken, armed_server, validator, monkeypatch):
+    """Review BE-5: an OSError while recording the reservation refuses the launch; it must not escape the handler."""
+    port, svc, backends, state = armed_server
+    est, before = guard.slot_estimate_usd(), (state / "ledger.json").read_bytes()
+
+    def no_space(src, dst):
+        raise OSError(28, "No space left on device")
+
+    def denied(self, timeout_s=service.LOCK_TIMEOUT_S):
+        raise PermissionError(13, "Permission denied")
+
+    with monkeypatch.context() as mp:
+        if broken == "write":
+            mp.setattr(service.os, "replace", no_space)  # the real atomic_write fails at its last step
+        else:
+            mp.setattr(service.LedgerStore, "locked", denied)
+        status, _, data = request(port, "POST", "/api/live/launch", {"confirmCostUsd": est})
+    body = json.loads(data)
+    assert status == 409 and body["ok"] is False, body
+    assert body["reason"].startswith("launch refused: The ledger could not be updated (")
+    assert body["reason"].endswith("nothing reserved, nothing launched.")
+    assert_valid(validator, body["status"])
+    assert body["status"]["mode"] == "idle" and body["status"]["workers"] == []
+    assert backends == [] and (state / "ledger.json").read_bytes() == before
+    assert sorted(p.name for p in state.iterdir()) == ["ledger.json", "qualification.json", "runs"]  # no temp file, no stale lock
+    # nothing is wedged: once the ledger can be written again the same request launches and reserves
+    assert request(port, "POST", "/api/live/launch", {"confirmCostUsd": est})[0] == 202 and len(backends) == 1
+    assert service.LedgerStore(state / "ledger.json").load() == guard.Ledger(8.10, est, False)
 
 
 def test_H5_concurrent_launches_start_exactly_one_session(armed_server):
@@ -416,8 +491,7 @@ def test_H6_symlink_escaping_artifacts_is_refused(tmp_path, no_modal_env):
     secret = tmp_path / "secret.json"
     secret.write_text('{"secret": 1}')
     (art / "link.json").symlink_to(secret)
-    srv = make_server(0, service=service.LiveService(), artifacts_dir=art)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    srv = serve(service.LiveService(), artifacts_dir=art)
     try:
         port = srv.server_address[1]
         assert request(port, "GET", "/artifacts/ok.json")[0] == 200
@@ -556,3 +630,133 @@ def test_H1_shutdown_during_in_flight_launch(delay, join, code, cancelled, tmp_p
         assert "workers terminated." in out and log.read_text() == "cancel [('terminate_containers', True)]\n"
     else:
         assert "NOT confirmed terminated" in out and not log.exists()
+
+
+# ---------------------------------------------------------------- H1 (an unconfirmed stop is announced, served and not slept on)
+SHUTDOWN_HARNESS = r"""
+import signal, sys, time, types
+from pathlib import Path
+signal.signal(signal.SIGINT, signal.default_int_handler)  # start like a foreground terminal session, whatever
+signal.signal(signal.SIGTERM, signal.SIG_DFL)             # dispositions the test runner happened to inherit
+signal.signal(signal.SIGHUP, signal.SIG_DFL)
+log, state, release, cancel = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]
+
+class Call:  # TEST-ONLY stand-in for modal.FunctionCall
+    def __init__(self, tube):
+        self.tube = tube
+    def get(self, timeout=None):
+        raise TimeoutError
+    def cancel(self, **kw):
+        with log.open("a") as f:
+            f.write(f"cancel {self.tube}\n")
+        if cancel == "fails":
+            raise ConnectionError("Modal API unreachable")
+
+class Fn:
+    def spawn(self, **kw):
+        while not release.exists():  # Modal answers the spawn RPC only when the test says so
+            time.sleep(0.01)
+        return Call(kw["tube"])
+
+sys.modules["modal"] = types.SimpleNamespace(
+    Function=types.SimpleNamespace(from_name=lambda app, name: Fn()),
+    Dict=types.SimpleNamespace(from_name=lambda name, create_if_missing: {}),
+    exception=types.SimpleNamespace())
+from labyrinth_main.features.live_gx import modal_backend, orchestrator, service
+from labyrinth_main.server import __main__ as server_main
+modal_backend.CALL_TIMEOUT_S = float(sys.argv[5])
+orchestrator.TERMINATE_BACKOFF_S = (0.0,) * len(orchestrator.TERMINATE_BACKOFF_S)  # the attempts stay, the pauses go
+# join_timeout_s is NOT scaled: the real WORST_CASE_STOP_S + 10 s
+svc = service.LiveService(state_dir=state, availability_check=lambda: (True, "test harness"), poll_interval_s=0.02,
+                          backend_factory=lambda rid, t: modal_backend.ModalBackend(run_id=rid, hard_timeout_s=t))
+sys.exit(server_main.main(["--port", "0"], service=svc))
+"""
+
+
+class _Entrypoint:
+    """The server entrypoint in a subprocess against a TEST-ONLY stub `modal` whose spawn RPC answers when the
+    `release` file exists and whose cancel succeeds or fails as told."""
+
+    def __init__(self, tmp_path, *, cancel: str, call_timeout: float, released: bool):
+        self.state, self.log, self.release = tmp_path / "state", tmp_path / "cancels.log", tmp_path / "release"
+        self.state.mkdir()
+        qualify(self.state)
+        if released:
+            self.release.write_text("Modal answers every spawn at once\n")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("MODAL_")}
+        env.update(HOME=str(tmp_path))
+        argv = [sys.executable, "-c", SHUTDOWN_HARNESS, str(self.log), str(self.state), str(self.release), cancel, str(call_timeout)]
+        self.proc = subprocess.Popen(argv, cwd=REPO_ROOT / "main", env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        line = self.proc.stdout.readline()
+        assert line.startswith("Labyrinth API listening on http://127.0.0.1:"), line + self.proc.stderr.read()
+        self.port = int(line.rsplit(":", 1)[1])
+
+    def launch_and_wait(self, reached) -> dict:
+        status, _, data = request(self.port, "POST", "/api/live/launch", {"confirmCostUsd": guard.slot_estimate_usd()})
+        assert status == 202, data
+        deadline = time.time() + 10
+        while not reached(st := get_json(self.port, "/api/live/status")[2]):
+            assert time.time() < deadline, st
+            time.sleep(0.02)
+        return st
+
+    def next_line(self, within_s: float = 10.0) -> str:
+        """The next stdout line, or fail: the process must SAY it within `within_s`."""
+        ready, _, _ = select.select([self.proc.stdout], [], [], within_s)
+        assert ready, f"the server printed nothing for {within_s:.0f} s"
+        return self.proc.stdout.readline()
+
+    def kill(self) -> None:
+        if self.proc.poll() is None:
+            self.proc.kill()
+            self.proc.communicate()
+
+
+def test_H1_api_keeps_answering_with_the_unconfirmed_status_while_the_shutdown_waits(tmp_path, validator):
+    """Review BE-3. A cancel is queued when the stop signal arrives: the warning is printed BEFORE the wait
+    (which may last WORST_CASE_STOP_S + 10 s), and during that wait /api/health and /api/live/status answer —
+    the status says TERMINATION PENDING, so the UI never falls back to "replay" while a GPU may be billing."""
+    srv = _Entrypoint(tmp_path, cancel="ok", call_timeout=0.1, released=False)
+    try:
+        srv.launch_and_wait(lambda st: st["mode"] == "fallback" and st["reason"].startswith("TERMINATION PENDING"))
+        srv.proc.send_signal(signal.SIGINT)
+        warning = srv.next_line()
+        assert warning.startswith("Termination not confirmed yet — check the Modal dashboard now. TERMINATION PENDING"), warning
+        # ... the process is now waiting for the queued cancel, and still serving
+        status, _, health = get_json(srv.port, "/api/health")
+        assert status == 200 and health["ok"] is True
+        status, _, st = get_json(srv.port, "/api/live/status")
+        assert status == 200
+        assert_valid(validator, st)
+        assert st["mode"] == "fallback" and st["reason"].startswith("TERMINATION PENDING") and "replay" not in st["reason"].lower()
+        status, _, data = request(srv.port, "POST", "/api/live/launch", {"confirmCostUsd": guard.slot_estimate_usd()})
+        assert status == 409 and "shutting down" in json.loads(data)["reason"]
+        assert srv.proc.poll() is None and not srv.log.exists()
+        srv.release.write_text("Modal answers the spawn now\n")
+        out, err = srv.proc.communicate(timeout=30)
+    finally:
+        srv.kill()
+    assert srv.proc.returncode == 0, out + err
+    assert out.rstrip().endswith("Labyrinth API stopped; workers terminated.") and srv.log.read_text() == "cancel bean\n"
+    assert "Termination not confirmed yet — check the Modal dashboard now. TERMINATION PENDING" in err
+
+
+def test_H1_hard_cancel_failure_exits_2_at_once_after_one_round_instead_of_sleeping_on_it(tmp_path):
+    """Review BE-3 / BE-2. Both cancels fail hard and nothing is queued: the process says so and exits 2 — it
+    does not sit out the confirmation wait (507 s, not scaled here) — after ONE terminate round."""
+    srv = _Entrypoint(tmp_path, cancel="fails", call_timeout=30.0, released=True)
+    try:
+        srv.launch_and_wait(lambda st: [w["state"] for w in st["workers"]] == ["initializing", "initializing"])
+        t0 = time.monotonic()
+        srv.proc.send_signal(signal.SIGINT)
+        out, err = srv.proc.communicate(timeout=60)
+        elapsed = time.monotonic() - t0
+    finally:
+        srv.kill()
+    assert srv.proc.returncode == 2 and elapsed < 30, (elapsed, out, err)
+    warning = "Termination not confirmed yet — check the Modal dashboard now. TERMINATE FAILED — check Modal dashboard; GPUs may " \
+              "still be billing: GPU 0 (bean) terminate unconfirmed after 5 attempts: ConnectionError: Modal API unreachable"
+    last = "Labyrinth API stopped; workers NOT confirmed terminated — check Modal."
+    assert warning in out and warning in err and out.index(warning) < out.index(last) and out.rstrip().endswith(last)
+    assert "workers terminated" not in out
+    assert srv.log.read_text().splitlines() == ["cancel bean"] * 5 + ["cancel triangular"] * 5

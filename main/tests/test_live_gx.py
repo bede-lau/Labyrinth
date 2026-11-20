@@ -8,18 +8,22 @@ against a stub `modal` module. The rehearse CLI's signal handling is tested in s
 from __future__ import annotations
 
 import ast
+import http.client
 import inspect
 import json
 import math
 import os
+import shutil
 import signal
 import socket
+import socketserver
 import subprocess
 import sys
 import threading
 import time
 import tomllib
 import types
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -29,10 +33,12 @@ from referencing import Registry, Resource
 from labyrinth_main.common.paths import CONTRACTS, REPO_ROOT
 from labyrinth_main.features.budget import pricing
 from labyrinth_main.features.live_gx import budget_guard as guard
-from labyrinth_main.features.live_gx import gx_input, modal_backend, rehearse, service
+from labyrinth_main.features.live_gx import gx_input, modal_backend, orchestrator, rehearse, service
 from labyrinth_main.features.live_gx.fake_backend import FakeBackend
 from labyrinth_main.features.live_gx.orchestrator import (
+    KILL_SWITCH_ONLY,
     NO_REHEARSAL_LABEL,
+    STOPPING,
     TERMINATE_BACKOFF_S,
     TERMINATE_FAILED,
     TERMINATE_PENDING,
@@ -40,9 +46,11 @@ from labyrinth_main.features.live_gx.orchestrator import (
     LaunchInFlight,
     Orchestrator,
     TerminationPending,
+    TerminationUnconfirmed,
     TransientBackendError,
 )
 from labyrinth_main.features.transport.units import HEAT_FLUX_DIVISOR, TIME_MULTIPLIER
+from labyrinth_main.server import __main__ as server_main
 
 LIVE_GX = REPO_ROOT / "main" / "labyrinth_main" / "features" / "live_gx"
 SQRT2 = math.sqrt(2.0)
@@ -783,16 +791,6 @@ def test_L6_late_spawn_is_cancelled_never_orphaned(stub_modal, monkeypatch):
     assert orch.workers[1].launched is False  # the second spawn never started after the failure
 
 
-def test_L6_late_spawn_that_errors_settles_as_nothing_started(stub_modal, monkeypatch):
-    monkeypatch.setattr(modal_backend, "CALL_TIMEOUT_S", 0.1)
-    stub_modal.ctl.spawn_delay, stub_modal.ctl.spawn_error = 0.4, ConnectionError("rejected")
-    planned = guard.planned_call_s("live")
-    orch = Orchestrator(modal_backend.ModalBackend(run_id="r", hard_timeout_s=planned), hard_timeout_s=planned)
-    orch.run(poll_interval_s=0.01)
-    assert not orch.termination_confirmed
-    assert orch.wait_terminated(3.0) and stub_modal.spawned == []
-
-
 def test_L6_shutdown_during_in_flight_launch_is_unconfirmed_until_cancelled(stub_modal, monkeypatch, tmp_path):
     monkeypatch.setattr(modal_backend, "CALL_TIMEOUT_S", 0.1)
     stub_modal.ctl.spawn_delay = 1.0
@@ -1386,31 +1384,36 @@ def test_L6_kill_switch_key_is_shared_by_backend_and_worker(stub_modal, gx_conta
     assert stub_modal.spawned[-1].cancel_kwargs == {"terminate_containers": True} and "run-11/abort" not in stub_modal.store
 
 
-def test_L6_spawn_that_fails_client_side_raises_the_kill_switch_or_is_never_reported_terminated(stub_modal):
+def test_L6_spawn_that_fails_client_side_raises_the_kill_switch_and_is_never_reported_terminated(stub_modal):
     """A spawn RPC that errors on the client may still have started a worker, and there is no call to cancel.
-    The run's kill switch is the only stop: it is raised, or the session stays unconfirmed (TERMINATE FAILED)."""
+    The run's kill switch is the only stop, and raising it confirms nothing: the session stays TERMINATE FAILED
+    ("kill switch raised, stop not confirmed"), also after a retry. (All cells: the termination matrix below.)"""
     planned = guard.planned_call_s("live")
     stub_modal.ctl.spawn_error = ConnectionError("stream reset after send")
+    sleeps = []
     orch = Orchestrator(modal_backend.ModalBackend(run_id="r", hard_timeout_s=planned), hard_timeout_s=planned,
-                        retry_sleep=lambda s: None)
+                        retry_sleep=sleeps.append)
     orch.run(poll_interval_s=0.01)
     snap = orch.snapshot(BUDGET, qualified=False)
     assert snap["mode"] == "fallback" and snap["fallback"]["label"] == FAILED_LABEL
     assert snap["workers"][0]["error"].startswith("launch failed client-side (ConnectionError: stream reset after send) and a worker "
-                                                  "may have started")
-    assert stub_modal.store["r/abort"] is True and orch.termination_confirmed
+                                                  "may have started; there is no call to cancel, only the run's kill switch can stop it")
+    assert stub_modal.store["r/abort"] is True and not orch.termination_confirmed
+    assert snap["reason"].startswith(f"{TERMINATE_FAILED}: GPU 0 (bean) {KILL_SWITCH_ONLY}: ") and "terminated" not in snap["reason"]
+    assert sleeps == [] and stub_modal.log == ["dict.put r/abort"]  # raised once: hammering the switch confirms nothing
     assert orch.workers[1].launched is False and len(stub_modal.names) == 1  # triangular was never attempted
-    # the kill switch cannot be raised either: retried with backoff, then loud, and a later retry confirms
+    # the kill switch cannot be raised either: retried with backoff, then loud; a later put that succeeds still
+    # confirms nothing
     stub_modal.store.fail_put = True
-    sleeps = []
     orch = Orchestrator(modal_backend.ModalBackend(run_id="s", hard_timeout_s=planned), hard_timeout_s=planned,
                         retry_sleep=sleeps.append)
     orch.run(poll_interval_s=0.01)
     assert not orch.termination_confirmed and orch.reason.startswith(TERMINATE_FAILED)
-    assert "kill switch could not be set" in orch.reason and sleeps[:len(TERMINATE_BACKOFF_S)] == list(TERMINATE_BACKOFF_S)
-    assert "s/abort" not in stub_modal.store
+    assert "kill switch could not be set" in orch.reason and sleeps == list(TERMINATE_BACKOFF_S)
+    assert "s/abort" not in stub_modal.store and KILL_SWITCH_ONLY not in orch.reason
     stub_modal.store.fail_put = False
-    assert orch.stop_and_terminate() is True and stub_modal.store["s/abort"] is True
+    assert orch.stop_and_terminate() is False and stub_modal.store["s/abort"] is True
+    assert orch.reason.startswith(f"{TERMINATE_FAILED}: GPU 0 (bean) {KILL_SWITCH_ONLY}: ") and orch.mode == "fallback"
     # the in-flight spawn state: nothing to cancel yet, but the switch is already up
     stub_modal.ctl.spawn_error, stub_modal.ctl.spawn_delay = None, 0.3
     b = modal_backend.ModalBackend(run_id="t", hard_timeout_s=planned)
@@ -1462,8 +1465,6 @@ def test_L3_hard_timeout_fires_on_schedule_despite_a_wall_clock_jump(jump_s, mon
 def test_L6_hung_spawn_operator_note_matches_the_code():
     """Behaviour itself: test_server.py::test_H5_terminate_while_a_spawn_rpc_hangs_answers_502_termination_pending,
     ::test_H1_shutdown_during_in_flight_launch and the rehearse CLI tests above. This pins the note's wording to it."""
-    from labyrinth_main.server import __main__ as server_main
-
     note = " ".join(service.__doc__.split("Operator note")[1].split())
     assert "wait up to WORST_CASE_STOP_S + 10 s" in note and "exit with code 2" in note
     assert inspect.signature(service.LiveService.__init__).parameters["join_timeout_s"].default == service.WORST_CASE_STOP_S + 10
@@ -1476,6 +1477,15 @@ def test_L6_hung_spawn_operator_note_matches_the_code():
     assert f"`{modal_backend.APP_NAME}`" in note
     assert "(SIGINT, SIGTERM, SIGHUP)" in note
     assert rehearse.STOP_SIGNALS == server_main.STOP_SIGNALS == (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+    # review BE-4: the kill-switch-only wording is quoted wherever the behaviour is documented, with the decision
+    assert KILL_SWITCH_ONLY == "kill switch raised, stop not confirmed"
+    assert STOPPING == "Stop requested; terminating workers — not confirmed yet"
+    for module in (service, modal_backend, rehearse):
+        assert f'"{KILL_SWITCH_ONLY}"' in " ".join(module.__doc__.split()), module.__name__
+    assert "a kill-switch-only stop is NEVER `ok: true`" in " ".join(modal_backend.__doc__.split())
+    assert "never `ok: true`" in note and "One terminate round per stop" in note
+    interim = "ermination not confirmed yet — check the Modal dashboard now"  # said before any wait, by both entrypoints
+    assert interim in inspect.getsource(server_main) and interim in inspect.getsource(rehearse)
 
 
 def test_L6_worst_case_stop_bound_counts_every_bounded_modal_call(stub_modal, monkeypatch):
@@ -1494,5 +1504,646 @@ def test_L6_worst_case_stop_bound_counts_every_bounded_modal_call(stub_modal, mo
     per_call, workers = modal_backend.CALL_TIMEOUT_S, len(Orchestrator(b, hard_timeout_s=1).workers)
     in_flight = max(launch, workers * poll) * per_call + service.POLL_INTERVAL_S  # one launch, or one poll round + its sleep
     terminating = workers * (sum(TERMINATE_BACKOFF_S) + (1 + len(TERMINATE_BACKOFF_S)) * terminate * per_call)
-    assert service.WORST_CASE_STOP_S == in_flight + terminating == 497.0
+    assert service.WORST_CASE_STOP_S == in_flight + terminating == 497.0 and service.TERMINATE_ROUND_S == terminating
     assert inspect.signature(service.LiveService.__init__).parameters["poll_interval_s"].default == service.POLL_INTERVAL_S
+
+
+# ---------------------------------------------------------------- L6 · the stop bound is a real upper bound (review BE-2)
+class _VirtualClockModal:
+    """TEST-ONLY `modal` on a virtual clock: every client call takes its FULL client-side bound and only then
+    answers as scripted (still running / worker dead / API unreachable). The stop request lands at `stop_at`,
+    whatever the session is doing at that instant. Nothing here sleeps for real."""
+
+    def __init__(self, *, stop_at: float, dies_at: float | None, put_ok: bool, cancel_ok: bool, bound: float):
+        self.now, self.stop_at, self.t_stop, self.dies_at, self.bound = 0.0, stop_at, None, dies_at, bound
+        self.orch: Orchestrator | None = None
+        clock = self
+
+        class Call:
+            def get(self, timeout=None):
+                if clock.dies_at is not None and clock.now >= clock.dies_at:
+                    raise RuntimeError("container lost")
+                raise TimeoutError("still running")
+
+            def cancel(self, **kw):
+                if not cancel_ok:
+                    raise ConnectionError("Modal API unreachable")
+
+        class Fn:
+            def spawn(self, **kw):
+                clock.spend(clock.bound)  # the spawn RPC answers at the very end of its bound, like every other call
+                return Call()
+
+        class Progress(dict):
+            def __setitem__(self, key, value):
+                if not put_ok:
+                    raise ConnectionError("Dict unreachable")
+                super().__setitem__(key, value)
+
+        progress = Progress()
+        self.module = types.SimpleNamespace(
+            Function=types.SimpleNamespace(from_name=lambda app, name: Fn()),
+            Dict=types.SimpleNamespace(from_name=lambda name, create_if_missing: progress),
+            exception=types.SimpleNamespace())
+
+    def spend(self, seconds: float) -> None:
+        if self.t_stop is None and self.stop_at <= self.now + seconds:
+            self.t_stop = self.stop_at
+            self.orch.request_stop()
+        self.now += seconds
+
+    def bounded(self, fn, what, timeout_s=None):  # stands in for modal_backend.bounded
+        self.spend(self.bound)
+        return fn()
+
+
+def test_L6_stop_bound_holds_on_a_virtual_clock_when_every_modal_call_takes_its_full_bound(monkeypatch):
+    """WORST_CASE_STOP_S is an upper bound for "stop requested -> session ended", not a formula that the code
+    happens to share: the real ModalBackend and Orchestrator are driven on a virtual clock through the worst
+    sequences — a stop at (and just after) every step boundary, the poll in flight failing, every terminate
+    attempt failing after its full bound, the hard timeout firing in the same step — and the session never
+    runs a second terminate round."""
+    bound, per_call, planned = service.WORST_CASE_STOP_S, modal_backend.CALL_TIMEOUT_S, guard.planned_call_s("live")
+    monkeypatch.setattr(gx_input, "build_inputs", lambda restart_from=None: {tube: "# not under test\n" for _, tube in orchestrator.TUBES})
+    launches = len(orchestrator.TUBES) * modal_backend.LAUNCH_CALLS * per_call   # 80 s: both spawns answered
+    poll_round = len(orchestrator.TUBES) * modal_backend.POLL_CALLS * per_call + service.POLL_INTERVAL_S
+    edges = {k * per_call for k in range(int(launches / per_call) + 1)}
+    for r in range(3):  # three poll rounds: each call's end, and the end of the poll sleep
+        edges |= {launches + r * poll_round + k * per_call for k in range(5)} | {launches + (r + 1) * poll_round}
+    stops = sorted({e + d for e in edges for d in (0.0, 1e-6, per_call / 2)})
+    worst, runs = (0.0, None), 0
+    for stop_at in stops:
+        for dies_at in (None, stop_at, stop_at - 45.0):  # healthy / the poll in flight at the stop fails / it failed earlier
+            for put_ok, cancel_ok, hard in ((False, False, planned), (True, False, planned), (False, True, planned),
+                                            (True, True, planned), (False, False, stop_at)):
+                clock = _VirtualClockModal(stop_at=stop_at, dies_at=dies_at, put_ok=put_ok, cancel_ok=cancel_ok, bound=per_call)
+                monkeypatch.setitem(sys.modules, "modal", clock.module)
+                monkeypatch.setattr(modal_backend, "bounded", clock.bounded)
+                orch = clock.orch = Orchestrator(modal_backend.ModalBackend(run_id="live-clock", hard_timeout_s=planned),
+                                                 hard_timeout_s=hard, monotonic=lambda c=clock: c.now,
+                                                 clock=lambda c=clock: 1.8e9 + c.now, sleep=clock.spend, retry_sleep=clock.spend)
+                orch.run(poll_interval_s=service.POLL_INTERVAL_S)
+                scenario = dict(stop_at=stop_at, dies_at=dies_at, put_ok=put_ok, cancel_ok=cancel_ok, hard_timeout_s=hard)
+                assert orch.terminate_rounds == 1, scenario  # never a second round for the same stop
+                assert orch.termination_confirmed is cancel_ok, scenario
+                if clock.t_stop is None:
+                    continue  # the session had ended on its own before the stop request
+                runs += 1
+                elapsed = clock.now - clock.t_stop
+                assert elapsed <= bound, (elapsed, scenario)
+                worst = max(worst, (elapsed, scenario), key=lambda x: x[0])
+    assert runs > 500
+    # ... and the bound is attained (a stop that lands just after the loop's stop check, then one full round)
+    assert bound - 1e-3 < worst[0] <= bound and worst[1]["cancel_ok"] is False, worst
+
+
+def test_L6_service_terminate_runs_one_round_per_stop_and_the_next_call_retries(tmp_path, monkeypatch):
+    qualify(tmp_path)
+    monkeypatch.setattr(orchestrator, "TERMINATE_BACKOFF_S", (0.0,) * len(TERMINATE_BACKOFF_S))
+    attempts, backends = [], []
+
+    class Unreachable(FakeBackend):
+        def terminate(self, w):
+            attempts.append(w.tube)
+            raise ConnectionError("Modal API unreachable")
+
+    svc = service.LiveService(state_dir=tmp_path, availability_check=available, poll_interval_s=0.005,
+                              backend_factory=lambda rid, t: backends.append(Unreachable(steps=10**6, step_wall_s=0.01)) or backends[-1])
+    try:
+        assert svc.launch(guard.slot_estimate_usd())[0]
+        deadline = time.time() + 5
+        while svc.status()["mode"] != "live":
+            assert time.time() < deadline
+            time.sleep(0.005)
+        one_round = ["bean"] * ATTEMPTS + ["triangular"] * ATTEMPTS
+        warned = []
+        t0 = time.monotonic()
+        confirmed, message = svc.terminate(on_unconfirmed=warned.append)
+        assert not confirmed and message.startswith(TERMINATE_FAILED) and warned == [message]
+        assert attempts == one_round  # the session thread's round; terminate() did not add a second one
+        assert time.monotonic() - t0 < svc.confirm_wait_s  # nothing is queued, so nothing was waited for
+        assert svc.terminate()[0] is False and attempts == one_round * 2  # the operator's retry: one more round
+        assert svc.shutdown(warned.append) is False and attempts == one_round * 3 and len(warned) == 2
+        assert svc.status()["reason"].startswith(TERMINATE_FAILED) and svc.status()["mode"] == "live"
+    finally:
+        for w in backends[0].workers:
+            w.stop.set()
+
+
+def test_L6_rehearse_cli_reports_a_hard_cancel_failure_at_once_instead_of_sleeping_on_it(tmp_path, monkeypatch, capsys):
+    """Review BE-3 / BE-2. Nothing is queued when both cancels fail hard, so there is nothing to wait
+    CONFIRM_WAIT_S for; and the round that just failed inside the phase is not run a second time on the way out."""
+    monkeypatch.setenv("LABYRINTH_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(orchestrator, "TERMINATE_BACKOFF_S", (0.0,) * len(TERMINATE_BACKOFF_S))
+    monkeypatch.setattr(rehearse, "CONFIRM_WAIT_S", 20.0)
+    write_ledger(tmp_path)
+    attempts = []
+
+    class Unreachable(FakeBackend):
+        def terminate(self, w):
+            attempts.append(w.tube)
+            raise ConnectionError("Modal API unreachable")
+
+    t0 = time.monotonic()
+    code = rehearse.main(["--confirm-cost-usd", str(guard.rehearsal_estimate_usd())], availability_check=available,
+                         backend_factory=lambda rid, t: Unreachable(steps=3), poll_interval_s=0.005)
+    elapsed = time.monotonic() - t0
+    out, err = capsys.readouterr()
+    assert code == 2 and elapsed < 10.0, elapsed
+    line = f"phase 1: NOT confirmed terminated — check Modal dashboard. {TERMINATE_FAILED}: GPU 0 (bean) terminate unconfirmed after 5 attempts"
+    assert line in out and line in err and "not confirmed yet" not in out + err  # said at once; no wait was announced
+    assert out.rstrip().endswith("Rehearsal did NOT pass; workers NOT confirmed terminated — check Modal dashboard.")
+    assert "workers terminated" not in out and service.load_qualification(tmp_path) is None
+    assert attempts == ["bean"] * 5 + ["triangular"] * 5
+
+
+COST_CONFIRMATIONS = {  # for the $2.65 slot estimate
+    "2.65": (2.65, True), "2.650": (2.650, True), "2.65000 parsed": (float("2.65000"), True),
+    "2.6549": (2.6549, False), "2.6451": (2.6451, False), "2.6500001": (2.6500001, False), "2.6499999": (2.6499999, False),
+    "2.66": (2.66, False), "2.64": (2.64, False), "2.7": (2.7, False), "3": (3, False), "2": (2, False), "265": (265, False),
+    "-2.65": (-2.65, False), "0": (0, False), "True": (True, False), "string": ("2.65", False), "list": ([2.65], False),
+    "None": (None, False), "nan": (float("nan"), False), "inf": (float("inf"), False), "-inf": (float("-inf"), False),
+    "largest float": (1.7976931348623157e308, False), "400-digit int": (10 ** 400, False), "5000-digit int": (-(10 ** 5000), False),
+}
+
+
+@pytest.mark.parametrize("confirm,accepted", COST_CONFIRMATIONS.values(), ids=COST_CONFIRMATIONS.keys())
+def test_L1_cost_confirmation_is_exact_to_the_cent_and_never_raises(confirm, accepted):
+    """Review BE-6 / BE-5: equality at two decimal places, in Decimal, no half-cent tolerance; nothing raises
+    (a 5000-digit integer cannot even be printed by Python, and is still just "not a match")."""
+    assert guard.slot_estimate_usd() == 2.65
+    assert service.cost_matches(confirm, guard.slot_estimate_usd()) is accepted
+    assert len(service.describe(confirm)) < 100
+
+
+def test_L1_cost_confirmation_integer_estimates_and_the_rehearsal_cli(tmp_path):
+    assert service.cost_matches(3, 3.0) and service.cost_matches(3.0, 3.0) and service.cost_matches(3.00, 3)
+    assert not service.cost_matches(2.999, 3.0) and not service.cost_matches(3.001, 3.0)
+    est = guard.rehearsal_estimate_usd()
+    assert est == 7.73
+    backends = []
+    for wrong in (7.7349, 7.7251, 7.72, 7.74, 10 ** 400, float("nan")):
+        write_ledger(tmp_path)
+        ok, rec = rehearse.run_rehearsal(rehearsal_factory(backends), state_dir=tmp_path, confirm_cost_usd=wrong, poll_interval_s=0.005)
+        assert not ok and rec == {"reason": "--confirm-cost-usd must equal the rehearsal estimate $7.73 to the cent."}, wrong
+        assert backends == [] and service.LedgerStore(tmp_path / "ledger.json").load() == guard.Ledger(8.10, 0.0, True), wrong
+
+
+def test_L1_rehearsal_ledger_that_cannot_be_written_reserves_and_launches_nothing(tmp_path, monkeypatch):
+    write_ledger(tmp_path)
+    before, backends = (tmp_path / "ledger.json").read_bytes(), []
+
+    def no_space(src, dst):
+        raise OSError(28, "No space left on device")
+
+    with monkeypatch.context() as mp:
+        mp.setattr(service.os, "replace", no_space)
+        ok, rec = rehearse.run_rehearsal(rehearsal_factory(backends), state_dir=tmp_path,
+                                         confirm_cost_usd=guard.rehearsal_estimate_usd(), poll_interval_s=0.005)
+    assert not ok and rec["reason"].startswith("The ledger could not be updated (OSError: [Errno 28] No space left on device)")
+    assert rec["reason"].endswith("nothing reserved, nothing launched.")
+    assert backends == [] and (tmp_path / "ledger.json").read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["ledger.json"]  # no temp file, no stale lock, no run record
+
+
+def test_L6_stop_in_progress_is_worded_as_not_confirmed_yet():
+    orch = Orchestrator(FakeBackend(steps=10**6, step_wall_s=0.01), hard_timeout_s=60)
+    orch.launch()
+    assert STOPPING not in orch.reason
+    orch.request_stop()  # the session thread (or the caller) has not terminated anything yet
+    assert orch.reason == f"{STOPPING}. Launching GX workers (live); hard timeout 60 s." and orch.mode == "launching"
+    assert not orch.termination_confirmed and "terminated" not in orch.reason
+    assert orch.stop_and_terminate() is True
+    assert orch.reason == "Stopped on request; workers terminated." and orch.mode == "terminated"
+
+
+# ---------------------------------------------------------------- L6 · "terminated" needs a cancel that succeeded (review BE-1 / BE-4)
+PUT, PUT_FAILED = "kill-switch put", "kill-switch put FAILED"
+SPAWNED = ("spawn bean", "bean spawn returned", "spawn triangular", "triangular spawn returned")
+IN_FLIGHT = ("spawn bean",)
+SPAWN_FAILED = ("spawn bean", "bean spawn failed")
+LATE_CALL = "bean spawn returned"
+CONFIRMED = "confirmed"
+ATTEMPTS = 1 + len(TERMINATE_BACKOFF_S)                       # per worker in one terminate round (orchestrator)
+LATE_ATTEMPTS = 1 + len(modal_backend.LATE_CANCEL_BACKOFF_S)  # cancels of a call that arrived late (backend)
+
+
+class _MatrixModal:
+    """TEST-ONLY stand-in for the `modal` package, scripted for one cell of the termination matrix. Every call
+    that matters for termination is appended to `log`, in order:
+
+        spawn <tube>  (the RPC left this process)  ·  <tube> spawn returned | failed  (its answer)
+        kill-switch put [FAILED]                   ·  cancel <tube> [FAILED]
+
+    Lookups and polls are not listed (every poll says "still running", with no progress report). A late spawn
+    answers only once the test sets `answer` — after the client-side bound; "never answers" not before close()."""
+
+    def __init__(self, spawn: str, put: str, cancel: str):
+        self.spawn, self.put, self.cancel = spawn, put, cancel
+        self.gated = spawn in ("returns late", "fails late", "never answers")
+        self.log: list[str] = []
+        self.answer, self.closed, self.on_poll = threading.Event(), False, None
+        stub = self
+
+        class Call:
+            def __init__(self, tube):
+                self.tube = tube
+
+            def get(self, timeout=None):
+                if stub.on_poll is not None:
+                    stub.on_poll()
+                raise TimeoutError("still running")
+
+            def cancel(self, **kw):
+                assert kw == {"terminate_containers": True}
+                ok = stub.cancel == "ok"
+                stub.log.append(f"cancel {self.tube}" + ("" if ok else " FAILED"))
+                if not ok:
+                    raise ConnectionError("Modal API unreachable")
+
+        class Fn:
+            def spawn(self, **kw):
+                tube = kw["tube"]
+                stub.log.append(f"spawn {tube}")
+                if stub.gated:
+                    stub.answer.wait()
+                if stub.closed:
+                    raise ConnectionError("the test is over")
+                if stub.spawn.startswith("fails"):
+                    stub.log.append(f"{tube} spawn failed")
+                    raise ConnectionError("stream reset")
+                stub.log.append(f"{tube} spawn returned")
+                return Call(tube)
+
+        class Progress(dict):
+            def __setitem__(self, key, value):
+                assert key.endswith("/abort") and value is True
+                ok = stub.put == "ok"
+                stub.log.append(PUT if ok else PUT_FAILED)
+                if not ok:
+                    raise ConnectionError("Dict unreachable")
+                super().__setitem__(key, value)
+
+        progress = Progress()
+        self.module = types.SimpleNamespace(
+            Function=types.SimpleNamespace(from_name=lambda app, name: Fn()),
+            Dict=types.SimpleNamespace(from_name=lambda name, create_if_missing: progress),
+            exception=types.SimpleNamespace())
+
+    def close(self) -> None:
+        self.closed = True
+        self.answer.set()
+
+
+@dataclass(frozen=True)
+class _Cell:
+    launch: tuple        # calls before the stop
+    stop: tuple          # calls of the session's own terminate round
+    state: str           # reported after that round: CONFIRMED, or the TERMINATE FAILED / TERMINATION PENDING marker
+    settle: tuple = ()   # calls once a late spawn RPC answers ...
+    settled: str = ""    # ... and what is reported then
+    retry: tuple = ()    # calls of ONE later terminate under the same conditions (the operator's retry)
+    says: str = ""       # wording the final unconfirmed reason must carry
+
+    @property
+    def final(self) -> str:
+        return self.settled or self.state
+
+    @property
+    def says_after_retry(self) -> str:
+        """A retry round replaces "late spawn could not be cancelled" by its own verdict; the rest stays."""
+        return UNCONFIRMED_AFTER if LATE_CALL in self.settle and self.settled != CONFIRMED else self.says
+
+
+def _round(put: str, cancel_ok: bool = True, attempts: int = 1) -> tuple:
+    """One terminate round for two spawned calls: (put, cancel) per attempt — bean, then triangular."""
+    tail = "" if cancel_ok else " FAILED"
+    return (put, f"cancel bean{tail}") * attempts + (put, f"cancel triangular{tail}") * attempts
+
+
+UNCONFIRMED_AFTER = f"terminate unconfirmed after {ATTEMPTS} attempts"
+NO_SWITCH = "kill switch could not be set"
+LATE_CANCEL_FAILED = (LATE_CALL, *("cancel bean FAILED",) * LATE_ATTEMPTS)
+# "Terminated" is reported in exactly the four cells where a cancel of the spawned call succeeded.
+TERMINATION_MATRIX = {
+    # the spawn RPC     the put  the cancel
+    ("returns",         "ok",    "ok"):    _Cell(SPAWNED, _round(PUT), CONFIRMED),
+    ("returns",         "fails", "ok"):    _Cell(SPAWNED, _round(PUT_FAILED), CONFIRMED),
+    ("returns",         "ok",    "fails"): _Cell(SPAWNED, _round(PUT, False, ATTEMPTS), TERMINATE_FAILED,
+                                                 retry=_round(PUT, False, ATTEMPTS), says=UNCONFIRMED_AFTER),
+    ("returns",         "fails", "fails"): _Cell(SPAWNED, _round(PUT_FAILED, False, ATTEMPTS), TERMINATE_FAILED,
+                                                 retry=_round(PUT_FAILED, False, ATTEMPTS), says=UNCONFIRMED_AFTER),
+    ("fails",           "ok",    "none"):  _Cell(SPAWN_FAILED, (PUT,), TERMINATE_FAILED, retry=(PUT,), says=KILL_SWITCH_ONLY),
+    ("fails",           "fails", "none"):  _Cell(SPAWN_FAILED, (PUT_FAILED,) * ATTEMPTS, TERMINATE_FAILED,
+                                                 retry=(PUT_FAILED,) * ATTEMPTS, says=NO_SWITCH),
+    ("returns late",    "ok",    "ok"):    _Cell(IN_FLIGHT, (PUT,), TERMINATE_PENDING, (LATE_CALL, "cancel bean"), CONFIRMED),
+    ("returns late",    "fails", "ok"):    _Cell(IN_FLIGHT, (PUT_FAILED,), TERMINATE_PENDING, (LATE_CALL, "cancel bean"), CONFIRMED),
+    ("returns late",    "ok",    "fails"): _Cell(IN_FLIGHT, (PUT,), TERMINATE_PENDING, LATE_CANCEL_FAILED, TERMINATE_FAILED,
+                                                 retry=(PUT, "cancel bean FAILED") * ATTEMPTS, says="late spawn could not be cancelled"),
+    ("returns late",    "fails", "fails"): _Cell(IN_FLIGHT, (PUT_FAILED,), TERMINATE_PENDING, LATE_CANCEL_FAILED, TERMINATE_FAILED,
+                                                 retry=(PUT_FAILED, "cancel bean FAILED") * ATTEMPTS,
+                                                 says="late spawn could not be cancelled"),
+    ("fails late",      "ok",    "none"):  _Cell(IN_FLIGHT, (PUT,), TERMINATE_PENDING, ("bean spawn failed",), TERMINATE_FAILED,
+                                                 retry=(PUT,), says=KILL_SWITCH_ONLY),
+    ("fails late",      "fails", "none"):  _Cell(IN_FLIGHT, (PUT_FAILED,), TERMINATE_PENDING, ("bean spawn failed",), TERMINATE_FAILED,
+                                                 retry=(PUT_FAILED,) * ATTEMPTS, says=NO_SWITCH),
+    ("never answers",   "ok",    "none"):  _Cell(IN_FLIGHT, (PUT,), TERMINATE_PENDING, retry=(PUT,)),
+    ("never answers",   "fails", "none"):  _Cell(IN_FLIGHT, (PUT_FAILED,), TERMINATE_PENDING, retry=(PUT_FAILED,)),
+}
+
+
+def _assert_reported(mode: str, reason: str, state: str, says: str = "") -> None:
+    """The one place that says what each reported state must look like, on every surface."""
+    if state == CONFIRMED:
+        assert TERMINATE_FAILED not in reason and TERMINATE_PENDING not in reason, reason
+        assert mode in ("terminated", "fallback", "idle") and "terminated." in reason, (mode, reason)
+        return
+    assert reason.startswith(f"{state}: GPU 0 (bean) "), reason
+    assert mode in ("launching", "live", "fallback"), mode  # never `terminated`, never back to idle
+    assert "workers terminated" not in reason and "Other worker terminated" not in reason, reason  # no such claim
+    assert says in reason, (says, reason)
+
+
+def _pending_says(put: str) -> str:
+    return "the run kill switch is raised" if put == "ok" else "the run kill switch could NOT be set (ConnectionError: Dict unreachable)"
+
+
+@pytest.fixture(scope="module")
+def qualified_template(tmp_path_factory):
+    state = tmp_path_factory.mktemp("qualified")
+    qualify(state)
+    return state
+
+
+@pytest.fixture
+def matrix(monkeypatch, qualified_template, tmp_path):
+    """-> start(spawn, put, cancel) = (the scripted stub `modal`, a qualified state dir with a reconciled ledger).
+    Backoffs are zeroed (the attempts stay); only the spawn wait keeps a client-side bound, short for a spawn
+    that the cell lets outlive it."""
+    stubs = []
+
+    def start(spawn: str, put: str, cancel: str):
+        stub = _MatrixModal(spawn, put, cancel)
+        stubs.append(stub)
+        real = modal_backend.bounded
+        monkeypatch.setitem(sys.modules, "modal", stub.module)
+        monkeypatch.setattr(gx_input, "build_inputs", lambda restart_from=None: {tube: "# not under test\n" for _, tube in orchestrator.TUBES})
+        monkeypatch.setattr(modal_backend, "bounded", lambda fn, what, timeout_s=None: real(fn, what, 30.0))
+        monkeypatch.setattr(modal_backend, "CALL_TIMEOUT_S", 0.05 if stub.gated else 30.0)
+        monkeypatch.setattr(modal_backend, "LATE_CANCEL_BACKOFF_S", (0.0,) * (LATE_ATTEMPTS - 1))
+        monkeypatch.setattr(orchestrator, "TERMINATE_BACKOFF_S", (0.0,) * (ATTEMPTS - 1))
+        state = tmp_path / "state"
+        shutil.copytree(qualified_template, state)
+        write_ledger(state)
+        return stub, state
+
+    yield start
+    for stub in stubs:
+        stub.close()
+
+
+def _http(port: int, method: str, path: str, body=None) -> tuple[int, dict]:
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    conn.request(method, path, body=None if body is None else json.dumps(body),
+                 headers={} if body is None else {"Content-Type": "application/json"})
+    r = conn.getresponse()
+    data = json.loads(r.read())
+    conn.close()
+    return r.status, data
+
+
+def _until(reached, what: str) -> None:
+    deadline = time.time() + 10
+    while not reached():
+        assert time.time() < deadline, f"never reached: {what}"
+        time.sleep(0.005)
+
+
+def _serve_until_ctrl_c(svc, operator, monkeypatch) -> int:
+    """Run the server ENTRYPOINT in this (the main) thread, as `python3 -m labyrinth_main.server` does, while
+    `operator(port)` drives it over HTTP from another thread; when the operator is done the process gets a
+    SIGINT, like Ctrl-C. -> the entrypoint's exit code. An operator failure is re-raised here."""
+    servers, failure, make = [], [], server_main.make_server
+    monkeypatch.setattr(server_main, "make_server", lambda port, **kw: servers.append(make(port, **kw)) or servers[-1])
+    main_thread = threading.main_thread().ident
+
+    def drive():
+        serving = False
+        try:
+            _until(lambda: servers, "the entrypoint building its server")
+            port = servers[0].server_address[1]
+            assert _http(port, "GET", "/api/health")[0] == 200  # it serves, so its signal handlers are installed
+            serving = True
+            operator(port)
+        except BaseException as e:  # noqa: BLE001 - re-raised in the test's thread
+            failure.append(e)
+        finally:
+            if serving:
+                signal.pthread_kill(main_thread, signal.SIGINT)
+            elif servers:
+                socketserver.BaseServer.shutdown(servers[0])  # it never served: just let main() return
+
+    driver = threading.Thread(target=drive, daemon=True)
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)  # as in a foreground terminal session
+    try:
+        driver.start()
+        code = server_main.main(["--port", "0"], service=svc)
+    finally:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)  # the driver's Ctrl-C is for the entrypoint, never for pytest
+        driver.join(timeout=10)
+        signal.signal(signal.SIGINT, previous or signal.default_int_handler)
+    if failure:
+        raise failure[0]
+    return code
+
+
+def _matrix_orchestrator(key, cell: _Cell, stub: _MatrixModal, validator) -> None:
+    planned = guard.planned_call_s("live")
+    orch = Orchestrator(modal_backend.ModalBackend(run_id="live-matrix", hard_timeout_s=planned), hard_timeout_s=planned,
+                        sleep=lambda s: orch.request_stop())  # the operator stops the session after its first poll round
+    orch.run(poll_interval_s=0.0)
+    calls = [*cell.launch, *cell.stop]
+    assert stub.log == calls
+    assert_valid(validator, orch.snapshot(BUDGET, qualified=False))
+    assert orch.termination_confirmed is (cell.state == CONFIRMED)
+    _assert_reported(orch.mode, orch.reason, cell.state, _pending_says(key[1]) if cell.state == TERMINATE_PENDING else cell.says)
+    if cell.settle:
+        stub.answer.set()  # Modal answers the spawn RPC, long after the client-side bound
+        assert orch.wait_terminated(10.0) is (cell.settled == CONFIRMED) and not orch.termination_pending
+        calls += cell.settle
+        assert stub.log == calls
+        _assert_reported(orch.mode, orch.reason, cell.settled, cell.says)
+    # the operator's retry under the same conditions: the put is made again, and only a cancel can confirm
+    assert orch.stop_and_terminate() is (cell.final == CONFIRMED)
+    assert stub.log == [*calls, *cell.retry]
+    assert orch.termination_confirmed is (cell.final == CONFIRMED)
+    _assert_reported(orch.mode, orch.reason, cell.final, _pending_says(key[1]) if cell.final == TERMINATE_PENDING else cell.says_after_retry)
+    if cell.says in (KILL_SWITCH_ONLY, NO_SWITCH):  # ... not even a put that now succeeds
+        stub.put = "ok"
+        assert orch.stop_and_terminate() is False and stub.log[-1] == PUT
+        _assert_reported(orch.mode, orch.reason, TERMINATE_FAILED, KILL_SWITCH_ONLY)
+
+
+def _matrix_server(key, cell: _Cell, stub: _MatrixModal, state: Path, monkeypatch, capsys, validator) -> None:
+    spawn, put, _ = key
+    svc = service.LiveService(state_dir=state, availability_check=available, poll_interval_s=0.005, confirm_wait_s=0.05,
+                              join_timeout_s=0.3 if spawn == "never answers" else 30.0,
+                              backend_factory=lambda rid, t: modal_backend.ModalBackend(run_id=rid, hard_timeout_s=t))
+    calls: list[str] = []
+
+    def terminate(port: int, expected: str, says: str) -> None:
+        code, body = _http(port, "POST", "/api/live/terminate", {})
+        assert stub.log == calls
+        assert_valid(validator, body["status"])
+        assert (code, body["ok"]) == ((200, True) if expected == CONFIRMED else (502, False)), body
+        _assert_reported(body["status"]["mode"], body["status"]["reason"], expected, says)
+        if expected == CONFIRMED:
+            assert body["reason"] == "Workers terminated."
+        else:
+            _assert_reported(body["status"]["mode"], body["reason"], expected, says)
+
+    def operator(port: int) -> None:
+        def status() -> dict:
+            return _http(port, "GET", "/api/live/status")[1]
+
+        assert _http(port, "POST", "/api/live/launch", {"confirmCostUsd": guard.slot_estimate_usd()})[0] == 202
+        if cell.launch == SPAWNED:  # a healthy session: this terminate is the stop, and its round is the session's own
+            _until(lambda: len(stub.log) == len(SPAWNED), "both spawns answered")
+            calls.extend([*cell.launch, *cell.stop])
+        else:  # the session has already failed and run its round; this terminate is a retry (one put while in flight)
+            _until(lambda: status()["reason"].startswith(cell.state), cell.state)
+            assert stub.log == [*cell.launch, *cell.stop]
+            calls.extend([*cell.launch, *cell.stop, *(cell.stop if cell.launch == IN_FLIGHT else cell.retry)])
+        terminate(port, cell.state, _pending_says(put) if cell.state == TERMINATE_PENDING else cell.says)
+        if cell.settle:
+            stub.answer.set()
+            _until(lambda: not status()["reason"].startswith(TERMINATE_PENDING), "the late spawn settling")
+            calls.extend(cell.settle)
+            assert stub.log == calls
+            calls.extend(cell.retry)
+            terminate(port, cell.settled, cell.says_after_retry)
+        if cell.final != CONFIRMED:  # no new session while GPUs may bill, even with a reconciled ledger
+            write_ledger(state, billed=20.0)
+            code, body = _http(port, "POST", "/api/live/launch", {"confirmCostUsd": guard.slot_estimate_usd()})
+            assert code == 409 and "unconfirmed" in body["reason"] and stub.log == calls
+            calls.extend(cell.retry)  # ... and the shutdown below retries once more (for a spawn in flight: the put)
+
+    code = _serve_until_ctrl_c(svc, operator, monkeypatch)
+    out, err = capsys.readouterr()
+    assert stub.log == calls
+    last = out.rstrip().splitlines()[-1]
+    if cell.final == CONFIRMED:
+        assert code == 0 and last == "Labyrinth API stopped; workers terminated."
+        assert "not confirmed" not in (out + err).lower()
+    else:  # exit 2, announced before the final line with the reason
+        assert code == 2 and last == "Labyrinth API stopped; workers NOT confirmed terminated — check Modal."
+        warning = f"Termination not confirmed yet — check the Modal dashboard now. {cell.final}: GPU 0 (bean) "
+        assert warning in err and out.index(warning) < out.index(last)
+        assert "workers terminated" not in out and (cell.says_after_retry or _pending_says(put)) in out
+
+
+def _matrix_rehearse_cli(key, cell: _Cell, stub: _MatrixModal, state: Path, monkeypatch, capsys, validator) -> None:
+    spawn, put, _ = key
+    monkeypatch.setenv("LABYRINTH_STATE_DIR", str(state))
+    monkeypatch.setattr(rehearse, "CONFIRM_WAIT_S", 0.15 if spawn == "never answers" else 30.0)
+    main_thread, pressed, say = threading.main_thread().ident, [], rehearse._say
+
+    def ctrl_c():  # a healthy rehearsal: the operator presses Ctrl-C (once) during the first poll
+        if not pressed:
+            pressed.append(True)
+            signal.pthread_kill(main_thread, signal.SIGINT)
+
+    def announcing(line, *, to_stderr=False):
+        say(line, to_stderr=to_stderr)
+        if to_stderr and "termination not confirmed yet" in line and cell.settle:
+            stub.answer.set()  # Modal answers a late spawn only once the CLI has SAID that it is waiting for it
+
+    stub.on_poll = ctrl_c
+    monkeypatch.setattr(rehearse, "_say", announcing)
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        code = rehearse.main(["--confirm-cost-usd", str(guard.rehearsal_estimate_usd())], availability_check=available,
+                             backend_factory=lambda rid, t: modal_backend.ModalBackend(run_id=rid, hard_timeout_s=t, kind="rehearsal"),
+                             poll_interval_s=0.0)
+    finally:
+        signal.signal(signal.SIGINT, previous or signal.default_int_handler)
+    out, err = capsys.readouterr()
+    # the CLI does not retry a round that just failed; a queued cancel that settled as failed gets one more
+    assert stub.log == [*cell.launch, *cell.stop, *cell.settle, *(cell.retry if cell.settle else ())]
+    assert code == 2  # a stopped or failed rehearsal never qualifies; what differs is what is said about the workers
+    assert service.load_qualification(state) is not None  # (the template's: this run wrote none)
+    (run_file,) = [p for p in (state / "runs").glob("rehearsal-*.json") if p.name != f"{service.load_qualification(state)['savedRunId']}.json"]
+    phase = json.loads(run_file.read_text())["phases"][0]
+    assert_valid(validator, phase)
+    says = cell.says_after_retry if cell.final != TERMINATE_PENDING else _pending_says(put)
+    waiting = "phase 1: termination not confirmed yet — check the Modal dashboard now; waiting up to"
+    if cell.final == CONFIRMED:
+        assert "phase 1: workers terminated. " in out and "NOT confirmed" not in out + err
+        assert out.rstrip().endswith("Rehearsal did NOT pass; workers terminated.")
+    else:
+        line = f"phase 1: NOT confirmed terminated — check Modal dashboard. {cell.final}: GPU 0 (bean) "
+        assert line in out and line in err and says in out
+        assert out.rstrip().endswith("Rehearsal did NOT pass; workers NOT confirmed terminated — check Modal dashboard.")
+        assert "workers terminated" not in out and "Other worker terminated" not in out
+    # a queued cancel is announced BEFORE it is waited for (the stub answers the spawn only on that announcement)
+    assert (waiting in out and waiting in err) is (cell.launch == IN_FLIGHT)
+    if cell.launch == IN_FLIGHT:
+        assert out.index(waiting) < out.rindex("phase 1: ")
+
+
+@pytest.mark.parametrize("surface", ["orchestrator", "service+server", "rehearse-cli"])
+@pytest.mark.parametrize("spawn,put,cancel", list(TERMINATION_MATRIX),
+                         ids=[f"spawn-{s.replace(' ', '-')},put-{p},cancel-{c}" for s, p, c in TERMINATION_MATRIX])
+def test_L6_terminated_is_reported_only_after_a_cancel_that_succeeded(spawn, put, cancel, surface, matrix, monkeypatch, capsys,
+                                                                      validator):
+    """Review BE-1 / BE-4. For every (spawn outcome x kill-switch put x cancel) and on every surface — the
+    orchestrator, the service behind the real server entrypoint (HTTP codes, exit code), the rehearse CLI —
+    the exact sequence of Modal calls and the reported state: `terminated` / 200 / "workers terminated" only
+    when a cancel of the spawned call succeeded; otherwise TERMINATE FAILED or TERMINATION PENDING, 502,
+    exit 2 "NOT confirmed terminated", and the next terminate retries the put. A kill-switch-only stop reads
+    "kill switch raised, stop not confirmed" and is never ok."""
+    key = (spawn, put, cancel)
+    cell = TERMINATION_MATRIX[key]
+    assert (cell.final == CONFIRMED) is (spawn in ("returns", "returns late") and cancel == "ok")
+    stub, state = matrix(spawn, put, cancel)
+    if surface == "orchestrator":
+        _matrix_orchestrator(key, cell, stub, validator)
+    elif surface == "service+server":
+        _matrix_server(key, cell, stub, state, monkeypatch, capsys, validator)
+    else:
+        _matrix_rehearse_cli(key, cell, stub, state, monkeypatch, capsys, validator)
+
+
+def test_L6_backend_terminate_returns_only_when_a_cancel_succeeded(stub_modal, matrix):
+    """The backend's side of the contract the orchestrator relies on: returning IS the confirmation."""
+    planned = guard.planned_call_s("live")
+    b = modal_backend.ModalBackend(run_id="r", hard_timeout_s=planned)
+    stub_modal.ctl.spawn_error = ConnectionError("stream reset")
+    with pytest.raises(LaunchInFlight) as launch:
+        b.launch("bean", 0, None)
+    h = launch.value.handle
+    with pytest.raises(TerminationUnconfirmed, match=f"^{KILL_SWITCH_ONLY}: the spawn failed client-side"):
+        b.terminate(h)
+    assert h.abort_error is None and h.cancelled is False and stub_modal.store["r/abort"] is True
+    stub_modal.store.fail_put = True
+    with pytest.raises(RuntimeError, match="kill switch could not be set: ConnectionError: Dict unreachable") as failed:
+        b.terminate(h)
+    assert not isinstance(failed.value, TerminationUnconfirmed) and h.abort_error == "ConnectionError: Dict unreachable"
+    # a spawn still in flight: pending; the failed put is named, kept on the handle and retried by the next terminate
+    stub, _ = matrix("returns late", "fails", "ok")
+    with pytest.raises(LaunchInFlight) as launch:
+        b.launch("bean", 0, None)
+    h, settled = launch.value.handle, []
+    with pytest.raises(TerminationPending, match=r"kill switch could NOT be set \(ConnectionError: Dict unreachable\)") as pending:
+        b.terminate(h)
+    pending.value.subscribe(lambda ok, err: settled.append((ok, err)))
+    assert h.abort_error == "ConnectionError: Dict unreachable" and h.cancel_requested and settled == []
+    stub.put = "ok"
+    with pytest.raises(TerminationPending, match="the run kill switch is raised"):
+        b.terminate(h)
+    assert h.abort_error is None and h.cancelled is False
+    stub.answer.set()
+    _until(lambda: settled, "the late call being cancelled")
+    assert settled == [(True, None)] and h.cancelled
+    b.terminate(h)  # returns: the cancel succeeded (the put is still made first)
+    assert stub.log == ["spawn bean", PUT_FAILED, PUT, LATE_CALL, "cancel bean", PUT]

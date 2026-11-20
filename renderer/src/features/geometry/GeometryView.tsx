@@ -6,8 +6,11 @@ import {
   SegmentedControl,
   Stat,
   StatusPill,
+  VERIFICATION_STATUS,
   formatNumber,
+  provenanceStatus,
   useResolvedTheme,
+  type VerificationOutcome,
 } from '../../design';
 import { useArtifact } from '../../lib/artifacts';
 import { ArtifactGate } from '../../shell/ArtifactGate';
@@ -32,6 +35,14 @@ export function GeometryView() {
   );
 }
 
+/** How the acceptance-129 outcome reads in the first-panel verdict pill (from validation.acceptance129). */
+const ACCEPTANCE_WORD: Record<VerificationOutcome, string> = {
+  blocked: 'blocked',
+  failed: 'failed',
+  passed: 'verified',
+  'not-applicable': 'not applicable',
+};
+
 const TUBE_OPTIONS = [
   { value: 'bean', label: 'Bean · ζ 0°', ariaLabel: 'Bean tube, ζ 0 degrees' },
   { value: 'triangular', label: 'Triangular · ζ 36°', ariaLabel: 'Triangular tube, ζ 36 degrees' },
@@ -51,6 +62,12 @@ export function GeometryContent({ g }: { g: GeometryArtifact }) {
   // Eyebrows are uppercased by CSS, which would turn ζ into a capital zeta that reads as "Z".
   const eyebrow = selected === 'bean' ? 'Bean tube' : 'Triangular tube';
   const range = tube.bmagRange;
+  const tracerOk = g.validation.stellaReference.allWithinPrintedPrecision;
+  const acceptance = g.validation.acceptance129.outcome;
+  // The artifact's own provenance kind marks every panel of numbers. provenanceStatus() without the live
+  // flag: an artifact is replayed evidence, so even a "live" kind is drawn as a recorded run, never LIVE.
+  const kind = provenanceStatus(g.provenance.kind);
+  const kindPill = <StatusPill status={kind.status}>{kind.label}</StatusPill>;
 
   return (
     <div className="geo-layout" data-selected={selected}>
@@ -59,7 +76,16 @@ export function GeometryContent({ g }: { g: GeometryArtifact }) {
         eyebrow={`${VIEW} · replay`}
         title={`Field lines on the ρ = ${formatNumber(s.rho, 1)} flux surface`}
         subtitle={`${g.equilibrium.configuration} VMEC equilibrium, ${g.equilibrium.nfp} field periods, ι = ${formatNumber(s.iota, 3)}. Gray is the flux surface (context, not data); the selected line is coloured by |B|.`}
-        status={<ProvenanceBadge provenance={g.provenance} subject="field-line geometry" />}
+        status={
+          <>
+            {/* Both validation verdicts, named, above the fold; the full record is in the Validation panel. */}
+            <span className="geo-verdict" data-testid="geo-verdict">
+              <StatusPill status={tracerOk ? 'passed' : 'failed'}>{`ρ 0.7 check ${tracerOk ? 'verified' : 'failed'}`}</StatusPill>
+              <StatusPill status={VERIFICATION_STATUS[acceptance]}>{`129-sample acceptance ${ACCEPTANCE_WORD[acceptance]}`}</StatusPill>
+            </span>
+            <ProvenanceBadge provenance={g.provenance} subject="field-line geometry" />
+          </>
+        }
         actions={
           <SegmentedControl<TubeId> label="Field line" options={TUBE_OPTIONS} value={selected} onChange={setSelected} />
         }
@@ -110,6 +136,7 @@ export function GeometryContent({ g }: { g: GeometryArtifact }) {
         eyebrow={eyebrow}
         title={`Cross-section at ζ = ${formatNumber(tube.crossSection.zetaDeg, 0)}°`}
         subtitle="Sampled surface (solid) inside the plasma boundary (dashed), equal R and Z scale."
+        status={kindPill}
         density="compact"
       >
         <CrossSectionInset tube={tube} boundary={s.boundary?.[tube.id]} centre={{ R: centre!.sample.R, Z: centre!.sample.Z }} />
@@ -126,7 +153,7 @@ export function GeometryContent({ g }: { g: GeometryArtifact }) {
         eyebrow={eyebrow}
         title="Field strength along the line, |B|(θ*)"
         subtitle={`${n} samples over one poloidal turn. |B| in units of stella’s B_ref; θ* is the straight-field-line angle (stella zed).`}
-        status={<StatusPill status="derived" />}
+        status={kindPill}
       >
         <figure className="geo-chart">
           <PlotlyChart className="geo-chart__plot" data={chart.data} layout={chart.layout} ariaLabel={chart.ariaLabel} describedBy={ids.chart} />

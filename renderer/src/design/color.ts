@@ -180,3 +180,31 @@ export function withAlpha(hex: string, alpha: number): string {
   const [r, g, b] = hexToRgb(hex).map((c) => Math.round(c * 255));
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
+
+/** Parse a token colour — hex, or the `rgb()/rgba()` form `withAlpha` writes — to sRGB in [0, 1] plus alpha. */
+export function parseColor(color: string): { rgb: RGB; alpha: number } {
+  const c = color.trim();
+  if (c.startsWith('#')) {
+    const h = c.slice(1);
+    const alpha = h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1;
+    return { rgb: hexToRgb(c), alpha };
+  }
+  const m = /^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*(?:,\s*(\d*\.?\d+)\s*)?\)$/.exec(c);
+  if (!m) throw new Error(`not a colour this parser reads: ${color}`);
+  const rgb = [m[1], m[2], m[3]].map((v) => Math.min(255, Number(v)) / 255) as unknown as RGB;
+  return { rgb, alpha: m[4] === undefined ? 1 : Math.min(1, Math.max(0, Number(m[4]))) };
+}
+
+/**
+ * The opaque colour seen when `layers` are painted in order over an opaque `base` (source-over, in
+ * sRGB as browsers do). Used to measure contrast against alpha fills: a window shade over the plot,
+ * an unsampled block over a window shade, and so on.
+ */
+export function compositeOver(base: string, ...layers: string[]): string {
+  let out = parseColor(base).rgb;
+  for (const layer of layers) {
+    const { rgb, alpha } = parseColor(layer);
+    out = [0, 1, 2].map((i) => (rgb[i] as number) * alpha + (out[i] as number) * (1 - alpha)) as unknown as RGB;
+  }
+  return rgbToHex(out);
+}

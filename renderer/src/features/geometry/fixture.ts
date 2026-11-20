@@ -3,26 +3,35 @@ import type { GeometryArtifact, Tube, TubeId } from './types';
 
 const sha = 'a'.repeat(64);
 
+/**
+ * The two tubes differ in everything a tube switch must change: |B| values (and so the colour-bar
+ * range), and the cross-section (bean: a 1.0 m circle; triangular: 0.84 m wide, 1.16 m tall, so an
+ * unequal R/Z scale would show). A switch that leaves something stale is then visible to a test.
+ */
 function tube(id: TubeId, zetaCenterDeg: number, n = 9): Tube {
   const zc = (zetaCenterDeg * Math.PI) / 180;
+  const bean = id === 'bean';
   const samples = Array.from({ length: n }, (_, i) => {
     const thetaStar = -Math.PI + (2 * Math.PI * i) / (n - 1);
     const zeta = zc + thetaStar / 0.91;
     const R = 5.5 + 0.5 * Math.cos(thetaStar);
     const Z = 0.5 * Math.sin(thetaStar);
-    return { thetaStar, zeta, bmag: 1 + 0.15 * Math.cos(thetaStar + i), R, Z, x: R * Math.cos(zeta), y: R * Math.sin(zeta), z: Z };
+    const bmag = bean ? 1 + 0.15 * Math.cos(thetaStar + i) : 1.05 + 0.22 * Math.cos(thetaStar + 2 * i);
+    return { thetaStar, zeta, bmag, R, Z, x: R * Math.cos(zeta), y: R * Math.sin(zeta), z: Z };
   });
   const bm = samples.map((s) => s.bmag);
   const cs = Array.from({ length: 8 }, (_, k) => (2 * Math.PI * k) / 8);
   return {
     id,
-    label: id === 'bean' ? 'Bean (ζ = 0°)' : 'Triangular (ζ = 36°)',
+    label: bean ? 'Bean (ζ = 0°)' : 'Triangular (ζ = 36°)',
     zetaCenterDeg,
-    alpha: id === 'bean' ? 0 : -0.5718682,
+    alpha: bean ? 0 : -0.5718682,
     nSamples: n,
     bmagRange: [Math.min(...bm), Math.max(...bm)],
     samples,
-    crossSection: { zetaDeg: zetaCenterDeg, R: cs.map((t) => 5.5 + 0.5 * Math.cos(t)), Z: cs.map((t) => 0.5 * Math.sin(t)) },
+    crossSection: bean
+      ? { zetaDeg: zetaCenterDeg, R: cs.map((t) => 5.5 + 0.5 * Math.cos(t)), Z: cs.map((t) => 0.5 * Math.sin(t)) }
+      : { zetaDeg: zetaCenterDeg, R: cs.map((t) => 5.4 + 0.42 * Math.cos(t)), Z: cs.map((t) => 0.58 * Math.sin(t)) },
   };
 }
 
@@ -35,15 +44,17 @@ export function geometryFixture(nPhi = 8, nTheta = 6): GeometryArtifact {
       const R = 5.5 + 0.5 * Math.cos(th);
       positions.push(R * Math.cos(phi), R * Math.sin(phi), 0.5 * Math.sin(th));
     }
-  const ring = (a: number) => {
+  // Plasma-boundary rings. The inset scales to fit, so two circles would draw the same curve whatever
+  // their radius: the triangular boundary is an ellipse (1.2 m wide, 1.5 m tall) to be a different shape.
+  const ring = (a: number, b = a, r0 = 5.5) => {
     const k = Array.from({ length: 8 }, (_, i) => (2 * Math.PI * i) / 8);
-    return { R: k.map((t) => 5.5 + a * Math.cos(t)), Z: k.map((t) => a * Math.sin(t)) };
+    return { R: k.map((t) => r0 + a * Math.cos(t)), Z: k.map((t) => b * Math.sin(t)) };
   };
   const src = { label: 'stella EXPECTED_OUTPUT (test_2, rho 0.7, 25 samples)', url: 'https://example.org/stella', sha256: sha };
   return {
     schemaVersion: 1,
     equilibrium: { name: 'wout_test', configuration: 'W7-X high-mirror (KJM)', nfp: 5, source: { label: 'VMEC', url: 'https://example.org/vmec', sha256: sha } },
-    surface: { rho: 0.8, s: 0.64, iota: 0.9101565, nTheta, nPhi, positions, boundary: { bean: ring(0.62), triangular: ring(0.6) } },
+    surface: { rho: 0.8, s: 0.64, iota: 0.9101565, nTheta, nPhi, positions, boundary: { bean: ring(0.62), triangular: ring(0.6, 0.75, 5.45) } },
     tubes: [tube('bean', 0), tube('triangular', 36)],
     validation: {
       stellaReference: {

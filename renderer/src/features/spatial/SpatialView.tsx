@@ -8,7 +8,9 @@ import {
   ProvenanceBadge,
   Stat,
   StatusPill,
+  VERIFICATION_STATUS,
   formatNumber,
+  provenanceStatus,
   type FixtureCheckData,
 } from '../../design';
 import { useArtifact } from '../../lib/artifacts';
@@ -29,17 +31,26 @@ export function SpatialView() {
   );
 }
 
-/** The PRD's 1.27× next to the ratio recomputed from the two PRD-reported means, at printed precision. */
+/**
+ * The PRD's 1.27× next to the ratio recomputed from the two means, at printed precision. The value
+ * shown as computed is the artifact's `timing.speedupRecomputed` (interface.md §2 item 8); the note
+ * does the division itself, and an artifact ratio that is not that quotient can never read as a match.
+ */
 export function speedupFixture(a: SpatialArtifact): FixtureCheckData {
   const t = a.timing;
+  const quotient = t.cpuMeanS / t.gpuMeanS;
+  const consistent = formatNumber(quotient, 4) === formatNumber(t.speedupRecomputed, 4);
+  const division = `Recomputed: ${formatNumber(t.cpuMeanS, 2)} s ÷ ${formatNumber(t.gpuMeanS, 2)} s = ${formatNumber(quotient, 4)}`;
   return {
     id: 'spatial-speedup',
     label: 'Speedup (CPU ÷ GPU)',
     claimed: t.speedup,
     computed: t.speedupRecomputed,
     printedDecimals: 2,
-    matches: formatNumber(t.speedup, 2) === formatNumber(t.speedupRecomputed, 2),
-    note: `Recomputed: ${formatNumber(t.cpuMeanS, 2)} s ÷ ${formatNumber(t.gpuMeanS, 2)} s = ${formatNumber(t.speedupRecomputed, 4)}`,
+    matches: consistent && formatNumber(t.speedup, 2) === formatNumber(t.speedupRecomputed, 2),
+    note: consistent
+      ? division
+      : `${division}. The artifact records ${formatNumber(t.speedupRecomputed, 4)} as the recomputed ratio, which is not this quotient.`,
   };
 }
 
@@ -71,7 +82,15 @@ export function SpatialContent({ a }: { a: SpatialArtifact }) {
   const t = a.timing;
   const maxS = Math.max(t.cpuMeanS, t.gpuMeanS);
   const prov = a.provenance;
-  const prd = <StatusPill status="prd-reported" />;
+  // Every label below is read from the artifact's provenance, so the panels cannot keep saying
+  // "PRD-reported" / "Blocked" (or stop saying it) independently of the badge above them.
+  // provenanceStatus() without the live flag: an artifact is replayed evidence, so even a "live" kind is
+  // drawn as a recorded run and can never earn the LIVE pill here.
+  const reported = prov.kind === 'prd-reported';
+  const kind = provenanceStatus(prov.kind);
+  const kindPill = <StatusPill status={kind.status}>{kind.label}</StatusPill>;
+  const outcome = prov.verification.outcome;
+  const failedRuns = a.runs.controlled - a.runs.passedReference;
 
   return (
     <div className="sp-layout">
@@ -185,11 +204,11 @@ export function SpatialContent({ a }: { a: SpatialArtifact }) {
         <Panel
           eyebrow={GEOMETRY_LABEL}
           title="CPU vs GPU runtime"
-          subtitle="Mean wall-clock time per controlled run, as stated in the PRD."
-          status={prd}
+          subtitle={`Mean wall-clock time per controlled run${reported ? ', as stated in the PRD' : ''}.`}
+          status={kindPill}
           density="compact"
         >
-          <div className="sp-timing" data-testid="timing">
+          <div className="sp-timing" data-testid="timing" data-kind={prov.kind}>
             <div className="sp-timing__row">
               <Stat label="CPU mean" value={t.cpuMeanS} unit="s" decimals={2} />
               <span className="sp-timing__bar" aria-hidden="true">
@@ -203,14 +222,26 @@ export function SpatialContent({ a }: { a: SpatialArtifact }) {
               </span>
             </div>
           </div>
-          <FixtureCheck fixture={speedupFixture(a)} unit="dimensionless" claimedLabel="PRD (×)" />
+          {/* Own container: the fixture row reflows by the width of this side card, not the viewport. */}
+          <div className="sp-fixture">
+            {/* While the two means are PRD-reported, the ratio only redoes the arithmetic (DS-13). */}
+            <FixtureCheck fixture={speedupFixture(a)} unit="dimensionless" claimedLabel="PRD (×)" basis={reported ? 'arithmetic' : 'data'} />
+          </div>
           <p className="sp-small">
-            Only the ratio is recomputed. Both means are PRD-reported (dashed outlines): no timing logs are in this repo.
+            {reported
+              ? 'Only the ratio is recomputed. Both means are PRD-reported (dashed outlines): no timing logs are in this repo.'
+              : `The ratio is recomputed from the two means; the means are labelled ${kind.label} in the artifact (see the provenance record).`}
           </p>
         </Panel>
 
-        <Panel eyebrow={GEOMETRY_LABEL} title="Controlled runs" subtitle="Runs compared against the GENE-X reference." status={prd} density="compact">
-          <div className="sp-tally" data-testid="tally">
+        <Panel
+          eyebrow={GEOMETRY_LABEL}
+          title="Controlled runs"
+          subtitle={`Runs compared against the ${a.code} reference${reported ? ', as stated in the PRD' : ''}.`}
+          status={kindPill}
+          density="compact"
+        >
+          <div className="sp-tally" data-testid="tally" data-kind={prov.kind}>
             <Stat
               label="Passed the reference"
               value={a.runs.passedReference}
@@ -225,22 +256,47 @@ export function SpatialContent({ a }: { a: SpatialArtifact }) {
                 </li>
               ))}
             </ol>
+            {failedRuns > 0 && (
+              <p className="sp-small sp-tally__fail">
+                {failedRuns} of {a.runs.controlled} runs did not pass the reference.
+              </p>
+            )}
           </div>
         </Panel>
 
-        <Panel eyebrow="Verification" title="Why this is not verified here" density="compact" status={<StatusPill status="blocked" />}>
-          <Callout
-            tone="blocked"
-            title="Plane ownership, the 4/4 passes and the timings cannot be checked"
-            action={
-              <span>
-                <strong>To unblock:</strong> add the saved Dommaschk GENE-X checkpoints and timing logs to data/raw/ so the
-                replay can be rebuilt from data instead of the PRD.
-              </span>
-            }
-          >
-            <p>{prov.verification.details}</p>
-          </Callout>
+        <Panel
+          eyebrow="Verification"
+          title={outcome === 'blocked' ? 'Why this is not verified here' : outcome === 'failed' ? 'Verification failed' : 'Verification'}
+          density="compact"
+          status={<StatusPill status={VERIFICATION_STATUS[outcome]} />}
+        >
+          {outcome === 'blocked' ? (
+            <Callout
+              tone="blocked"
+              title={`Plane ownership, the ${a.runs.passedReference}/${a.runs.controlled} passes and the timings cannot be checked`}
+              action={
+                <span>
+                  <strong>To unblock:</strong> add the saved Dommaschk {a.code} checkpoints and timing logs to data/raw/ so
+                  the replay can be rebuilt from data instead of the PRD.
+                </span>
+              }
+            >
+              <p>{prov.verification.details}</p>
+            </Callout>
+          ) : (
+            <Callout
+              tone={outcome === 'failed' ? 'warn' : 'info'}
+              title={
+                outcome === 'failed'
+                  ? 'The verification recorded in the artifact failed'
+                  : outcome === 'passed'
+                    ? 'The artifact records a passed verification'
+                    : 'No verification applies to this replay'
+              }
+            >
+              <p>{prov.verification.details}</p>
+            </Callout>
+          )}
         </Panel>
       </div>
     </div>

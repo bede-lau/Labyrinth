@@ -49,7 +49,7 @@ export interface PlotShape {
   fillcolor?: string;
   line?: { color?: string; width?: number; dash?: string };
   layer?: 'below' | 'above';
-  label?: { text?: string; font?: PlotFont; textposition?: string; padding?: number };
+  label?: { text?: string; font?: PlotFont; textposition?: string; textangle?: number | 'auto'; padding?: number };
   name?: string;
 }
 export interface PlotLayout {
@@ -71,6 +71,36 @@ export interface PlotLayout {
   dragmode?: string;
   [key: string]: unknown;
 }
+/**
+ * What `plotLayout` accepts as overrides. Themed objects may be given partially: the keys you pass
+ * win, the themed keys you leave out are kept (`{ margin: { r: 40 } }` keeps l, t and b).
+ */
+export type PlotLayoutOverrides = Omit<
+  Partial<PlotLayout>,
+  'font' | 'margin' | 'xaxis' | 'yaxis' | 'legend' | 'hoverlabel' | 'title' | 'modebar'
+> & {
+  font?: PlotFont;
+  margin?: Partial<PlotLayout['margin']>;
+  xaxis?: PlotAxis;
+  yaxis?: PlotAxis;
+  legend?: Record<string, unknown>;
+  hoverlabel?: Partial<PlotLayout['hoverlabel']>;
+  title?: PlotLayout['title'];
+  modebar?: Partial<PlotLayout['modebar']>;
+};
+
+export interface PlotLayoutOptions {
+  /**
+   * Lay the chart out for a narrow container: the legend moves under the plot, so the hover
+   * modebar (about 216px wide) has the top margin to itself. Default: follows the viewport
+   * (`NARROW_CHART_QUERY`). Pass `true` for a chart in a narrow card on a wide screen.
+   */
+  narrow?: boolean;
+}
+
+/** Viewports this narrow get the narrow chart layout unless `plotLayout` is told otherwise. */
+export const NARROW_CHART_QUERY = '(max-width: 640px)';
+
 export interface SeriesStyle {
   name: string;
   line: { color: string; width: number; dash: 'solid' | 'dash' | 'dot' | 'dashdot' | 'longdash' };
@@ -127,10 +157,39 @@ const baseAxis = (theme: ThemeName): PlotAxis => {
   };
 };
 
-/** A complete Plotly layout for the theme. `overrides` are shallow-merged (axes merged one level). */
-export function plotLayout(theme: ThemeName, overrides: Partial<PlotLayout> = {}): PlotLayout {
+/** Axis override on top of the themed axis: `title` (and its `font`) and `tickfont` merge key by key. */
+function mergeAxis(base: PlotAxis, over: PlotAxis | undefined): PlotAxis {
+  if (!over) return base;
+  const merged: PlotAxis = { ...base, ...over };
+  if (base.title || over.title)
+    merged.title = { ...base.title, ...over.title, font: { ...base.title?.font, ...over.title?.font } };
+  if (base.tickfont || over.tickfont) merged.tickfont = { ...base.tickfont, ...over.tickfont };
+  return merged;
+}
+
+/** True when the viewport matches NARROW_CHART_QUERY. False wherever that cannot be asked (tests, SSR). */
+function viewportIsNarrow(): boolean {
+  if (typeof globalThis.matchMedia !== 'function') return false;
+  const mq = globalThis.matchMedia(NARROW_CHART_QUERY);
+  // A real MediaQueryList echoes the query it was asked; a blanket test stub does not.
+  return Boolean(mq) && mq.media === NARROW_CHART_QUERY && mq.matches === true;
+}
+
+/**
+ * A complete Plotly layout for the theme.
+ *
+ * `overrides` are merged, not swapped in: axes key by key (with `title`, `title.font` and
+ * `tickfont` one level deeper, so passing only `title.text` keeps the themed title font and
+ * standoff), and `font`, `margin`, `legend`, `hoverlabel`, `title` and `modebar` key by key.
+ * Everything else (height, shapes, annotations, hovermode, …) replaces the themed value.
+ *
+ * On a narrow chart (`options.narrow`, default: the viewport matches NARROW_CHART_QUERY) the
+ * legend is anchored to the bottom of the figure, where Plotly reserves room for it.
+ */
+export function plotLayout(theme: ThemeName, overrides: PlotLayoutOverrides = {}, options: PlotLayoutOptions = {}): PlotLayout {
   const t = themes[theme];
-  const { xaxis, yaxis, ...rest } = overrides;
+  const { xaxis, yaxis, font: fontOver, margin, legend, hoverlabel, title, modebar, ...rest } = overrides;
+  const narrow = options.narrow ?? viewportIsNarrow();
   const base: PlotLayout = {
     font: { family: font.sans, size: typeScale.xs[0], color: t.color.textMuted },
     autosize: true,
@@ -138,8 +197,8 @@ export function plotLayout(theme: ThemeName, overrides: Partial<PlotLayout> = {}
     plot_bgcolor: t.plot.plot,
     colorway: seriesColorway(theme),
     margin: { l: 56, r: 16, t: 36, b: 44, pad: 0 },
-    xaxis: { ...baseAxis(theme), ...xaxis },
-    yaxis: { ...baseAxis(theme), ...yaxis },
+    xaxis: baseAxis(theme),
+    yaxis: baseAxis(theme),
     legend: {
       orientation: 'h',
       x: 0,
@@ -164,7 +223,21 @@ export function plotLayout(theme: ThemeName, overrides: Partial<PlotLayout> = {}
     modebar: { bgcolor: t.plot.paper, color: t.color.textSubtle, activecolor: t.color.accent, orientation: 'h' },
     dragmode: 'zoom',
   };
-  return { ...base, ...rest };
+  const mergedLegend: Record<string, unknown> = { ...base.legend, ...legend };
+  return {
+    ...base,
+    ...rest,
+    font: { ...base.font, ...fontOver },
+    margin: { ...base.margin, ...margin },
+    xaxis: mergeAxis(base.xaxis, xaxis),
+    yaxis: mergeAxis(base.yaxis, yaxis),
+    // Narrow: under the plot, anchored to the figure (not the plot area), so Plotly reserves the
+    // room below the axis title however many rows the legend wraps to.
+    legend: narrow ? { ...mergedLegend, yref: 'container', y: 0, yanchor: 'bottom' } : mergedLegend,
+    hoverlabel: { ...base.hoverlabel, ...hoverlabel },
+    title: { ...base.title, ...title },
+    modebar: { ...base.modebar, ...modebar },
+  };
 }
 
 /** Plotly config: no logo, no cloud export, responsive. */
@@ -253,7 +326,18 @@ export function windowShape(
   };
 }
 
-/** Gray block marking a range with no samples (gray = unsampled, everywhere). */
+/**
+ * Gray block marking a range with no samples (gray = unsampled, everywhere).
+ *
+ * The label runs up the inside of the block's left edge. Plotly clips shape labels at the plot
+ * edge, so a horizontal word is cut as soon as the block is narrower than the word (46px at 390px
+ * wide); vertical text needs one line height. Plotly places the text before it rotates it, so the
+ * padding is what moves the rotated glyphs inside the block: 12px puts the baseline 12px in and
+ * the tallest ascender 4px in.
+ *
+ * List this shape BEFORE any `windowShape` it overlaps, so the window's dotted edge is drawn on top
+ * of the gray and keeps its contrast.
+ */
 export function unsampledShape(range: readonly [number, number], theme: ThemeName): PlotShape {
   const t = themes[theme];
   return {
@@ -264,15 +348,16 @@ export function unsampledShape(range: readonly [number, number], theme: ThemeNam
     x1: range[1],
     y0: 0,
     y1: 1,
-    fillcolor: withAlpha(t.plot.unsampled, 0.35),
+    fillcolor: withAlpha(t.plot.unsampled, t.plot.unsampledAlpha),
     line: { width: 0 },
     layer: 'below',
     name: 'unsampled',
     label: {
       text: 'unsampled',
-      textposition: 'bottom center',
-      padding: 4,
-      font: { family: font.sans, size: typeScale['2xs'][0], color: t.color.textSubtle },
+      textangle: -90,
+      textposition: 'bottom left',
+      padding: 12,
+      font: { family: font.sans, size: typeScale['2xs'][0], color: t.color.textMuted },
     },
   };
 }

@@ -1,5 +1,7 @@
 // Thin Three.js adapter: turns a SceneModel (model.ts, tested) into a WebGL scene. Three is loaded
-// lazily so it stays out of the initial bundle. jsdom has no WebGL; tests mock this module.
+// lazily so it stays out of the initial bundle (lazyLoad.test.ts guards the import site). jsdom has no
+// WebGL context, so FluxScene.test.tsx runs this file against real three with only WebGLRenderer
+// replaced; buildContent is exported for that test and takes the three module as an argument.
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Callout } from '../../design';
 import { DEFAULT_ORBIT, cameraPosition, clampOrbit, orbitForKey, type Orbit, type SceneModel } from './model';
@@ -25,7 +27,12 @@ export interface FluxSceneProps {
 
 const MARKER_SIZE = 0.16;
 
-function buildContent(THREE: Three, model: SceneModel): import('three').Group {
+/**
+ * The scene content for a model: gray surface (fill + wireframe, context only), the two field-line
+ * tubes (selected: per-vertex |B| colours; other: muted identity colour) and start/centre/end markers
+ * with outline halos. Pure with respect to WebGL: it only builds geometries and materials.
+ */
+export function buildContent(THREE: Three, model: SceneModel): import('three').Group {
   const group = new THREE.Group();
   const pos = new THREE.BufferAttribute(model.surface.positions, 3);
 

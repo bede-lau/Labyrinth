@@ -8,23 +8,29 @@ import {
   Panel,
   ProvenanceBadge,
   StatusPill,
+  provenanceStatus,
   type FixtureCheckData,
 } from '../../design';
 import { useArtifact } from '../../lib/artifacts';
 import { useLiveStatus } from '../../lib/liveStatus';
 import {
   GUARD_PLAN_D015,
+  claimedLabelFor,
+  fixtureBasis,
   fixtureUnit,
   fixturesFor,
+  guardPlanStale,
   guardView,
   isRangeFixture,
   ledgerSegments,
+  planChecks,
   rangeFixture,
   unassignedFixtures,
   usd,
   type BudgetArtifact,
   type BudgetScenario,
   type GuardView,
+  type PlanCheck,
 } from './model';
 import './budget.css';
 
@@ -65,7 +71,7 @@ export function BudgetView({ livePollMs = 5000 }: BudgetViewProps = {}) {
         <Panel eyebrow="Budget" title="Other fixtures" headingLevel={3}>
           <div className="bg-fixtures">
             {unassignedFixtures(state.data).map((f) => (
-              <FixtureRow key={f.id} f={f} />
+              <FixtureRow key={f.id} f={f} a={state.data} />
             ))}
           </div>
         </Panel>
@@ -84,7 +90,7 @@ function Ledger({ a }: { a: BudgetArtifact }) {
     <Panel
       eyebrow="Budget"
       title={`Modal spend against the ${usd(a.ceilingUsd)} ceiling`}
-      subtitle="PRD plan, recomputed: the earlier posted spend, two one-hour rehearsals and one 15-minute live slot. GPU time only."
+      subtitle="PRD plan, recomputed: the earlier posted spend, the rehearsals and one live slot. GPU time only."
       status={
         <div className="bg-badges">
           <StatusPill status="derived" />
@@ -126,8 +132,49 @@ function Ledger({ a }: { a: BudgetArtifact }) {
   );
 }
 
+/** Where a figure comes from, after the figure: " · decision.md · D-015". On a narrow row it drops to its own line. */
+function SourceTag({ children, stale = false }: { children: string; stale?: boolean }) {
+  return (
+    <span className={stale ? 'bg-src bg-src--stale' : 'bg-src'}>
+      <span className="bg-src__sep"> · </span>
+      {children}
+    </span>
+  );
+}
+
+/** Both plans against the ceiling, from the numbers: a plain line when they fit, a warning when one does not. */
+function PlansVsCeiling({ plans, ceilingUsd }: { plans: PlanCheck[]; ceilingUsd: number }) {
+  const over = plans.filter((p) => !p.inside);
+  const ceiling = usd(ceilingUsd);
+  if (over.length === 0) {
+    return (
+      <p className="bg-plans" data-testid="plan-vs-ceiling">
+        <Icon name="check" size={14} />
+        <span>
+          {plans.length === 2 ? 'Both plans stay' : 'Every plan stays'} inside the {ceiling} ceiling:{' '}
+          <span className="lab-num">{plans.map((p) => `${p.label} ${usd(p.usd)}`).join(', ')}</span>.
+        </span>
+      </p>
+    );
+  }
+  const title =
+    over.length === plans.length
+      ? `${plans.length === 2 ? 'Both plans exceed' : 'Every plan exceeds'} the ${ceiling} ceiling`
+      : `The ${over.map((p) => p.label).join(' and the ')} exceeds the ${ceiling} ceiling`;
+  return (
+    <Callout tone="warn" title={title}>
+      <span data-testid="plan-vs-ceiling" className="lab-num">
+        {over.map((p) => `${p.label} ${usd(p.usd)} is ${usd(p.overBy)} over the ${ceiling} ceiling`).join('; ')}.
+        {plans.filter((p) => p.inside).map((p) => ` ${p.label} ${usd(p.usd)} stays inside it.`)}
+      </span>
+    </Callout>
+  );
+}
+
 function GuardPanel({ a, guard, unreachable }: { a: BudgetArtifact; guard: GuardView | null; unreachable: string | null }) {
   const g = GUARD_PLAN_D015;
+  const stale = guardPlanStale(guard);
+  const staleNote = stale && <SourceTag stale>may be out of date</SourceTag>;
   return (
     <Panel
       eyebrow="Budget"
@@ -175,15 +222,16 @@ function GuardPanel({ a, guard, unreachable }: { a: BudgetArtifact; guard: Guard
             <span role="cell" className="lab-num">{fixtureValue(a, 'live-slot-usd')}</span>
             <span role="cell" className="lab-num" data-testid="guard-slot">
               {guard ? usd(guard.slotEstimateUsd) : usd(g.slotUsd)}
-              <span className="bg-src">{guard ? ' · from /api/live/status' : ` · ${g.source}`}</span>
+              <SourceTag>{guard ? 'from /api/live/status' : g.source}</SourceTag>
             </span>
           </div>
           <div role="row" className="bg-compare__row">
             <span role="rowheader">One-hour rehearsal</span>
             <span role="cell" className="lab-num">{rehearsalGpuOnly(a)}</span>
-            <span role="cell" className="lab-num">
+            <span role="cell" className="lab-num" data-testid="guard-rehearsal">
               {usd(g.rehearsalUsd)}
-              <span className="bg-src"> · {g.source}</span>
+              <SourceTag>{g.source}</SourceTag>
+              {staleNote}
             </span>
           </div>
           <div role="row" className="bg-compare__row bg-compare__row--total">
@@ -191,16 +239,24 @@ function GuardPanel({ a, guard, unreachable }: { a: BudgetArtifact; guard: Guard
             <span role="cell" className="lab-num">{usd(a.plannedUsd)}</span>
             <span role="cell" className="lab-num" data-testid="guard-planned">
               {usd(g.plannedUsd)}
-              <span className="bg-src"> · {g.source}</span>
+              <SourceTag>{g.source}</SourceTag>
+              {staleNote}
             </span>
           </div>
         </div>
       </div>
+      {stale && guard && (
+        <Callout tone="info" title="The live guard estimate differs from the D-015 planning figures">
+          The guard now estimates the next slot at <span className="lab-num">{usd(guard.slotEstimateUsd)}</span>; D-015
+          planned with <span className="lab-num">{usd(g.slotUsd)}</span>. The rehearsal price and the planned total
+          above are still the D-015 figures (no API field carries them), so they may be out of date.
+        </Callout>
+      )}
       <p className="bg-note">
         Setup (5 min per launch), idle margin and the storage/egress allowance are planning assumptions recorded in
-        D-015, not PRD numbers; they are replaced by measured values after the first rehearsal. Both plans stay inside the{' '}
-        {usd(a.ceilingUsd)} ceiling.
+        D-015, not PRD numbers; they are replaced by measured values after the first rehearsal.
       </p>
+      <PlansVsCeiling plans={planChecks(a, g.plannedUsd)} ceilingUsd={a.ceilingUsd} />
     </Panel>
   );
 }
@@ -220,10 +276,11 @@ function fixtureValue(a: BudgetArtifact, id: string): string {
 
 function ScenarioCard({ s, a }: { s: BudgetScenario; a: BudgetArtifact }) {
   const prd = s.provenance.kind === 'prd-reported';
+  const kind = provenanceStatus(s.provenance.kind);
   const fixtures = fixturesFor(a, s.id);
   return (
     <Panel
-      eyebrow={prd ? 'PRD-reported context' : 'Derived estimate'}
+      eyebrow={prd ? 'PRD-reported context' : s.provenance.kind === 'derived' ? 'Derived estimate' : `${kind.label} context`}
       title={s.title}
       headingLevel={3}
       className="bg-card"
@@ -231,7 +288,8 @@ function ScenarioCard({ s, a }: { s: BudgetScenario; a: BudgetArtifact }) {
     >
       <article className="bg-scenario" data-kind={s.provenance.kind} aria-label={`${s.title} scenario`}>
         <p className="bg-headline" data-kind={s.provenance.kind}>
-          <StatusPill status={s.provenance.kind} />
+          {/* No live flag: an artifact is replayed evidence, its provenance can never earn the LIVE pill. */}
+          <StatusPill status={kind.status}>{kind.label}</StatusPill>
           <span className="lab-num">{s.headline}</span>
         </p>
         <dl className="bg-def">
@@ -254,7 +312,7 @@ function ScenarioCard({ s, a }: { s: BudgetScenario; a: BudgetArtifact }) {
         {fixtures.length > 0 && (
           <div className="bg-fixtures">
             {fixtures.map((f) => (
-              <FixtureRow key={f.id} f={f} />
+              <FixtureRow key={f.id} f={f} a={a} />
             ))}
           </div>
         )}
@@ -263,31 +321,43 @@ function ScenarioCard({ s, a }: { s: BudgetScenario; a: BudgetArtifact }) {
   );
 }
 
-function FixtureRow({ f }: { f: FixtureCheckData }) {
-  if (!isRangeFixture(f)) return <FixtureCheck fixture={f} unit={fixtureUnit(f)} />;
+function FixtureRow({ f, a }: { f: FixtureCheckData; a: BudgetArtifact }) {
+  // The PRD prints only a range for these: `claimed` is a midpoint the PRD never stated, so the generic
+  // claimed-vs-computed row is never used for them, even when the range text itself is missing.
+  if (!isRangeFixture(f)) {
+    return <FixtureCheck fixture={f} unit={fixtureUnit(f)} claimedLabel={claimedLabelFor(f)} basis={fixtureBasis(a, f)} />;
+  }
   const r = rangeFixture(f);
-  if (!r) return <FixtureCheck fixture={f} unit={fixtureUnit(f)} />;
-  const outcome = r.inside === null ? 'unknown' : r.inside ? 'inside' : 'outside';
-  const text = outcome === 'inside' ? 'Inside PRD range' : outcome === 'outside' ? 'Outside PRD range' : 'Not recomputable';
-  const spoken = `${r.label}: ${text}. PRD range ${r.loText} to ${r.hiText} ${r.unit}, computed ${r.computedText} ${r.unit}${r.inconsistent ? '. The match flag disagrees with the range test.' : ''}`;
+  const outcome = !r.rangeAvailable || r.inside === null ? 'unknown' : r.inside ? 'inside' : 'outside';
+  const text = !r.rangeAvailable
+    ? 'PRD range unavailable'
+    : outcome === 'inside'
+      ? 'Inside PRD range'
+      : outcome === 'outside'
+        ? 'Outside PRD range'
+        : 'Not recomputable';
+  const computed = `${r.computedText} ${r.unit}`.trim();
+  const spoken = r.rangeAvailable
+    ? `${r.label}: ${text}. PRD range ${r.loText} to ${r.hiText} ${r.unit}, computed ${computed}${r.inconsistent ? '. The match flag disagrees with the range test.' : ''}`
+    : `${r.label}: ${text}. The artifact does not carry the PRD range, so no comparison is made. Computed ${computed}`;
   return (
     <div className="bg-range" role="group" aria-label={spoken} data-outcome={outcome} data-testid={`range-${r.id}`}>
       <div className="bg-range__label">
         <span className="bg-range__name">{r.label}</span>
-        <span className="bg-range__note">The PRD prints only a range; compared by range, not by rounding.</span>
+        <span className="bg-range__note">
+          {r.rangeAvailable
+            ? 'The PRD prints only a range; compared by range, not by rounding.'
+            : 'The PRD prints only a range, and it is unavailable in the artifact: no comparison is made.'}
+        </span>
         {r.inconsistent && <span className="bg-range__note bg-range__note--warn">Match flag disagrees with the range test — treated as outside.</span>}
       </div>
       <div className="bg-range__cell">
         <span className="bg-range__k">PRD range</span>
-        <span className="bg-range__v lab-num">
-          {r.loText}–{r.hiText} {r.unit}
-        </span>
+        <span className="bg-range__v lab-num">{r.rangeAvailable ? `${r.loText}–${r.hiText} ${r.unit}` : 'unavailable'}</span>
       </div>
       <div className="bg-range__cell">
         <span className="bg-range__k">Computed</span>
-        <span className="bg-range__v lab-num">
-          {r.computedText} {r.unit}
-        </span>
+        <span className="bg-range__v lab-num">{computed}</span>
       </div>
       <div className="bg-range__outcome">
         <Icon name={outcome === 'inside' ? 'check' : outcome === 'outside' ? 'cross' : 'dash'} size={12} />
@@ -296,4 +366,3 @@ function FixtureRow({ f }: { f: FixtureCheckData }) {
     </div>
   );
 }
-

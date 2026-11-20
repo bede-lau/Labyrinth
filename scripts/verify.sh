@@ -3,18 +3,28 @@
 #
 #   scripts/verify.sh [all|main|renderer|boundary|artifacts|docs]   (default: all)
 #
+# Stages per scope (scripts/tests/test_gates.py holds this table and runs every scope against it):
+#   boundary   boundary:self-test  boundary:scan  scripts:tests
+#   docs       docs:handoff
+#   artifacts  artifacts:schema  artifacts:fresh
+#   main       boundary:self-test  boundary:scan  scripts:tests  main:lint  main:tests  artifacts:schema  artifacts:fresh
+#   renderer   boundary:self-test  boundary:scan  [renderer:install]  renderer:typecheck  renderer:tests  renderer:build
+#   all        boundary:self-test  boundary:scan  docs:handoff  scripts:tests  main:lint  main:tests
+#              artifacts:schema  artifacts:fresh  [renderer:install]  renderer:typecheck  renderer:tests  renderer:build
+#   (renderer:install runs only when renderer/node_modules does not exist.)
+#
 # Exit codes:
 #   0  every requested stage passed
-#   2  any stage failed, or the script was invoked incorrectly.
+#   2  any stage failed, the script was invoked incorrectly, or $PYTHON is not a working Python.
 #      Exit 2 is deliberate: Claude Code hooks treat it as "blocking error" and
 #      feed stderr back to the agent, which must fix the problem and retry.
 #
 # Every stage prints its real command and real output. Nothing is summarised away.
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-unset LABYRINTH_ROOT  # gates always check this repo; the override is for gate tests only
-cd "$ROOT"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || { echo "verify.sh: cannot resolve the repository root" >&2; exit 2; }
+unset LABYRINTH_ROOT LABYRINTH_ARTIFACTS  # gates always check this repo; the overrides are for gate tests only
+cd "$ROOT" || { echo "verify.sh: cannot enter $ROOT" >&2; exit 2; }
 if [[ $# -gt 1 ]]; then echo "verify.sh: expected at most one scope argument, got $#" >&2; exit 2; fi
 if [[ $# -eq 1 && -z "$1" ]]; then echo "verify.sh: empty scope argument" >&2; exit 2; fi
 SCOPE="${1:-all}"
@@ -24,6 +34,14 @@ case "$SCOPE" in
   all|main|renderer|boundary|artifacts|docs) ;;
   *) echo "verify.sh: unknown scope '$SCOPE' (expected all|main|renderer|boundary|artifacts|docs)" >&2; exit 2 ;;
 esac
+
+# Every scope runs Python gates. The interpreter must really be one: with PYTHON=true (or any program
+# that exits 0 without doing the work) each Python stage would "pass" having checked nothing.
+PY_MARK="$("$PY" -c 'import sys; print("labyrinth-python-ok" if sys.version_info >= (3, 11) else "labyrinth-python-too-old")' 2>/dev/null)"
+if [[ "$PY_MARK" != "labyrinth-python-ok" ]]; then
+  echo "verify.sh: '$PY' is not a working Python >= 3.11 (got '${PY_MARK:-no answer}'). Run through scripts/dev.sh or set PYTHON. Exiting 2." >&2
+  exit 2
+fi
 
 declare -a RESULTS=()
 FAILED=0
@@ -82,7 +100,7 @@ fi
 echo
 echo "━━━ verify.sh summary (scope: $SCOPE)"
 for r in "${RESULTS[@]}"; do echo "  $r"; done
-if [[ $FAILED -ne 0 ]]; then
+if [[ $FAILED -ne 0 || ${#RESULTS[@]} -eq 0 ]]; then
   echo "verify.sh: FAILED — fix the stages above and re-run. Exiting 2." >&2
   exit 2
 fi

@@ -74,6 +74,14 @@ export function runningMae(steps: readonly ForecastStep[], scored: number): { pe
   return { persistence: mean(done.map((s) => s.absErrPersistence)), frozen: mean(done.map((s) => s.absErrFrozen)) };
 }
 
+/**
+ * The PRD scores the artifact itself reports as not reproduced (`matches: false`). The mismatch
+ * narrative in the view exists only while this list is non-empty.
+ */
+export function mismatchedScores(a: ForecastArtifact): FixtureCheckData[] {
+  return a.fixtures.filter((f) => f.matches === false);
+}
+
 export interface SampleAndHold {
   persistence: [string, string];
   frozen: [string, string];

@@ -268,11 +268,44 @@ def test_artifact_tubes_129_samples_centered():
 
 
 # ---- G5 --------------------------------------------------------------------
+def _surface_rz(s: float, theta: np.ndarray, zeta: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """R, Z of the flux surface `s` at (theta, zeta) pairs, summed directly from the raw wout Fourier arrays
+    (np.interp in s): independent of vmec.Surface, tubes.surface_mesh and tubes.cross_section."""
+    ind = _Independent(s)
+    angle = np.multiply.outer(theta, ind.g["xm"]) - np.multiply.outer(zeta, ind.g["xn"])
+    return np.cos(angle) @ ind.rmnc, np.sin(angle) @ ind.zmns
+
+
 def test_surface_and_bean_outboard_midplane():
     a = built()
     srf = a["surface"]
-    assert (srf["nTheta"], srf["nPhi"]) == (tubes.SURFACE_N_THETA, tubes.SURFACE_N_PHI)
-    pos = np.array(srf["positions"]).reshape(srf["nPhi"], srf["nTheta"], 3)
+    n_theta, n_phi = srf["nTheta"], srf["nPhi"]
+    assert (n_theta, n_phi) == (tubes.SURFACE_N_THETA, tubes.SURFACE_N_PHI) == (48, 150)
+    assert len(srf["positions"]) == 3 * n_phi * n_theta
+    pos = np.array(srf["positions"]).reshape(n_phi, n_theta, 3)
+    tol = 2e-6  # the artifact carries 7 significant figures: <= 5e-7 m on |x| < 10 m
+
+    # EVERY vertex against an independent evaluation at the right surface (rho 0.8 = s 0.64) on the periodic,
+    # phi-major grid phi_i = 2 pi i / nPhi, theta_j = 2 pi j / nTheta — both end points excluded
+    phi = 2 * math.pi * np.arange(n_phi) / n_phi
+    theta = 2 * math.pi * np.arange(n_theta) / n_theta
+    P, T = (g.ravel() for g in np.meshgrid(phi, theta, indexing="ij"))
+    R, Z = _surface_rz(0.64, T, P)
+    expected = np.stack([R * np.cos(P), R * np.sin(P), Z], axis=-1).reshape(n_phi, n_theta, 3)
+    np.testing.assert_allclose(pos, expected, atol=tol, rtol=0)
+    # ... and it is nowhere near the neighbouring surfaces a wrong radius would give (s 0.5 is centimetres away)
+    R_wrong, Z_wrong = _surface_rz(0.5, T, P)
+    assert np.abs(np.hypot(pos[..., 0], pos[..., 1]).ravel() - R_wrong).max() > 1e-2 or np.abs(pos[..., 2].ravel() - Z_wrong).max() > 1e-2
+
+    # no duplicated seam in either index: the step from the last row / column back to the first is a full grid
+    # step like every other one (a repeated seam would make it 0), and no vertex occurs twice
+    for axis, name in ((0, "phi"), (1, "theta")):
+        step = np.linalg.norm(np.roll(pos, -1, axis=axis) - pos, axis=-1)  # index -1 along `axis` is the wrap-around
+        wrap, interior = np.take(step, -1, axis=axis), np.delete(step, -1, axis=axis)
+        assert wrap.min() > 0.9 * interior.min() > 1e-2, (name, wrap.min(), interior.min())
+        assert wrap.max() < 1.1 * interior.max(), (name, wrap.max(), interior.max())
+    assert len(np.unique(pos.reshape(-1, 3), axis=0)) == n_phi * n_theta
+
     # row-major over (phi, theta): first row is the zeta 0 cross-section (y = 0, snapped exactly)
     assert np.all(pos[0, :, 1] == 0.0)
     R0 = np.hypot(pos[0, :, 0], pos[0, :, 1])
@@ -280,17 +313,33 @@ def test_surface_and_bean_outboard_midplane():
     # no float noise near zero anywhere in the emitted geometry
     flat = np.concatenate([pos.ravel()] + [np.ravel(b[k]) for b in srf["boundary"].values() for k in ("R", "Z")])
     assert not np.any((flat != 0.0) & (np.abs(flat) < 1e-12))
+
+    # EVERY cross-section and boundary point: closed polylines of 129 points in VMEC theta at each tube's centre,
+    # the cross-section on the rho 0.8 surface (s 0.64) and the plasma boundary on the last surface (s 1)
+    theta_x = np.linspace(0.0, 2 * math.pi, tubes.CROSS_SECTION_POINTS)
+    assert tubes.CROSS_SECTION_POINTS == 129 and set(srf["boundary"]) == {"bean", "triangular"}
+    for t in a["tubes"]:
+        zeta_c = np.full_like(theta_x, math.radians(t["zetaCenterDeg"]))
+        for what, s, curve in (("crossSection", 0.64, t["crossSection"]), ("boundary", 1.0, srf["boundary"][t["id"]])):
+            R, Z = _surface_rz(s, theta_x, zeta_c)
+            assert len(curve["R"]) == len(curve["Z"]) == 129, (t["id"], what)
+            np.testing.assert_allclose(curve["R"], R, atol=tol, rtol=0, err_msg=f"{t['id']} {what} R")
+            np.testing.assert_allclose(curve["Z"], Z, atol=tol, rtol=0, err_msg=f"{t['id']} {what} Z")
+            assert (curve["R"][0], curve["Z"][0]) == (pytest.approx(curve["R"][-1], abs=tol), pytest.approx(curve["Z"][-1], abs=tol))
+        # ... a boundary taken at s 0.9 instead would sit centimetres inside the real one
+        R_inner, _ = _surface_rz(0.9, theta_x, zeta_c)
+        assert np.abs(np.array(srf["boundary"][t["id"]]["R"]) - R_inner).max() > 1e-2
+
     bean = next(t for t in a["tubes"] if t["id"] == "bean")
     xs = bean["crossSection"]
     assert xs["zetaDeg"] == 0.0
     i = int(np.argmax(xs["R"]))
     assert 6.05 <= xs["R"][i] <= 6.25 and abs(xs["Z"][i]) < 1e-3
     assert 6.05 <= bean["samples"][64]["R"] <= 6.25
-    # plasma boundary at each tube centre; bean boundary spans the design image (R 5.55-6.17, Z +-0.83)
-    assert set(srf["boundary"]) == {"bean", "triangular"}
+    # bean boundary spans the design image (R 5.55-6.17, Z +-0.83) and encloses the rho 0.8 surface
     bR, bZ = np.array(srf["boundary"]["bean"]["R"]), np.array(srf["boundary"]["bean"]["Z"])
     assert 5.45 < bR.min() < 5.65 and 6.1 < bR.max() < 6.3 and 0.75 < bZ.max() < 0.95
-    assert bR.max() > max(xs["R"]) and bR.min() < min(xs["R"])  # boundary encloses the rho 0.8 surface
+    assert bR.max() > max(xs["R"]) and bR.min() < min(xs["R"])
     assert len(io.dumps(a)) < 600_000
 
 

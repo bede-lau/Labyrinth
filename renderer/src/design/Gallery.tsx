@@ -1,7 +1,7 @@
 // Design-system gallery (open /#gallery). A review surface for the tokens and primitives in both
 // themes. All chart and scene data here is SYNTHETIC SPECIMEN data, labelled as such on the page.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { deltaE2000, hexToLab, simulateHex, simulateLab, type Deficiency } from './color';
+import { simulateHex } from './color';
 import { Callout } from './components/Callout';
 import { FixtureCheck } from './components/FixtureCheck';
 import { Panel } from './components/Panel';
@@ -20,6 +20,7 @@ import {
   windowShape,
   SERIES_LABEL,
 } from './plotTheme';
+import { PALETTE_GATES, seriesMinDeltaE, type Vision } from './palette';
 import { bmagColor, bmagGradientCss, sceneTheme } from './sceneTheme';
 import { STATUS_META } from './status';
 import { setThemePreference, useResolvedTheme, type ThemePreference } from './theme';
@@ -52,12 +53,29 @@ function rng(seed: number) {
   };
 }
 
-function specimenTrace(seed: number, level: number, tMax: number) {
+/** A saved GX run: its provenance kind is "live", but nothing is running, so the badge must not say so. */
+const recordedRunProvenance: Provenance = {
+  kind: 'live',
+  solverRevision: 'GX (specimen)',
+  units: 'Q in ion gyro-Bohm units (Q_gB); t in a/v_th,i',
+  coverage: { description: 'Bean tube, one saved run', tStart: 0, tEnd: 340 },
+  runtime: 'unknown',
+  verification: { outcome: 'not-applicable', details: 'Specimen record for the gallery.' },
+  sources: [],
+};
+
+const LONG_NOTE =
+  'Computed with the stated method and the time-weighted, edge-interpolated window mean (D-013), forecasts held at the ' +
+  'right edge with no look-ahead; not tuned to the PRD value. A sample-and-hold window mean reproduces the PRD score ' +
+  'but breaks the 2.55 archive fixture, so it is not used here (D-016). This specimen note is long on purpose: it shows ' +
+  'the two-line clamp and the "Show full note" control.';
+
+function specimenTrace(seed: number, level: number, tMax: number, step = 2) {
   const r = rng(seed);
   const t: number[] = [];
   const q: number[] = [];
   let ar = 0;
-  for (let x = 0; x <= tMax; x += 2) {
+  for (let x = 0; x <= tMax; x += step) {
     ar = 0.92 * ar + 0.35 * r();
     const growth = 1 - Math.exp(-x / 60);
     t.push(x);
@@ -80,10 +98,21 @@ function SpecimenChart({ theme }: { theme: ThemeName }) {
         };
         const stella = specimenTrace(7, 2.55, 400);
         const gene = specimenTrace(19, 2.67, 400);
-        const gx = specimenTrace(31, 2.6, 340);
+        // GX is the new run: sparser samples, drawn with its markers, as the transport view does.
+        const gx = specimenTrace(31, 2.6, 340, 10);
         const line = (id: 'stella' | 'GENE' | 'GX', d: { t: number[]; q: number[] }) => {
           const s = seriesStyle(id, theme);
-          return { type: 'scatter', mode: 'lines', x: d.t, y: d.q, name: s.name, line: s.line, hovertemplate: '%{y:.2f}' };
+          const withMarkers = id === 'GX';
+          return {
+            type: 'scatter',
+            mode: withMarkers ? 'lines+markers' : 'lines',
+            x: d.t,
+            y: d.q,
+            name: s.name,
+            line: s.line,
+            ...(withMarkers ? { marker: { ...s.marker, size: 5 } } : {}),
+            hovertemplate: '%{y:.2f}',
+          };
         };
         const data = [
           uncertaintyBand([300, 400], [2.55, 2.55], 0.06, 'stella', theme),
@@ -96,9 +125,10 @@ function SpecimenChart({ theme }: { theme: ThemeName }) {
           xaxis: { title: { text: axisTitle('Time t', 'a/v_{th,i}') }, range: [0, 420] },
           yaxis: { title: { text: axisTitle('Ion heat flux Q_i', 'Q_gB') }, range: [0, 3.6] },
           shapes: [
+            // Unsampled first: the window edges that cross it are then drawn on top of the gray.
+            unsampledShape([340, 420], theme),
             windowShape([200, 300], theme, '200–300'),
             windowShape([300, 400], theme, '300–400'),
-            unsampledShape([340, 420], theme),
             meanSegment([300, 400], 2.55, 'stella', theme),
           ],
         });
@@ -117,6 +147,21 @@ function SpecimenChart({ theme }: { theme: ThemeName }) {
   );
 }
 
+/** The specimen surface and the camera that frames it on a 2:1 canvas. */
+export const SPECIMEN = { majorRadius: 5.4, minorRadius: 0.75, fovDeg: 32, camera: [0, -13.5, 15.5] } as const;
+
+/**
+ * Canvas height and camera pull-back for the specimen scene at a given width.
+ * Half as tall as wide, between 180 and 300px, so a narrow panel is not mostly empty canvas. The
+ * framing is tuned for 2:1; on a narrower canvas the camera backs away in proportion, so the whole
+ * surface stays inside the horizontal field of view (at 390px it used to be cropped on both sides).
+ */
+export function specimenFrame(width: number): { height: number; aspect: number; fit: number } {
+  const height = Math.round(Math.min(300, Math.max(180, width * 0.5)));
+  const aspect = width / height;
+  return { height, aspect, fit: Math.max(1, 2 / aspect) };
+}
+
 function SpecimenScene({ theme }: { theme: ThemeName }) {
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -129,19 +174,19 @@ function SpecimenScene({ theme }: { theme: ThemeName }) {
         if (disposed || !el) return;
         const st = sceneTheme(theme);
         const w = el.clientWidth || 600;
-        const h = 300;
+        const { height: h, aspect, fit } = specimenFrame(w);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setPixelRatio(1);
         renderer.setSize(w, h);
         renderer.setClearColor(new THREE.Color(st.background));
         el.replaceChildren(renderer.domElement);
         const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(32, w / h, 0.1, 100);
-        camera.position.set(0, -13.5, 15.5);
+        const camera = new THREE.PerspectiveCamera(SPECIMEN.fovDeg, aspect, 0.1, 100);
+        camera.position.set(SPECIMEN.camera[0] * fit, SPECIMEN.camera[1] * fit, SPECIMEN.camera[2] * fit);
         camera.lookAt(0, 0, 0);
         // Gray wireframe torus = context surface (synthetic stand-in for the flux surface).
-        const R = 5.4;
-        const torus = new THREE.TorusGeometry(R, 0.75, 14, 96);
+        const R = SPECIMEN.majorRadius;
+        const torus = new THREE.TorusGeometry(R, SPECIMEN.minorRadius, 14, 96);
         const wire = new THREE.LineSegments(
           new THREE.WireframeGeometry(torus),
           new THREE.LineBasicMaterial({ color: new THREE.Color(st.surface.line), transparent: true, opacity: 0.8 }),
@@ -203,16 +248,12 @@ function Swatch({ name, value, onBg }: { name: string; value: string; onBg?: str
   );
 }
 
-const CVD: (Deficiency | 'normal')[] = ['normal', 'deuteranopia', 'protanopia'];
-
-function minDeltaE(theme: ThemeName, d: Deficiency | 'normal') {
-  const s = themes[theme].series;
-  const labs = SERIES_IDS.map((id) => (d === 'normal' ? hexToLab(s[id]) : simulateLab(s[id], d)));
-  let min = Infinity;
-  for (let i = 0; i < labs.length; i++)
-    for (let j = i + 1; j < labs.length; j++) min = Math.min(min, deltaE2000(labs[i]!, labs[j]!));
-  return min;
-}
+/** Columns of the palette table. Soft hyphens let the long names break in a 390px panel instead of being cut. */
+const CVD: { vision: Exclude<Vision, 'tritanopia'>; label: string; gate: number }[] = [
+  { vision: 'normal', label: 'Normal', gate: PALETTE_GATES.normal },
+  { vision: 'deuteranopia', label: 'Deuter­anopia', gate: PALETTE_GATES.cvd },
+  { vision: 'protanopia', label: 'Protan­opia', gate: PALETTE_GATES.cvd },
+];
 
 export default function Gallery() {
   const theme = useResolvedTheme();
@@ -223,7 +264,7 @@ export default function Gallery() {
   const [tube, setTube] = useState<'bean' | 'triangular'>('bean');
   const [win, setWin] = useState<'200-300' | '300-400'>('300-400');
   const t = themes[theme];
-  const cvdRows = useMemo(() => CVD.map((d) => ({ d, min: minDeltaE(theme, d) })), [theme]);
+  const cvdMin = useMemo(() => CVD.map((c) => seriesMinDeltaE(theme, c.vision)), [theme]);
 
   return (
     <div className="gal">
@@ -249,7 +290,8 @@ export default function Gallery() {
               setThemePreference(v);
             }}
             options={[
-              { value: 'system', label: 'System' },
+              // Same words as the app's theme switch (shell/ThemeSwitch.tsx).
+              { value: 'system', label: 'Auto', ariaLabel: 'Follow system theme' },
               { value: 'light', label: 'Light' },
               { value: 'dark', label: 'Dark' },
             ]}
@@ -259,7 +301,7 @@ export default function Gallery() {
 
       <main className="gal-grid">
         <Panel
-                    eyebrow="Check transport"
+          eyebrow="Check transport"
           title="Bean ion heat flux"
           subtitle="stella and GENE archives with the GX run overlaid; time-weighted means on closed windows"
           status={<ProvenanceBadge provenance={specimenProvenance} subject="specimen trace" />}
@@ -305,6 +347,15 @@ export default function Gallery() {
           <FixtureCheck
             fixture={{ id: 'b', label: 'Bean |B| vs 129 stella samples', claimed: 129, computed: null, printedDecimals: 0, matches: null, note: 'Samples not in repo (D-007)' }}
           />
+          <FixtureCheck
+            unit="CPU-h"
+            basis="arithmetic"
+            fixture={{ id: 'a', label: 'Published stella bean: 161 h × 288 processors', claimed: 46368, computed: 46368, printedDecimals: 0, matches: true, note: 'Arithmetic recomputed; inputs are PRD-reported.' }}
+          />
+          <FixtureCheck
+            unit="Q_gB"
+            fixture={{ id: 'm', label: 'stella MAE, persistence forecast', claimed: 0.0444, computed: 0.04396792, printedDecimals: 4, matches: false, note: LONG_NOTE }}
+          />
           <div className="gal-stack">
             <Callout tone="blocked" title="129 saved stella samples are not in the repository" action={<a href="#d-007">What would unblock this</a>}>
               Validated against the saved ρ = 0.7 geometry instead (25 samples).
@@ -341,7 +392,12 @@ export default function Gallery() {
           </div>
         </Panel>
 
-        <Panel eyebrow="Status semantics" title="Colour + icon + text" subtitle="Never colour alone. LIVE is the only solid pill.">
+        <Panel
+          eyebrow="Status semantics"
+          title="Colour + icon + text"
+          subtitle="Never colour alone. LIVE is the only solid pill. This panel's badge has provenance of kind “live” from a saved run: without the live flag it reads “Recorded run”."
+          status={<ProvenanceBadge provenance={recordedRunProvenance} subject="saved GX specimen run" />}
+        >
           <ul className="gal-status">
             {STATUS_KINDS.map((k) => (
               <li key={k}>
@@ -352,35 +408,55 @@ export default function Gallery() {
           </ul>
         </Panel>
 
-        <Panel eyebrow="Series palette" title="stella · GENE · GX · bean · triangular" subtitle="Min pairwise ΔE00 under simulation (gate: ≥ 12 CVD, ≥ 20 normal)">
+        <Panel
+          eyebrow="Series palette"
+          title="stella · GENE · GX · bean · triangular"
+          subtitle="Each series as seen with normal vision and under simulated deuteranopia and protanopia; smallest pairwise ΔE00 against its gate"
+        >
           <table className="gal-cvd">
             <thead>
               <tr>
-                <th scope="col">Vision</th>
-                {SERIES_IDS.map((id) => (
-                  <th key={id} scope="col">
-                    {SERIES_LABEL[id].replace(' tube', '')}
+                <th scope="col">Series</th>
+                {CVD.map((c) => (
+                  <th key={c.vision} scope="col">
+                    {c.label}
                   </th>
                 ))}
-                <th scope="col">min ΔE00</th>
               </tr>
             </thead>
             <tbody>
-              {cvdRows.map(({ d, min }) => (
-                <tr key={d}>
-                  <th scope="row">{d}</th>
-                  {SERIES_IDS.map((id) => (
-                    <td key={id}>
+              {SERIES_IDS.map((id) => (
+                <tr key={id}>
+                  <th scope="row">{SERIES_LABEL[id]}</th>
+                  {CVD.map((c) => (
+                    <td key={c.vision}>
                       <span
                         className="gal-cvd__chip"
-                        style={{ background: d === 'normal' ? t.series[id] : simulateHex(t.series[id], d) }}
+                        style={{ background: c.vision === 'normal' ? t.series[id] : simulateHex(t.series[id], c.vision) }}
                       />
                     </td>
                   ))}
-                  <td className="lab-num">{min.toFixed(1)}</td>
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr>
+                <th scope="row">Min ΔE00</th>
+                {CVD.map((c, i) => (
+                  <td key={c.vision} className="lab-num">
+                    {(cvdMin[i] ?? 0).toFixed(1)}
+                  </td>
+                ))}
+              </tr>
+              <tr>
+                <th scope="row">Gate</th>
+                {CVD.map((c) => (
+                  <td key={c.vision} className="lab-num">
+                    ≥ {c.gate}
+                  </td>
+                ))}
+              </tr>
+            </tfoot>
           </table>
         </Panel>
 

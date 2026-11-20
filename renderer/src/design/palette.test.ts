@@ -1,3 +1,4 @@
+// @vitest-environment node
 // D3: the series palette (stella / GENE / GX / bean / triangular) stays distinguishable under
 // simulated protanopia and deuteranopia, and the |B| colormap stays ordered for every viewer.
 //
@@ -11,43 +12,31 @@
 //   - ≥ 20 in normal vision (the palette must not look like near-duplicates to anyone).
 //   - Tritanopia (~0.01 % of people) is reported and held to a softer ≥ 8.
 //   Colour is also never the only channel: every series has its own dash and marker (plotTheme).
-import { deltaE2000, hexToLab, simulateLab, type CvdModel, type Deficiency, type Lab } from './color';
+// The gates and the measurement live in palette.ts so the gallery and DESIGN.md quote the same numbers.
+import { deltaE2000, hexToLab, simulateLab, type Lab } from './color';
+import { PALETTE_CONDITIONS, PALETTE_GATES, minPairwiseDeltaE, seriesMinDeltaE } from './palette';
 import { SERIES_IDS, THEMES, themes } from './tokens';
 
-const CVD_MIN = 12;
-const NORMAL_MIN = 20;
-const TRITAN_MIN = 8;
+const CVD_MIN = PALETTE_GATES.cvd;
+const NORMAL_MIN = PALETTE_GATES.normal;
+const conditions = PALETTE_CONDITIONS;
+const minPairwise = minPairwiseDeltaE;
 
-type Condition = { name: string; lab: (hex: string) => Lab; min: number };
-
-const conditions: Condition[] = [
-  { name: 'normal vision', lab: hexToLab, min: NORMAL_MIN },
-  ...(['protanopia', 'deuteranopia'] as Deficiency[]).flatMap((d) =>
-    (['machado2009', 'vienot1999'] as CvdModel[]).map((m) => ({
-      name: `${d} (${m})`,
-      lab: (h: string) => simulateLab(h, d, m),
-      min: CVD_MIN,
-    })),
-  ),
-  { name: 'tritanopia (machado2009)', lab: (h: string) => simulateLab(h, 'tritanopia'), min: TRITAN_MIN },
-];
-
-function minPairwise(colors: Record<string, string>, lab: (h: string) => Lab) {
-  const names = Object.keys(colors);
-  let min = Infinity;
-  let pair = '';
-  for (let i = 0; i < names.length; i++)
-    for (let j = i + 1; j < names.length; j++) {
-      const a = names[i] as string;
-      const b = names[j] as string;
-      const d = deltaE2000(lab(colors[a] as string), lab(colors[b] as string));
-      if (d < min) {
-        min = d;
-        pair = `${a}/${b}`;
-      }
-    }
-  return { min, pair };
-}
+describe('the gates are the documented ones', () => {
+  test('12 for protanopia/deuteranopia, 20 for normal vision, 8 for tritanopia', () => {
+    expect(PALETTE_GATES).toEqual({ cvd: 12, normal: 20, tritan: 8 });
+  });
+  test('six conditions: normal, protan and deutan under both models, tritan', () => {
+    expect(conditions.map((c) => [c.name, c.min])).toEqual([
+      ['normal vision', 20],
+      ['protanopia (machado2009)', 12],
+      ['protanopia (vienot1999)', 12],
+      ['deuteranopia (machado2009)', 12],
+      ['deuteranopia (vienot1999)', 12],
+      ['tritanopia (machado2009)', 8],
+    ]);
+  });
+});
 
 describe('the distinguishability check can fail (negative control)', () => {
   test('a red/green/orange palette passes normal vision but fails deuteranopia', () => {
@@ -63,8 +52,14 @@ describe.each(THEMES)('series palette — %s theme', (theme) => {
     expect(Object.keys(series).sort()).toEqual([...SERIES_IDS].sort());
   });
   test.each(conditions.map((c) => [c.name, c] as const))('pairwise ΔE00 under %s', (_n, c) => {
-    const { min, pair } = minPairwise(series, c.lab);
+    const { min, pair } = minPairwise(series, c.toLab);
     expect(min, `closest pair ${pair}: ΔE00 ${min.toFixed(1)} < ${c.min}`).toBeGreaterThanOrEqual(c.min);
+  });
+  test('seriesMinDeltaE reports the worst model for each kind of vision', () => {
+    for (const vision of ['normal', 'protanopia', 'deuteranopia', 'tritanopia'] as const) {
+      const worst = Math.min(...conditions.filter((c) => c.vision === vision).map((c) => minPairwise(series, c.toLab).min));
+      expect(seriesMinDeltaE(theme, vision)).toBe(worst);
+    }
   });
 });
 

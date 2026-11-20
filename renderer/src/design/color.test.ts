@@ -1,3 +1,4 @@
+// @vitest-environment node
 // The colour science behind D2/D3 is itself tested, so a pass means something.
 import {
   deltaE2000,

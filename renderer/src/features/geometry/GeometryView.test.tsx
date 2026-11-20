@@ -42,6 +42,10 @@ function serve(body: unknown, status = 200) {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status })));
 }
 const last = <T,>(a: unknown[]) => a[a.length - 1] as T;
+const colorBarTicks = () => [...document.querySelectorAll('.geo-colorbar__ticks > span')].map((s) => s.textContent);
+/** Same box as CrossSectionInset.tsx draws into. */
+const INSET = { width: 320, height: 260, padLeft: 48, padBottom: 40, pad: 10 };
+const pathPoints = (d: string) => [...d.matchAll(/(-?[0-9.]+),(-?[0-9.]+)/g)].map((m) => [Number(m[1]), Number(m[2])] as const);
 
 beforeEach(() => {
   rec.scene.length = 0;
@@ -82,6 +86,11 @@ test('G7 scene: gray closed surface (seam wrapped), selected tube coloured by |B
     const st = sceneTheme(theme);
     const m = buildSceneModel(g, 'bean', theme);
     expect(m.surface.line).toBe(themes[theme].scene.surfaceLine); // gray context
+    // The fill is the gray surface token too — never a tube or series colour (unsampled stays gray).
+    expect(m.surface.fill).toBe(themes[theme].scene.surfaceFill);
+    expect(m.surface.opacity).toBe(themes[theme].scene.surfaceOpacity);
+    expect(Object.values(themes[theme].series)).not.toContain(m.surface.fill);
+    expect(Object.values(themes[theme].series)).not.toContain(m.surface.line);
     expect(m.surface.positions.length).toBe(3 * V);
     const bean = m.tubes.find((t) => t.id === 'bean')!;
     const tri2 = m.tubes.find((t) => t.id === 'triangular')!;
@@ -115,6 +124,9 @@ test('G7 scene: gray closed surface (seam wrapped), selected tube coloured by |B
   expect(tubeMarkers(realBean).map((k) => k.index)).toEqual([0, 64, 128]);
   expect(realBean.samples[64]!.thetaStar).toBe(0);
   expect(checkGeometry({ ...real, surface: { ...real.surface, positions: real.surface.positions.slice(3) } })).toMatch(/surface\.positions has/);
+  // The float64 comparison is only recorded in the provenance sentence (no contract field carries it):
+  // it must still parse from the committed artifact, so a reworded backend sentence fails here.
+  expect(float64Match(real.provenance.verification.details)).toEqual({ maxAbsError: 2.9e-13, samples: 25 });
 
   // Camera keyboard control.
   expect(orbitForKey(DEFAULT_ORBIT, 'ArrowRight')!.azimuth).toBeGreaterThan(DEFAULT_ORBIT.azimuth);
@@ -130,6 +142,11 @@ test('G7 scene: gray closed surface (seam wrapped), selected tube coloured by |B
   const bar = screen.getByRole('img', { name: /Colour bar: .*\|B\| \/ B_ref/ });
   expect(bar).toHaveTextContent('|B| / Bref');
   expect(within(bar).getByTestId('colorbar').getAttribute('style')).toMatch(/linear-gradient/);
+  // The scale is labelled with numbers: low, middle, high of the selected tube's |B| range, in that order.
+  const [lo, hi] = tubeById(g, 'bean').bmagRange;
+  expect(lo).toBeLessThan(hi);
+  expect(colorBarTicks()).toEqual([lo.toFixed(3), ((lo + hi) / 2).toFixed(3), hi.toFixed(3)]);
+  expect(bar).toHaveAccessibleName(`Colour bar: Bean (ζ = 0°) coloured by |B| / B_ref from ${lo.toFixed(3)} (dark) to ${hi.toFixed(3)} (light)`);
   expect(screen.getByRole('list', { name: 'Scene key' })).toHaveTextContent(/start θ\* = −π.*centre θ\* = 0.*end θ\* = π/);
 });
 
@@ -156,8 +173,34 @@ test('G8 bean/triangular selector is keyboard accessible and switches the scene,
   expect(screen.getByRole('heading', { name: 'Cross-section at ζ = 36°' })).toBeInTheDocument();
   expect(screen.getByRole('img', { name: /Cross-section at ζ = 36°/ })).toBeInTheDocument();
 
+  // Everything that depends on the tube follows the switch, not just the headings: the colour-bar range,
+  // both inset curves and the centre marker are the triangular tube's (the fixture tubes differ in all of them).
+  const beanTube = tubeById(g, 'bean');
+  const triTube = tubeById(g, 'triangular');
+  expect(triTube.bmagRange).not.toEqual(beanTube.bmagRange);
+  const [lo, hi] = triTube.bmagRange;
+  expect(colorBarTicks()).toEqual([lo.toFixed(3), ((lo + hi) / 2).toFixed(3), hi.toFixed(3)]);
+  expect(screen.getByRole('img', { name: /^Colour bar:/ })).toHaveAccessibleName(
+    `Colour bar: Triangular (ζ = 36°) coloured by |B| / B_ref from ${lo.toFixed(3)} (dark) to ${hi.toFixed(3)} (light)`,
+  );
+  const triCentre = tubeMarkers(triTube)[1]!.sample;
+  const wantTri = insetLayout(triTube.crossSection, g.surface.boundary!.triangular, { R: triCentre.R, Z: triCentre.Z }, INSET);
+  const wantBean = insetLayout(beanTube.crossSection, g.surface.boundary!.bean, { R: 6, Z: 0 }, INSET);
+  expect(wantTri.boundaryPath).not.toBe(wantBean.boundaryPath);
+  expect(wantTri.sampledPath).not.toBe(wantBean.sampledPath);
+  const inset = screen.getByRole('img', { name: /Cross-section at ζ = 36°/ });
+  expect(within(inset).getByTestId('inset-boundary')).toHaveAttribute('d', wantTri.boundaryPath!);
+  expect(within(inset).getByTestId('inset-sampled')).toHaveAttribute('d', wantTri.sampledPath);
+  const dot = inset.querySelector('circle.geo-inset__centre--triangular')!;
+  expect(Number(dot.getAttribute('cx'))).toBeCloseTo(wantTri.centre.x, 6);
+  expect(Number(dot.getAttribute('cy'))).toBeCloseTo(wantTri.centre.y, 6);
+  expect(screen.getByRole('list', { name: 'Scene key' })).toHaveTextContent('Bean (ζ = 0°), muted');
+
   await user.keyboard('{ArrowLeft}');
   expect(screen.getByTestId('scene')).toHaveAttribute('data-selected', 'bean');
+  const [blo, bhi] = beanTube.bmagRange;
+  expect(colorBarTicks()).toEqual([blo.toFixed(3), ((blo + bhi) / 2).toFixed(3), bhi.toFixed(3)]);
+  expect(within(screen.getByRole('img', { name: /Cross-section at ζ = 0°/ })).getByTestId('inset-boundary')).toHaveAttribute('d', wantBean.boundaryPath!);
 });
 
 test('G9 cross-section inset (solid sampled surface, dashed boundary) and |B|(θ*) chart with units', async () => {
@@ -178,6 +221,23 @@ test('G9 cross-section inset (solid sampled surface, dashed boundary) and |B|(θ
   expect(q0![0] - p0![0]).toBeCloseTo(0.12 * L.scale, 1);
   expect(L.centre.y).toBeCloseTo(p0![1], 1); // Z = 0 on the midplane
   expect(L.sampledPath.endsWith('Z')).toBe(true);
+  // Equal R and Z scale (the panel says so): a metre is the same number of pixels on both axes, for a
+  // cross-section that is not a circle as well. The triangular fixture section is 0.84 m wide, 1.16 m tall.
+  const tri = tubeById(g, 'triangular');
+  const T = insetLayout(tri.crossSection, g.surface.boundary!.triangular, { R: 5.4, Z: 0 }, INSET);
+  const pts = pathPoints(T.sampledPath);
+  const { R, Z } = tri.crossSection;
+  expect(pts).toHaveLength(R.length);
+  for (let i = 1; i < pts.length; i++) {
+    expect(pts[i]![0] - pts[0]![0]).toBeCloseTo((R[i]! - R[0]!) * T.scale, 1);
+    expect(pts[0]![1] - pts[i]![1]).toBeCloseTo((Z[i]! - Z[0]!) * T.scale, 1); // screen y runs downward
+  }
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  const spanR = Math.max(...R) - Math.min(...R);
+  const spanZ = Math.max(...Z) - Math.min(...Z);
+  expect(spanZ).toBeGreaterThan(spanR * 1.2);
+  expect((Math.max(...ys) - Math.min(...ys)) / (Math.max(...xs) - Math.min(...xs))).toBeCloseTo(spanZ / spanR, 2);
 
   // Chart spec: |B| vs θ*, units on both axes, start/centre/end markers.
   const spec = bmagChartSpec(tube, 'light');
@@ -195,6 +255,13 @@ test('G9 cross-section inset (solid sampled surface, dashed boundary) and |B|(θ
   const inset = await screen.findByRole('img', { name: /Cross-section at ζ = 0°.*R and Z in metres/ });
   expect(within(inset).getByTestId('inset-boundary')).toHaveAttribute('stroke-dasharray', '4 3');
   expect(within(inset).getByTestId('inset-sampled')).not.toHaveAttribute('stroke-dasharray');
+  // The solid curve is the sampled surface and the dashed one the plasma boundary — not the other way round.
+  const beanCentre = tubeMarkers(tube)[1]!.sample;
+  const drawn = insetLayout(tube.crossSection, g.surface.boundary!.bean, { R: beanCentre.R, Z: beanCentre.Z }, INSET);
+  expect(drawn.sampledPath).not.toBe(drawn.boundaryPath);
+  expect(within(inset).getByTestId('inset-sampled')).toHaveAttribute('d', drawn.sampledPath);
+  expect(within(inset).getByTestId('inset-boundary')).toHaveAttribute('d', drawn.boundaryPath!);
+  expect(inset).toHaveAccessibleDescription(/Solid line: the sampled flux surface.*Dashed line: the plasma boundary/);
   expect(inset).toHaveTextContent('Major radius R (m)');
   expect(inset).toHaveTextContent('Z (m)');
   const chart = screen.getByTestId('chart');
@@ -235,4 +302,95 @@ test('G10 validation panel: stella reference result, and acceptance-129 shown as
   serve({ error: 'gone' }, 404);
   render(<GeometryView />);
   expect(await screen.findByRole('heading', { name: 'Could not load artifacts/geometry.json' })).toBeInTheDocument();
+});
+
+test('G10 the tracer check follows the artifact: a failing stella reference is shown as Failed, never as Verified', async () => {
+  const g = geometryFixture();
+  const bad: GeometryArtifact = {
+    ...g,
+    validation: { ...g.validation, stellaReference: { ...g.validation.stellaReference, allWithinPrintedPrecision: false, maxAbsError: 0.0021 } },
+  };
+  serve(bad);
+  render(<GeometryView />);
+  const ref = (await screen.findByRole('heading', { name: 'Tracer vs stella saved geometry (ρ 0.7)' })).closest('section')!;
+  expect(ref.querySelector('.lab-pill')).toHaveAttribute('data-status', 'failed');
+  expect(ref.querySelector('.lab-pill')).toHaveTextContent('Failed');
+  expect(within(ref).queryByText('Verified')).toBeNull();
+  expect(ref).toHaveTextContent('Not every sample agrees to the printed 4 significant figures.');
+  expect(ref).not.toHaveTextContent(/All 25 saved samples agree/);
+  expect(within(ref).getByRole('group', { name: 'Max |Δ| in |B|: 0.002100 B ref' })).toBeInTheDocument();
+  // The verdict above the fold says the same thing.
+  const scene = screen.getByRole('region', { name: /Field lines on the ρ = 0\.8 flux surface/ });
+  expect(within(scene).getByText('ρ 0.7 check failed').closest('.lab-pill')).toHaveAttribute('data-status', 'failed');
+  expect(within(scene).queryByText('ρ 0.7 check verified')).toBeNull();
+  expect(document.querySelector('.lab-pill[data-status="passed"]')).toBeNull();
+});
+
+test('G10 honesty labels: both checks named above the fold, provenance badge, replay eyebrow, kind from the artifact, no live pill', async () => {
+  const g = geometryFixture();
+  serve(g);
+  const first = render(<GeometryView />);
+  const scene = await screen.findByRole('region', { name: /Field lines on the ρ = 0\.8 flux surface/ });
+  // DS-8: the two verdicts are named in the first panel, each from its own artifact field.
+  const header = scene.querySelector('.lab-panel__header')!;
+  const verdicts = [...header.querySelectorAll('[data-testid="geo-verdict"] .lab-pill')].map((p) => `${p.getAttribute('data-status')}:${p.textContent}`);
+  expect(verdicts).toEqual(['passed:ρ 0.7 check verified', 'blocked:129-sample acceptance blocked']);
+  // Provenance record on the result panel; the view is a replay and says so.
+  expect(within(scene).getByRole('button', { name: 'Provenance of field-line geometry: Derived, Blocked' })).toBeInTheDocument();
+  expect(scene).toHaveTextContent(/^Locate the tubes · replay/);
+  expect(scene).not.toHaveTextContent(/· live|· Live|\bLIVE\b/);
+  // Every panel that shows numbers carries the artifact's provenance kind.
+  const chart = screen.getByRole('region', { name: /Field strength along the line/ });
+  const inset = screen.getByRole('region', { name: /Cross-section at ζ = 0°/ });
+  expect([...chart.querySelectorAll('.lab-pill')].map((p) => p.getAttribute('data-status'))).toEqual(['derived']);
+  expect([...inset.querySelectorAll('.lab-pill')].map((p) => p.getAttribute('data-status'))).toEqual(['derived']);
+  expect(document.querySelector('[data-status="live"]')).toBeNull();
+  first.unmount();
+
+  // The kind is read from the artifact, and the acceptance pill from validation.acceptance129.
+  const other: GeometryArtifact = {
+    ...g,
+    provenance: { ...g.provenance, kind: 'archive' },
+    validation: { ...g.validation, acceptance129: { outcome: 'failed', details: 'max error 2e-3' } },
+  };
+  serve(other);
+  const second = render(<GeometryView />);
+  const chart2 = await screen.findByRole('region', { name: /Field strength along the line/ });
+  expect(chart2.querySelector('.lab-pill')).toHaveAttribute('data-status', 'archive');
+  expect(screen.getByRole('region', { name: /Cross-section at ζ = 0°/ }).querySelector('.lab-pill')).toHaveAttribute('data-status', 'archive');
+  const scene2 = screen.getByRole('region', { name: /Field lines on the ρ = 0\.8 flux surface/ });
+  expect([...scene2.querySelectorAll('[data-testid="geo-verdict"] .lab-pill')].map((p) => `${p.getAttribute('data-status')}:${p.textContent}`)).toEqual([
+    'passed:ρ 0.7 check verified',
+    'failed:129-sample acceptance failed',
+  ]);
+  second.unmount();
+
+  // An artifact is replayed evidence: a "live" provenance kind cannot put a LIVE pill on the chart or the inset.
+  serve({ ...g, provenance: { ...g.provenance, kind: 'live' } });
+  render(<GeometryView />);
+  const chart3 = await screen.findByRole('region', { name: /Field strength along the line/ });
+  expect(chart3.querySelector('.lab-pill')).toHaveAttribute('data-status', 'replay');
+  expect(chart3.querySelector('[data-status="live"]')).toBeNull();
+  expect(screen.getByRole('region', { name: /Cross-section at ζ = 0°/ }).querySelector('[data-status="live"]')).toBeNull();
+});
+
+test('G10 the float64 comparison is never dropped silently: if the provenance sentence cannot be parsed it is shown as written', async () => {
+  const g = geometryFixture();
+  const reworded: GeometryArtifact = {
+    ...g,
+    provenance: { ...g.provenance, verification: { outcome: 'blocked', details: 'Tracer agrees with the double-precision stella output to 3e-13 (25 points).' } },
+  };
+  expect(float64Match(reworded.provenance.verification.details)).toBeNull();
+  serve(reworded);
+  render(<GeometryView />);
+  const ref = (await screen.findByRole('heading', { name: 'Tracer vs stella saved geometry (ρ 0.7)' })).closest('section')!;
+  expect(within(ref).queryByTestId('float64')).toBeNull();
+  expect(within(ref).getByTestId('verification-record')).toHaveTextContent(
+    'Verification record (from the artifact): Tracer agrees with the double-precision stella output to 3e-13 (25 points).',
+  );
+});
+
+test('DS-15 the cross-section inset is capped at its drawn size, so its labels keep their type size', () => {
+  const css = readFileSync(resolve(__dirname, 'geometry.css'), 'utf8');
+  expect(css).toMatch(/\.geo-inset__svg\s*\{[^}]*max-width:\s*320px/);
 });

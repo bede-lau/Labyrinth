@@ -4,23 +4,28 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { formatNumber } from '../../design';
 import { ForecastView } from './ForecastView';
-import { INITIAL, advance, parseSampleAndHold, runningMae, type ForecastArtifact } from './model';
+import { INITIAL, advance, mismatchedScores, nextAction, parseSampleAndHold, runningMae, visibility, type ForecastArtifact, type Phase } from './model';
 
 const ARTIFACT: ForecastArtifact = JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/forecast.json'), 'utf8'));
+const clone = (): ForecastArtifact => JSON.parse(JSON.stringify(ARTIFACT)) as ForecastArtifact;
 
-beforeEach(() => {
+function serve(artifact: unknown = ARTIFACT, status = 200) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) =>
       String(input) === '/artifacts/forecast.json'
-        ? new Response(JSON.stringify(ARTIFACT), { status: 200 })
+        ? new Response(JSON.stringify(artifact), { status })
         : new Response('nope', { status: 404 }),
     ),
   );
-});
+}
+beforeEach(() => serve());
 afterEach(() => vi.unstubAllGlobals());
 
 const f3 = (v: number) => formatNumber(v, 3);
+const f4 = (v: number) => formatNumber(v, 4);
+const cells = (i: number) => [...screen.getByTestId(`step-${i}`).querySelectorAll('td')].map((td) => td.textContent);
+const DASHES = ['—', '—', '—', '—', '—'];
 
 test('F4 step-through Predict → Reveal → Update is keyboard operable, hides observed until revealed, and resets', async () => {
   const user = userEvent.setup();
@@ -70,6 +75,95 @@ test('F4 step-through Predict → Reveal → Update is keyboard operable, hides 
   expect(advance(s, ARTIFACT.steps.length)).toBe(s);
 });
 
+test('F4 no peeking: visibility() for every window below, at and above the current one, in all three phases', () => {
+  const n = 8;
+  const phases: Phase[] = ['ready', 'predicted', 'revealed'];
+  for (let index = 0; index <= n; index++) {
+    for (const phase of index === n ? (['ready'] as Phase[]) : phases) {
+      for (let i = 0; i < n; i++) {
+        const want =
+          i < index
+            ? { forecasts: true, observed: true } // scored: everything shown
+            : i > index
+              ? { forecasts: false, observed: false } // future: nothing shown, not even its forecasts
+              : { forecasts: phase !== 'ready', observed: phase === 'revealed' };
+        expect(visibility({ index, phase }, i), `index ${index} ${phase}, row ${i}`).toEqual(want);
+      }
+    }
+  }
+  // A forecast is never visible without the window having been predicted, and observed never before its forecasts.
+  for (const phase of phases) for (let i = 0; i < n; i++) {
+    const v = visibility({ index: 3, phase }, i);
+    expect(v.observed && !v.forecasts).toBe(false);
+  }
+});
+
+test('F4 no peeking in the view: every row, the current-window block and the live region, in all 25 states', async () => {
+  const user = userEvent.setup();
+  render(<ForecastView />);
+  const primary = await screen.findByRole('button', { name: 'Predict 1500–1550' });
+  const steps = ARTIFACT.steps;
+  const n = steps.length;
+  const shown = (i: number) => {
+    const st = steps[i]!;
+    return [f3(st.persistence), f3(st.frozen), f3(st.observed), f4(st.absErrPersistence), f4(st.absErrFrozen)];
+  };
+  const replay = () => screen.getByRole('region', { name: /Predict the next 50-unit mean/ });
+
+  let s = INITIAL;
+  let states = 0;
+  for (;;) {
+    states++;
+    const action = nextAction(s, n);
+    for (let i = 0; i < n; i++) {
+      const st = steps[i]!;
+      const want =
+        i < s.index
+          ? shown(i)
+          : i > s.index || s.phase === 'ready'
+            ? DASHES
+            : s.phase === 'predicted'
+              ? [f3(st.persistence), f3(st.frozen), 'hidden', '—', '—']
+              : shown(i);
+      expect(cells(i), `state ${s.index}/${s.phase}, row ${i}`).toEqual(want);
+    }
+    // Nothing that has not been revealed is anywhere in the replay panel: not in another cell, the
+    // current-window block, the running MAE or the live region.
+    const text = replay().textContent ?? '';
+    for (let i = 0; i < n; i++) {
+      const revealed = i < s.index || (i === s.index && s.phase === 'revealed');
+      if (!revealed) {
+        expect(text.includes(f3(steps[i]!.observed)), `observed of row ${i} leaked in state ${s.index}/${s.phase}`).toBe(false);
+        expect(text.includes(f4(steps[i]!.absErrPersistence)), `error of row ${i} leaked in state ${s.index}/${s.phase}`).toBe(false);
+      }
+    }
+    const announce = screen.getByTestId('announce').textContent ?? '';
+    if (action === 'reveal') {
+      const cur = steps[s.index]!;
+      expect(announce).toContain('observed hidden');
+      expect(announce).toContain(`persistence forecast ${f3(cur.persistence)}`);
+      expect(announce).not.toContain(f3(cur.observed));
+      expect(announce).not.toMatch(/absolute error/);
+      expect(screen.getByRole('group', { name: 'Observed (archive): hidden until revealed' })).toBeInTheDocument();
+    } else if (action === 'predict') {
+      expect(announce).toContain('nothing predicted yet');
+      expect(announce).not.toMatch(/forecast [0-9]|observed [0-9]/);
+      expect(screen.getAllByRole('group', { name: /: not predicted yet$/ })).toHaveLength(2);
+    } else if (action === 'update') {
+      expect(announce).toContain(`observed ${f3(steps[s.index]!.observed)}`);
+    } else {
+      expect(announce).toBe(`Replay complete. All ${n} windows scored.`);
+    }
+    if (action === 'done') break;
+    await user.click(primary);
+    s = advance(s, n);
+  }
+  expect(states).toBe(3 * n + 1);
+  // Past the end nothing changes.
+  expect(primary).toBeDisabled();
+  expect(cells(n - 1)).toEqual(shown(n - 1));
+});
+
 test('F5 running MAE for both forecasters and final computed vs claimed scores with mismatch flag', async () => {
   const user = userEvent.setup();
   render(<ForecastView />);
@@ -102,4 +196,128 @@ test('F5 running MAE for both forecasters and final computed vs claimed scores w
   expect(note).toHaveTextContent('0.042332 → 0.0423');
   expect(note).toHaveTextContent(/prints 2\.56 vs PRD 2\.55/);
   expect(parseSampleAndHold(ARTIFACT.fixtures[0]?.note)?.archive?.claimed).toBe('2.55');
+});
+
+test('F5 the failed verification and the mismatch are the first thing on the page, and the wording never equates forecast and observation', async () => {
+  render(<ForecastView />);
+  const final = await screen.findByRole('region', { name: /Final scores: recomputed vs PRD claim/ });
+  // DS-4: final scores come before the step-through, so the mismatch is not below a table of dashes.
+  const panels = screen.getAllByRole('region').filter((r) => r.classList.contains('lab-panel'));
+  expect(panels.map((p) => within(p).getAllByRole('heading')[0]!.textContent)).toEqual([
+    'Final scores: recomputed vs PRD claim',
+    'Predict the next 50-unit mean of the stella bean flux',
+  ]);
+  // The artifact's verification outcome ("failed") is shown with the scores and on the provenance badge.
+  expect(ARTIFACT.provenance.verification.outcome).toBe('failed');
+  expect(final.querySelector('.lab-panel__header .lab-pill[data-status="failed"]')).toHaveTextContent('Failed');
+  expect(final.querySelector('.lab-panel__header .lab-pill[data-status="derived"]')).toHaveTextContent('Derived');
+  expect(screen.getByRole('button', { name: 'Provenance of forecast replay: Derived, Failed' })).toBeInTheDocument();
+  expect(document.querySelector('.lab-pill[data-status="passed"]')).toBeNull();
+  // The two score rows are the first content of that first panel, each with claimed, computed, Δ and
+  // "Mismatch" in words — and they come before the step-through controls in reading order.
+  const rows = [...within(final).getByTestId('final-scores').querySelectorAll('.lab-fixture')];
+  expect(rows.map((r) => `${r.getAttribute('data-outcome')}|${r.getAttribute('aria-label')}`)).toEqual([
+    'mismatch|stella MAE, persistence forecast: Mismatch. Claimed 0.0444 Q gB,i, computed 0.0440 Q gB,i, difference minus 0.0004',
+    'mismatch|stella MAE, frozen forecast: Mismatch. Claimed 0.0423 Q gB,i, computed 0.0418 Q gB,i, difference minus 0.0005',
+  ]);
+  for (const r of rows) expect(within(r as HTMLElement).getByText('Mismatch')).toBeInTheDocument();
+  expect(final.querySelector('.lab-panel__body')!.firstElementChild).toBe(within(final).getByTestId('final-scores'));
+  const predict = screen.getByRole('button', { name: /^Predict/ });
+  expect(rows.at(-1)!.compareDocumentPosition(predict) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+  // interface.md §2 item 6: the persistence forecast "can differ" from the previous revealed observation;
+  // the page never says the forecast is (or equals) the previous observed value.
+  const note = screen.getByTestId('forecast-note');
+  expect(note).toHaveTextContent(/can differ from that window's revealed observed mean/);
+  expect(note).toHaveTextContent(/without look-ahead/);
+  const page = document.body.textContent ?? '';
+  expect(page).not.toMatch(/forecast\s*(=|equals|is)\s*(the\s*)?previous(ly)?\s*(revealed\s*)?observ/i);
+  expect(page).not.toMatch(/=\s*the previous observed/i);
+  expect(page).not.toMatch(/same as the previous(ly)? (revealed )?observ|identical to the previous/i);
+});
+
+test('F5 the mismatch narrative follows the artifact: it goes away when both scores match and stays when one does not', async () => {
+  // Both fixtures reproduce (flag and printed value): no mismatch row, no mismatch callout, no failed pill.
+  const ok = clone();
+  ok.fixtures[0] = { ...ok.fixtures[0]!, computed: 0.04441, matches: true };
+  ok.fixtures[1] = { ...ok.fixtures[1]!, computed: 0.04232, matches: true };
+  ok.provenance.verification = { outcome: 'passed', details: 'Both PRD scores reproduce at printed precision.' };
+  expect(mismatchedScores(ok)).toEqual([]);
+  serve(ok);
+  const first = render(<ForecastView />);
+  const final = await screen.findByRole('region', { name: /Final scores: recomputed vs PRD claim/ });
+  expect(within(final).queryByRole('note')).toBeNull();
+  expect(within(final).queryByText('Mismatch')).toBeNull();
+  expect(final).not.toHaveTextContent(/do not reproduce|different window-mean definition|shown as mismatches/);
+  expect(within(final).getAllByText('Match').length).toBeGreaterThanOrEqual(2);
+  expect(final.querySelector('.lab-pill[data-status="failed"]')).toBeNull();
+  expect(final.querySelector('.lab-panel__header .lab-pill[data-status="passed"]')).toHaveTextContent('Verified');
+  expect(screen.getByRole('button', { name: 'Provenance of forecast replay: Derived, Verified' })).toBeInTheDocument();
+  first.unmount();
+
+  // Only the frozen score fails: the callout stays and names how many scores are affected.
+  const one = clone();
+  one.fixtures[0] = { ...one.fixtures[0]!, computed: 0.04441, matches: true };
+  expect(mismatchedScores(one).map((x) => x.id)).toEqual(['mae-frozen']);
+  serve(one);
+  const second = render(<ForecastView />);
+  const final2 = await screen.findByRole('region', { name: /Final scores: recomputed vs PRD claim/ });
+  expect(within(final2).getByRole('note', { name: /different window-mean definition/ })).toHaveTextContent(/1 of 2 scores is shown as a mismatch/);
+  expect(within(final2).getAllByText('Mismatch').length).toBeGreaterThanOrEqual(1);
+  second.unmount();
+
+  // A note without the sample-and-hold numbers: still a mismatch callout, but no invented figures.
+  const bare = clone();
+  for (const fx of bare.fixtures) fx.note = 'Computed with the stated method; not tuned to the PRD.';
+  serve(bare);
+  render(<ForecastView />);
+  const final3 = await screen.findByRole('region', { name: /Final scores: recomputed vs PRD claim/ });
+  const generic = within(final3).getByRole('note', { name: /The PRD scores do not reproduce with the stated method/ });
+  expect(generic).not.toHaveTextContent(/0\.044418|2\.56/);
+  expect(generic).toHaveTextContent(/2 of 2 scores are shown as mismatches/);
+});
+
+test('F5 an artifact whose provenance kind is "live" is shown as a recorded run: replayed scores never earn the LIVE pill', async () => {
+  const a = clone();
+  a.provenance = { ...a.provenance, kind: 'live' };
+  serve(a);
+  render(<ForecastView />);
+  const final = await screen.findByRole('region', { name: /Final scores: recomputed vs PRD claim/ });
+  const pill = final.querySelector('.lab-panel__header .lab-pill')!;
+  expect(pill).toHaveAttribute('data-status', 'replay');
+  expect(pill).toHaveTextContent('Recorded run');
+  expect(document.querySelector('.lab-pill[data-status="live"]')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Provenance of forecast replay: Recorded run, Failed' })).toBeInTheDocument();
+});
+
+test('F4 an artifact with no steps shows an empty state instead of crashing', async () => {
+  serve({ ...clone(), steps: [] });
+  render(<ForecastView />);
+  const empty = await screen.findByRole('note', { name: /No forecast windows in artifacts\/forecast\.json/ });
+  expect(empty).toHaveTextContent(/nothing to step through/i);
+  expect(screen.queryByRole('button', { name: /^Predict/ })).toBeNull();
+  expect(screen.queryByRole('table')).toBeNull();
+  // The scores panel still renders what the artifact does carry.
+  expect(screen.getByRole('region', { name: /Final scores: recomputed vs PRD claim/ })).toBeInTheDocument();
+  expect(runningMae([], 0)).toBeNull();
+  expect(nextAction(INITIAL, 0)).toBe('done');
+});
+
+test('A3 forecast: a missing or invalid artifact shows an error naming the file, never a blank view', async () => {
+  serve({ error: 'gone' }, 404);
+  const first = render(<ForecastView />);
+  expect(screen.getByRole('heading', { name: 'Loading forecast replay…' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: 'Forecast replay could not be loaded' })).toBeInTheDocument();
+  expect(screen.getByRole('note', { name: /artifacts\/forecast\.json failed to load/ })).toHaveTextContent('/artifacts/forecast.json: HTTP 404');
+  expect(screen.queryByRole('button', { name: /^Predict/ })).toBeNull();
+  first.unmount();
+
+  serve({ ...ARTIFACT, schemaVersion: 3 });
+  render(<ForecastView />);
+  expect(await screen.findByRole('note', { name: /artifacts\/forecast\.json failed to load/ })).toHaveTextContent('unexpected schemaVersion');
+});
+
+test('DS-2 the steps table keeps its visually hidden caption inside the scrolling well', () => {
+  const css = readFileSync(resolve(__dirname, 'forecast.css'), 'utf8');
+  expect(css).toMatch(/\.fc-table-wrap\s*\{[^}]*position:\s*relative/);
 });
