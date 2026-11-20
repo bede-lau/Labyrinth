@@ -17,7 +17,7 @@ import { ArtifactGate } from '../../shell/ArtifactGate';
 import { ColorBar } from './ColorBar';
 import { CrossSectionInset } from './CrossSectionInset';
 import { FluxScene } from './FluxScene';
-import { bmagChartSpec, buildSceneModel, tubeById, tubeMarkers } from './model';
+import { bmagChartSpec, buildSceneModel, tracerPassed, tubeById, tubeMarkers } from './model';
 import { PlotlyChart } from './PlotlyChart';
 import { checkGeometry, type GeometryArtifact, type TubeId } from './types';
 import { ValidationPanel } from './ValidationPanel';
@@ -62,7 +62,9 @@ export function GeometryContent({ g }: { g: GeometryArtifact }) {
   // Eyebrows are uppercased by CSS, which would turn ζ into a capital zeta that reads as "Z".
   const eyebrow = selected === 'bean' ? 'Bean tube' : 'Triangular tube';
   const range = tube.bmagRange;
-  const tracerOk = g.validation.stellaReference.allWithinPrintedPrecision;
+  // Both verdicts come from the artifact's validation block: the tracer's from its two rho 0.7 comparisons,
+  // the acceptance from validation.acceptance129 (never from provenance.verification).
+  const tracerOk = tracerPassed(g.validation);
   const acceptance = g.validation.acceptance129.outcome;
   // The artifact's own provenance kind marks every panel of numbers. provenanceStatus() without the live
   // flag: an artifact is replayed evidence, so even a "live" kind is drawn as a recorded run, never LIVE.

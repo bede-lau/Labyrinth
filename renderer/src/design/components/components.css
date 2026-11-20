@@ -106,6 +106,10 @@
 .lab-pill[data-status='failed'] { --pill-fg: var(--lab-status-failed-fg); --pill-bg: var(--lab-status-failed-bg); --pill-border: var(--lab-status-failed-border); }
 .lab-pill[data-status='blocked'] { --pill-fg: var(--lab-status-blocked-fg); --pill-bg: var(--lab-status-blocked-bg); --pill-border: var(--lab-status-blocked-border); }
 .lab-pill[data-status='mismatch'] { --pill-fg: var(--lab-status-mismatch-fg); --pill-bg: var(--lab-status-mismatch-bg); --pill-border: var(--lab-status-mismatch-border); }
+/* Billing risk: the only OUTLINED pill. Its border token is its text colour (≥ 3:1 everywhere), so
+ * the outline reads at a glance; bold text. Never solid (solid is LIVE) and never dashed (dashed means
+ * "not backed by data", and this state comes straight from the API). */
+.lab-pill[data-status='billing-risk'] { --pill-fg: var(--lab-status-billing-risk-fg); --pill-bg: var(--lab-status-billing-risk-bg); --pill-border: var(--lab-status-billing-risk-border); font-weight: var(--lab-font-weight-bold); }
 
 /* LIVE: the only solid pill; uppercase; pulsing dot. Reduced motion → static dot (tokens.css). */
 .lab-pill[data-status='live'] { text-transform: uppercase; letter-spacing: 0.08em; padding-left: var(--lab-space-2); }
@@ -222,7 +226,9 @@
 .lab-prov__sources { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--lab-space-1); }
 .lab-prov__sources li { display: flex; flex-direction: column; }
 .lab-prov__sources a { display: inline-flex; align-items: center; gap: 3px; }
-.lab-prov__hash, .lab-prov__path { color: var(--lab-color-text-subtle); font-size: var(--lab-font-size-2xs); }
+/* A source that is not an http(s) URL (a repository file such as PRD.md) is named, not linked. */
+.lab-prov__source-text { color: var(--lab-color-text); }
+.lab-prov__hash, .lab-prov__path, .lab-prov__ref { color: var(--lab-color-text-subtle); font-size: var(--lab-font-size-2xs); }
 .lab-prov__none { color: var(--lab-color-text-subtle); font-style: italic; }
 
 /* ---- FixtureCheck ---------------------------------------------------------------------------
@@ -302,6 +308,8 @@
   letter-spacing: 0.02em;
 }
 .lab-fixture__v { font-size: var(--lab-font-size-md); line-height: var(--lab-line-height-md); color: var(--lab-color-text); font-weight: var(--lab-font-weight-medium); }
+/* "3100–3200" is one token: in a narrow stacked row the unit wraps, never the range. */
+.lab-fixture__range { white-space: nowrap; }
 /* line-height: 0 — a smaller font on the value's line would otherwise push the line box down by a pixel and lift this value above its neighbours. */
 .lab-fixture__unit { margin-left: 3px; font-size: var(--lab-font-size-xs); line-height: 0; color: var(--lab-color-text-muted); font-weight: var(--lab-font-weight-regular); }
 .lab-fixture[data-outcome='mismatch'] .lab-fixture__delta { color: var(--lab-status-mismatch-fg); font-weight: var(--lab-font-weight-semibold); }
@@ -411,3 +419,45 @@
 .lab-callout__body { max-width: 100ch; font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text); }
 .lab-callout__body p + p { margin-top: var(--lab-space-1); }
 .lab-callout__action { margin-top: var(--lab-space-1); font-size: var(--lab-font-size-sm); }
+
+/* ---- Alert (billing risk) ------------------------------------------------------------------- */
+/* Louder than any callout: the billing-risk tint, a solid outline in the text colour all round and a
+ * 4px bar on the leading edge, a 20px octagon, a bold title. Body text stays in the text token. */
+.lab-alert {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--lab-space-3);
+  padding: var(--lab-space-3) var(--lab-space-4) var(--lab-space-3) var(--lab-space-3);
+  background: var(--lab-status-billing-risk-bg);
+  border: 1px solid var(--lab-status-billing-risk-border);
+  border-left: 4px solid var(--lab-status-billing-risk-fg);
+  border-radius: var(--lab-radius-md);
+  color: var(--lab-color-text);
+}
+.lab-alert__icon { color: var(--lab-status-billing-risk-fg); margin-top: 2px; }
+.lab-alert__content { display: flex; flex-direction: column; gap: var(--lab-space-1); min-width: 0; }
+.lab-alert__title {
+  font-size: var(--lab-font-size-md);
+  line-height: var(--lab-line-height-md);
+  font-weight: var(--lab-font-weight-bold);
+  letter-spacing: 0.01em;
+  color: var(--lab-status-billing-risk-fg);
+}
+/* The backend's words, as written: no re-casing, no clamp; long tokens (paths, exception names) wrap. */
+.lab-alert__reason {
+  max-width: 100ch;
+  font-size: var(--lab-font-size-sm);
+  line-height: var(--lab-line-height-sm);
+  color: var(--lab-color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.lab-alert__body { max-width: 100ch; font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text); }
+.lab-alert__action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lab-space-2) var(--lab-space-3);
+  margin-top: var(--lab-space-1);
+  font-size: var(--lab-font-size-sm);
+}

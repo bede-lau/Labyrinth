@@ -8,6 +8,7 @@ import {
   modePills,
   playableSavedRunId,
   sessionMayBeBilling,
+  stopUnconfirmed,
   terminationProblem,
   type LiveState,
   type LiveWorker,
@@ -53,13 +54,16 @@ export function modeView(s: LiveState, localProblem: TerminationProblem | null =
   const danger = liveDanger(s);
   const replay = !isLive(s);
   let pills: Pill[] = modePills(s);
-  if (!danger && localProblem) pills = [{ status: 'failed', text: localProblem.marker }, ...pills.filter((p) => p.status !== 'replay')];
+  if (!danger && localProblem) pills = [{ status: 'billing-risk', text: localProblem.marker }, ...pills.filter((p) => p.status !== 'replay')];
+  const mode = s.status === 'ready' ? `the API reports mode "${s.data.mode}"` : 'the API is not answering';
   if (danger?.kind === 'connection-lost') {
-    return { pills, title: 'STATE UNKNOWN — the live API stopped answering during a session', tone: 'danger', icon: 'alert', replay };
+    return { pills, title: 'STATE UNKNOWN — the live API stopped answering during a session', tone: 'danger', icon: 'danger', replay };
+  }
+  if (danger?.kind === 'stop-unconfirmed') {
+    return { pills, title: `STOP NOT CONFIRMED — ${mode}`, tone: 'danger', icon: 'danger', replay };
   }
   if (danger || localProblem) {
-    const mode = s.status === 'ready' ? `the API reports mode "${s.data.mode}"` : 'the API is not answering';
-    return { pills, title: `TERMINATION NOT CONFIRMED — ${mode}`, tone: 'danger', icon: 'alert', replay };
+    return { pills, title: `TERMINATION NOT CONFIRMED — ${mode}`, tone: 'danger', icon: 'danger', replay };
   }
   if (s.status === 'connecting') return { pills, title: 'REPLAY — connecting to the live API…', tone: 'info', icon: 'replay', replay };
   if (s.status === 'unreachable' && s.cause === 'stale') {
@@ -91,8 +95,25 @@ export function isFresh(s: LiveState, now: number): boolean {
 }
 
 /**
+ * FA-3: the `live` flag for ProvenanceBadge (DESIGN.md §5 "Provenance never produces LIVE by itself"):
+ * only a fresh, valid snapshot (the store holds validated ones only) whose mode is "live".
+ */
+export function provenanceIsLive(s: LiveState, now: number): boolean {
+  return isLive(s) && isFresh(s, now);
+}
+
+const LAUNCH_LOCKED: Record<NonNullable<LiveState['launchPhase']>, string> = {
+  sent: 'A launch request is on its way to the API.',
+  accepted:
+    'A launch request was already sent from this page and accepted. Launch stays disabled until the API reports another mode.',
+  refused: 'The launch was refused; waiting for a status taken after the refusal.',
+  unknown: 'The launch request got no usable answer; waiting for a current status to show whether a session started.',
+};
+
+/**
  * L10: why Launch is not allowed right now, or null when it is. Allowed only for a fresh snapshot
- * with mode "idle" and `budget.slotFits`, with no session left over and no launch already posted.
+ * with mode "idle" and `budget.slotFits`, with no session left over and no launch lock held (FA-4:
+ * after a 202 until the mode changes; after a 409 or no answer, until the next snapshot).
  */
 export function launchBlockedReason(s: LiveState, now: number): string | null {
   if (s.status === 'connecting') return 'Waiting for /api/live/status.';
@@ -104,12 +125,10 @@ export function launchBlockedReason(s: LiveState, now: number): string | null {
   }
   const d = s.data;
   if (d.mode !== 'idle') return `Launch needs mode "idle"; the API reports "${d.mode}".`;
-  if (terminationProblem(d)) return 'A termination is unconfirmed; GPUs may still be billing.';
+  if (terminationProblem(d) || stopUnconfirmed(d)) return 'A termination is unconfirmed; GPUs may still be billing.';
   if (d.workers.length > 0) return 'The API still lists workers from a session.';
   if (d.budget.slotFits !== true) return 'The next slot does not fit under the budget ceiling.';
-  if (s.launchLocked) {
-    return 'A launch request was already sent from this page. Launch stays disabled until the API reports another mode (reload the page to ask again).';
-  }
+  if (s.launchLocked) return LAUNCH_LOCKED[s.launchPhase ?? 'accepted'];
   if (!isFresh(s, now)) return 'The last status is not fresh; waiting for the next poll.';
   return null;
 }

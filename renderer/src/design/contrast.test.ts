@@ -46,6 +46,10 @@ describe('the pairs that carry the fix round are in the list', () => {
       'unsampled label text on the unsampled fill over a window shade',
       'segment focus: track gap vs selected fill',
       'focus ring on plotPaper', // the themed modebar ring (tokens.test.ts) is drawn on plot paper
+      // DL-1: the billing-risk outline carries meaning; an alert's action may be a link.
+      'outlined billing-risk border vs its own tint',
+      'outlined billing-risk border vs surfaceHover',
+      'accentText on status billing-risk bg',
     ])
       expect(names, n).toContain(n);
     expect(new Set(names).size, 'pair names are unique').toBe(names.length);

@@ -5,24 +5,24 @@ import { fetchLiveStatus, isLive, liveStatusStoreFor, useLiveStatus, type LiveSt
 const ok = (body: unknown) => (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
 const fail = (status: number) => (async () => new Response('nope', { status })) as unknown as typeof fetch;
 
-test('artifactUrl points at /artifacts/<id>.json', () => {
+test('A3 artifactUrl points at /artifacts/<id>.json', () => {
   expect(artifactUrl('geometry')).toBe('/artifacts/geometry.json');
 });
 
-test('fetchArtifact rejects wrong schemaVersion and HTTP errors with the file name', async () => {
+test('A3 fetchArtifact rejects wrong schemaVersion and HTTP errors with the file name', async () => {
   await expect(fetchArtifact('budget', ok({ schemaVersion: 2 }))).rejects.toThrow(/budget\.json.*schemaVersion/);
   await expect(fetchArtifact('budget', fail(404))).rejects.toThrow(/budget\.json: HTTP 404/);
   await expect(fetchArtifact('budget', ok({ schemaVersion: 1, x: 1 }))).resolves.toEqual({ schemaVersion: 1, x: 1 });
 });
 
-test('useArtifact goes loading -> error naming the file (never blank)', async () => {
+test('A3 useArtifact goes loading -> error naming the file (never blank)', async () => {
   const f = fail(500);
   const { result } = renderHook(() => useArtifact('spatial', f));
   expect(result.current.status).toBe('loading');
   await waitFor(() => expect(result.current).toMatchObject({ status: 'error', file: 'artifacts/spatial.json' }));
 });
 
-test('live status: unreachable backend is not live; only mode=live is live', async () => {
+test('A2 live status: unreachable backend is not live; only mode=live is live', async () => {
   const f = fail(502);
   const { result } = renderHook(() => useLiveStatus(60_000, f));
   await waitFor(() => expect(result.current.status).toBe('unreachable'));
@@ -45,7 +45,7 @@ const snapshot = (mode: LiveStatus['mode'], extra: Partial<LiveStatus> = {}): Li
 });
 const respond = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
-test('fetchLiveStatus rejects partial and wrong-typed bodies as "bad payload" (they must never reach a render)', async () => {
+test('A2 fetchLiveStatus rejects partial and wrong-typed bodies as "bad payload" (they must never reach a render)', async () => {
   // The body that blanked the page (tasks/09-app-shell/VERIFY.md finding 2).
   await expect(fetchLiveStatus(ok({ schemaVersion: 1, mode: 'fallback' }))).rejects.toThrow(/bad payload.*reason/);
   await expect(fetchLiveStatus(ok({ schemaVersion: 1, mode: 'live' }))).rejects.toThrow(/bad payload/);
@@ -61,14 +61,14 @@ test('fetchLiveStatus rejects partial and wrong-typed bodies as "bad payload" (t
   await expect(fetchLiveStatus(ok(snapshot('live')))).resolves.toEqual(snapshot('live'));
 });
 
-test('fetchLiveStatus never accepts a non-2xx answer, even when it carries a valid live body', async () => {
+test('A2 fetchLiveStatus never accepts a non-2xx answer, even when it carries a valid live body', async () => {
   for (const code of [404, 409, 500, 502]) {
     const f = (async () => respond(snapshot('live'), code)) as unknown as typeof fetch;
     await expect(fetchLiveStatus(f)).rejects.toThrow(new RegExp(`/api/live/status: HTTP ${code}`));
   }
 });
 
-test('LIVE is never sticky: a failed poll after a live one is unreachable, not live', async () => {
+test('A2 LIVE is never sticky: a failed poll after a live one is unreachable, not live', async () => {
   let up = true;
   const f = (async () => {
     if (!up) throw new TypeError('Failed to fetch');
@@ -84,7 +84,7 @@ test('LIVE is never sticky: a failed poll after a live one is unreachable, not l
   expect(result.current).toMatchObject({ status: 'unreachable', cause: 'network', message: 'Failed to fetch', lastKnown: { data: { mode: 'live' } } });
 });
 
-test('a slow older answer never overwrites a newer one (no LIVE from a stale response)', async () => {
+test('A2 a slow older answer never overwrites a newer one (no LIVE from a stale response)', async () => {
   let releaseFirst: (r: Response) => void = () => {};
   let calls = 0;
   const f = (async () => {
@@ -107,7 +107,7 @@ test('a slow older answer never overwrites a newer one (no LIVE from a stale res
   expect(result.current).toMatchObject({ status: 'ready', data: { mode: 'terminated' } });
 });
 
-test('a hung backend becomes unreachable within the abort timeout and requests do not stack up', async () => {
+test('A2 a hung backend becomes unreachable within the abort timeout and requests do not stack up', async () => {
   let pending = 0;
   let maxPending = 0;
   const f = ((_input: RequestInfo | URL, init?: RequestInit) => {

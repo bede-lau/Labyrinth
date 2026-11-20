@@ -65,6 +65,14 @@ export function geometryFixture(nPhi = 8, nTheta = 6): GeometryArtifact {
         allWithinPrintedPrecision: true,
         source: src,
       },
+      float64Reference: {
+        samplesCompared: 25,
+        tolerance: 1e-10,
+        maxAbsError: 3e-13,
+        maxRelError: 3e-13,
+        allWithinTolerance: true,
+        source: { label: 'stella EXPECTED_OUTPUT.vmec_geometry.out.nc (float64 bmag)', url: 'https://example.org/stella/out.nc', sha256: 'b'.repeat(64) },
+      },
       acceptance129: {
         outcome: 'blocked',
         details:

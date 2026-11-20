@@ -11,6 +11,8 @@ export interface StatusMeta {
   description: string;
   /** Dashed outline = "not backed by data in this repo". */
   dashed?: boolean;
+  /** Solid outline in the text colour = "money may be at risk right now" (billing-risk only). */
+  outlined?: boolean;
 }
 
 export const STATUS_META: Record<StatusKind, StatusMeta> = {
@@ -18,6 +20,13 @@ export const STATUS_META: Record<StatusKind, StatusMeta> = {
     label: 'Live',
     icon: 'live',
     description: 'Produced now by a GX worker. Only when /api/live/status reports mode "live".',
+  },
+  'billing-risk': {
+    label: 'Billing risk',
+    icon: 'danger',
+    description:
+      'GPUs may still be billing: a stop is not confirmed (terminate failed or pending, only the kill switch raised, stop requested) or the session state is unknown.',
+    outlined: true,
   },
   replay: { label: 'Replay', icon: 'replay', description: 'Saved evidence played back; $0 compute.' },
   rehearsal: {
@@ -86,4 +95,11 @@ export const CALLOUT_META: Record<CalloutTone, { icon: IconName; spoken: string 
   info: { icon: 'info', spoken: 'Note' },
   warn: { icon: 'warn', spoken: 'Warning' },
   blocked: { icon: 'blocked', spoken: 'Blocked' },
+};
+
+/** The Alert's treatment: the billing-risk status, its icon, and the word a screen reader hears first. */
+export const ALERT_META: { status: 'billing-risk'; icon: IconName; spoken: string } = {
+  status: 'billing-risk',
+  icon: STATUS_META['billing-risk'].icon,
+  spoken: 'Danger',
 };

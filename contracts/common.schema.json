@@ -57,19 +57,33 @@
       "maxItems": 2
     },
     "fixtureCheck": {
-      "description": "A number claimed in PRD.md compared against the value this repo recomputes.",
+      "description": "A number (or range) claimed in PRD.md compared against the value this repo recomputes (decision D-023).",
       "type": "object",
       "required": ["id", "label", "claimed", "computed", "printedDecimals", "matches"],
       "additionalProperties": false,
       "properties": {
         "id": { "type": "string" },
         "label": { "type": "string" },
-        "claimed": { "type": "number" },
+        "claimed": {
+          "type": ["number", "null"],
+          "description": "The single value the PRD prints. null exactly when the PRD prints a range instead (see claimedRange); never a value the PRD did not print."
+        },
+        "claimedRange": {
+          "$ref": "#/$defs/window",
+          "description": "[lo, hi] when the PRD prints a range. Then claimed is null and matches means lo <= computed <= hi (no rounding)."
+        },
         "computed": { "type": ["number", "null"] },
         "printedDecimals": { "type": "integer", "minimum": 0 },
         "matches": { "type": ["boolean", "null"], "description": "null when it cannot be recomputed from data in this repo." },
+        "basis": {
+          "enum": ["data", "arithmetic"],
+          "description": "arithmetic = the check only re-does arithmetic on PRD-reported inputs (no data in this repo); absent means data."
+        },
         "note": { "type": "string" }
-      }
+      },
+      "if": { "type": "object", "properties": { "claimedRange": true }, "required": ["claimedRange"] },
+      "then": { "type": "object", "properties": { "claimed": { "type": "null" } } },
+      "else": { "type": "object", "properties": { "claimed": { "type": "number" } } }
     }
   }
 }

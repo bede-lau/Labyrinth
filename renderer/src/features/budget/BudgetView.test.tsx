@@ -1,13 +1,23 @@
 import { render, screen, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { FixtureCheckData } from '../../design';
 import type { LiveStatus } from '../../lib/liveStatus';
 import { BudgetView } from './BudgetView';
-import { claimedLabelFor, fixtureBasis, isRangeFixture, ledgerSegments, planChecks, rangeFixture, usd, type BudgetArtifact } from './model';
+import { checkBudget, claimUsd, claimedLabelFor, guardPlanStale, ledgerSegments, planChecks, usd, type BudgetArtifact, type GuardView } from './model';
 
 const ARTIFACT: BudgetArtifact = JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/budget.json'), 'utf8'));
 const clone = (): BudgetArtifact => JSON.parse(JSON.stringify(ARTIFACT)) as BudgetArtifact;
-const fixture = (a: BudgetArtifact, id: string) => a.fixtures.find((f) => f.id === id)!;
+const fixture = (a: BudgetArtifact, id: string): FixtureCheckData => a.fixtures.find((f) => f.id === id)!;
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+const RANGE_IDS = ['full-grid-days', 'full-grid-usd', 'halved-dt-days', 'halved-dt-usd'];
+/** The midpoints an earlier artifact put in `claimed` (14.5 d, $3,150, 29 d, $6,300): the PRD never printed them. */
+const MIDPOINT: Record<string, RegExp> = {
+  'full-grid-days': /(^|[^0-9.,])14\.5([^0-9]|$)/,
+  'full-grid-usd': /(^|[^0-9.])3,?150([^0-9]|$)/,
+  'halved-dt-days': /(^|[^0-9.,])29(\.0+)?([^0-9.]|$)/,
+  'halved-dt-usd': /(^|[^0-9.])6,?300([^0-9]|$)/,
+};
 
 const STATUS: LiveStatus = {
   schemaVersion: 1,
@@ -62,19 +72,24 @@ test('B6 ledger bar to the $40 ceiling: posted, planned, remaining; live guard e
   expect(screen.queryByTestId('guard-live')).toBeNull();
   expect(screen.getByText('Guard not reachable')).toBeInTheDocument();
 
-  // D-015 planning figures are labelled with their source, beside the PRD's GPU-only figures: each
-  // number under its own column header, and nothing claims to come from the API while it is unreachable.
+  // The guard's plan comes from the artifact's guardPlan (the backend priced it with the guard itself,
+  // D-023), labelled with that source beside the PRD's GPU-only figures: each number under its own
+  // column header, and nothing claims to come from the API while it is unreachable.
   expect(compareTable()).toEqual([
     ['Item', 'PRD (GPU time only)', 'Guard (incl. setup, idle, storage)'],
-    ['15-min live slot', '$1.53', '$2.65 · decision.md · D-015'],
-    ['One-hour rehearsal', '$6.10', '$7.73 · decision.md · D-015'],
-    ['Planned total incl. $8.10 posted', '$21.83', '$26.21 · decision.md · D-015'],
+    ['15-min live slot', '$1.53', '$2.65 · guard plan · budget.json'],
+    ['One-hour rehearsal', '$6.10', '$7.73 · guard plan · budget.json'],
+    ['Planned total incl. $8.10 posted', '$21.83', '$26.21 · guard plan · budget.json'],
   ]);
+  expect(ARTIFACT.guardPlan).toMatchObject({ slotEstimateUsd: 2.65, rehearsalEstimateUsd: 7.73, plannedTotalUsd: 26.21 });
   expect(screen.getByTestId('guard-slot')).not.toHaveTextContent(/api\/live\/status/);
-  expect(screen.getByTestId('guard-planned')).toHaveTextContent('$26.21 · decision.md · D-015');
   expect(screen.getByTestId('guard-planned')).not.toHaveTextContent(/out of date/);
+  expect(document.body).not.toHaveTextContent(/decision\.md · D-015/);
+  // The guard's allowances are the artifact's own words (not PRD numbers), with the plan's hard timeouts.
+  expect(screen.getByTestId('guard-assumptions')).toHaveTextContent(ARTIFACT.guardPlan.assumptions);
+  expect(screen.getByTestId('guard-assumptions')).toHaveTextContent('Hard timeouts in the plan: live slot 1500 s, rehearsal 4500 s.');
   expect(screen.getByTestId('plan-vs-ceiling')).toHaveTextContent(
-    'Both plans stay inside the $40.00 ceiling: PRD plan $21.83, D-015 guard plan $26.21.',
+    'Both plans stay inside the $40.00 ceiling: PRD GPU-only plan $21.83, Guard plan $26.21.',
   );
   unmount();
 
@@ -90,7 +105,8 @@ test('B6 ledger bar to the $40 ceiling: posted, planned, remaining; live guard e
   expect(screen.getByTestId('guard-slot')).toHaveTextContent('$2.65 · from /api/live/status');
   expect(screen.getByText('Guard · /api/live/status')).toBeInTheDocument();
   expect(compareTable()[1]).toEqual(['15-min live slot', '$1.53', '$2.65 · from /api/live/status']);
-  expect(compareTable()[3]).toEqual(['Planned total incl. $8.10 posted', '$21.83', '$26.21 · decision.md · D-015']);
+  expect(compareTable()[3]).toEqual(['Planned total incl. $8.10 posted', '$21.83', '$26.21 · guard plan · budget.json']);
+  expect(screen.queryByRole('note', { name: /differs from the guard plan/ })).toBeNull();
 });
 
 test('B6 the ledger, its title and the plan-versus-ceiling statement follow a modified artifact', async () => {
@@ -105,9 +121,9 @@ test('B6 the ledger, its title and the plan-versus-ceiling statement follow a mo
   );
   expect([...bar.querySelectorAll<HTMLElement>('.bg-bar__seg')].map((e) => e.style.width)).toEqual(['19.98%', '41.02%', '39%']);
   expect(screen.getByText('$50.00 ceiling')).toBeInTheDocument();
-  expect(compareTable()[3]).toEqual(['Planned total incl. $9.99 posted', '$30.50', '$26.21 · decision.md · D-015']);
+  expect(compareTable()[3]).toEqual(['Planned total incl. $9.99 posted', '$30.50', '$26.21 · guard plan · budget.json']);
   expect(screen.getByTestId('plan-vs-ceiling')).toHaveTextContent(
-    'Both plans stay inside the $50.00 ceiling: PRD plan $30.50, D-015 guard plan $26.21.',
+    'Both plans stay inside the $50.00 ceiling: PRD GPU-only plan $30.50, Guard plan $26.21.',
   );
   first.unmount();
 
@@ -116,39 +132,89 @@ test('B6 the ledger, its title and the plan-versus-ceiling statement follow a mo
   tight.ceilingUsd = 25;
   serve(null, tight);
   const second = render(<BudgetView livePollMs={60_000} />);
-  const warn = await screen.findByRole('note', { name: /The D-015 guard plan exceeds the \$25\.00 ceiling/ });
-  expect(warn).toHaveTextContent('D-015 guard plan $26.21 is $1.21 over the $25.00 ceiling');
-  expect(warn).toHaveTextContent('PRD plan $21.83 stays inside it');
+  const warn = await screen.findByRole('note', { name: /Over the \$25\.00 ceiling: Guard plan$/ });
+  expect(warn).toHaveTextContent('Guard plan $26.21 is $1.21 over the $25.00 ceiling');
+  expect(warn).toHaveTextContent('PRD GPU-only plan $21.83 stays inside it');
   expect(document.body).not.toHaveTextContent(/Both plans stay inside/);
   second.unmount();
 
   const over = clone();
   over.ceilingUsd = 20;
   serve(null, over);
-  render(<BudgetView livePollMs={60_000} />);
+  const third = render(<BudgetView livePollMs={60_000} />);
   const both = await screen.findByRole('note', { name: /Both plans exceed the \$20\.00 ceiling/ });
-  expect(both).toHaveTextContent('PRD plan $21.83 is $1.83 over');
-  expect(both).toHaveTextContent('D-015 guard plan $26.21 is $6.21 over');
-  expect(planChecks(over, 26.21).map((p) => p.inside)).toEqual([false, false]);
-  expect(planChecks(ARTIFACT, 26.21).map((p) => p.inside)).toEqual([true, true]);
+  expect(both).toHaveTextContent('PRD GPU-only plan $21.83 is $1.83 over');
+  expect(both).toHaveTextContent('Guard plan $26.21 is $6.21 over');
+  expect(planChecks(over).map((p) => p.inside)).toEqual([false, false]);
+  expect(planChecks(ARTIFACT).map((p) => p.inside)).toEqual([true, true]);
   expect(usd(-1.11)).toBe('−$1.11');
+  third.unmount();
+
+  // FB-2: every guard figure is the artifact's guardPlan (here: what the backend prices with a 10-min idle
+  // margin), not a constant kept in the renderer. A $27 ceiling fits the committed $26.21 plan but not this one.
+  const repriced = clone();
+  repriced.ceilingUsd = 27;
+  repriced.guardPlan = {
+    slotEstimateUsd: 3.15,
+    rehearsalEstimateUsd: 8.24,
+    slotHardTimeoutS: 1800,
+    rehearsalHardTimeoutS: 4800,
+    plannedTotalUsd: 27.73,
+    assumptions: 'Synthetic plan: 10 min idle margin per launch.',
+  };
+  serve(null, repriced);
+  render(<BudgetView livePollMs={60_000} />);
+  await screen.findByTestId('ledger-bar');
+  expect(compareTable().slice(1).map((r) => r[2])).toEqual([
+    '$3.15 · guard plan · budget.json',
+    '$8.24 · guard plan · budget.json',
+    '$27.73 · guard plan · budget.json',
+  ]);
+  expect(screen.getByTestId('guard-assumptions')).toHaveTextContent(
+    'Synthetic plan: 10 min idle margin per launch. Hard timeouts in the plan: live slot 1800 s, rehearsal 4800 s.',
+  );
+  expect(screen.getByTestId('guard-assumptions')).not.toHaveTextContent(ARTIFACT.guardPlan.assumptions);
+  const guardOver = screen.getByRole('note', { name: /Over the \$27\.00 ceiling: Guard plan$/ });
+  expect(guardOver).toHaveTextContent('Guard plan $27.73 is $0.73 over the $27.00 ceiling. PRD GPU-only plan $21.83 stays inside it.');
 });
 
-test('B6 a live guard estimate that differs from D-015 marks the D-015 planning figures as possibly out of date', async () => {
+test('B6 a live guard estimate that differs from the artifact guard plan marks the plan figures as possibly out of date', async () => {
   serve({ ...STATUS, budget: { ...STATUS.budget, billedUsd: 36, pendingUsd: 2, slotEstimateUsd: 3.11, slotFits: false } });
-  render(<BudgetView livePollMs={60_000} />);
+  const first = render(<BudgetView livePollMs={60_000} />);
   const guard = await screen.findByTestId('guard-live');
   expect(within(guard).getByText(/Next slot does NOT fit — replay only/)).toBeInTheDocument();
   expect(within(guard).getByText('−$1.11')).toBeInTheDocument(); // 40 − 36 − 2 − 3.11, never "$-1.11"
   expect(screen.getByTestId('guard-slot')).toHaveTextContent('$3.11 · from /api/live/status');
-  // The rehearsal price and the planned total are still the D-015 planning figures (no API field carries
-  // them): they keep their source and say that the live estimate has moved away from it.
-  expect(screen.getByTestId('guard-planned')).toHaveTextContent('$26.21 · decision.md · D-015');
+  // The rehearsal price and the planned total are still the plan's figures (no API field carries them):
+  // they keep their source and say that the live estimate has moved away from it.
+  expect(screen.getByTestId('guard-planned')).toHaveTextContent('$26.21 · guard plan · budget.json · may be out of date');
+  expect(screen.getByTestId('guard-rehearsal')).toHaveTextContent('$7.73 · guard plan · budget.json · may be out of date');
+  const stale = screen.getByRole('note', { name: /live guard estimate differs from the guard plan in the artifact/ });
+  expect(stale).toHaveTextContent('The guard now estimates the next slot at $3.11; the plan in artifacts/budget.json was priced with $2.65.');
+  first.unmount();
+
+  // The comparison is with the artifact's plan, not a constant: a plan priced at $3.11 agrees with a live $3.11 …
+  const same = clone();
+  same.guardPlan = { ...same.guardPlan, slotEstimateUsd: 3.11 };
+  serve({ ...STATUS, budget: { ...STATUS.budget, slotEstimateUsd: 3.11 } }, same);
+  const second = render(<BudgetView livePollMs={60_000} />);
+  await screen.findByTestId('guard-live');
+  expect(screen.getByTestId('guard-planned')).not.toHaveTextContent(/out of date/);
+  expect(screen.queryByRole('note', { name: /differs from the guard plan/ })).toBeNull();
+  second.unmount();
+
+  // … and disagrees with the live $2.65 the committed plan would have matched.
+  serve(STATUS, same);
+  render(<BudgetView livePollMs={60_000} />);
+  await screen.findByTestId('guard-live');
   expect(screen.getByTestId('guard-planned')).toHaveTextContent(/may be out of date/);
-  expect(screen.getByTestId('guard-rehearsal')).toHaveTextContent(/may be out of date/);
-  const stale = screen.getByRole('note', { name: /live guard estimate differs from the D-015 planning figures/ });
-  expect(stale).toHaveTextContent('$3.11');
-  expect(stale).toHaveTextContent('$2.65');
+  expect(screen.getByRole('note', { name: /differs from the guard plan/ })).toHaveTextContent('was priced with $3.11');
+
+  // Cents decide, not float noise; no live answer is never "stale".
+  const view = (slot: number) => ({ slotEstimateUsd: slot }) as GuardView;
+  expect(guardPlanStale(view(2.6500000001), ARTIFACT.guardPlan)).toBe(false);
+  expect(guardPlanStale(view(2.66), ARTIFACT.guardPlan)).toBe(true);
+  expect(guardPlanStale(null, ARTIFACT.guardPlan)).toBe(false);
 });
 
 test('B7 scenario cards show headline, derivation and interpretation; PRD-reported vs derived; ranges never midpoints', async () => {
@@ -174,41 +240,48 @@ test('B7 scenario cards show headline, derivation and interpretation; PRD-report
   expect(screen.getAllByText('PRD-reported context')).toHaveLength(2);
   expect(screen.getAllByText('Derived estimate')).toHaveLength(2);
 
-  // Range fixtures: the PRD range and the computed value, never the backend's midpoint "claimed" value.
-  const RANGE_NOTE = 'The PRD prints only a range; compared by range, not by rounding.';
-  const rangeText = (id: string) => screen.getByTestId(`range-${id}`).textContent;
-  expect(rangeText('full-grid-days')).toBe(`Full-grid stella wall time${RANGE_NOTE}PRD range14–15 daysComputed14.45 daysInside PRD range`);
-  expect(rangeText('full-grid-usd')).toBe(`Full-grid stella cost${RANGE_NOTE}PRD range3,100–3,200 USDComputed3,173 USDInside PRD range`);
-  expect(rangeText('halved-dt-days')).toBe(`Full-grid wall time, halved timestep${RANGE_NOTE}PRD range28–30 daysComputed28.90 daysInside PRD range`);
-  expect(rangeText('halved-dt-usd')).toBe(`Full-grid cost, halved timestep${RANGE_NOTE}PRD range6,200–6,400 USDComputed6,346 USDInside PRD range`);
-  for (const id of ['full-grid-days', 'full-grid-usd', 'halved-dt-days', 'halved-dt-usd']) {
-    const r = screen.getByTestId(`range-${id}`);
-    expect(r).toHaveAttribute('data-outcome', 'inside');
+  // FB-1, range fixtures (D-023): `claimed` is null and the PRD range is `claimedRange`. The row shows
+  // "PRD range lo–hi unit" and the computed value checked lo ≤ computed ≤ hi; no midpoint anywhere.
+  const row = (f: FixtureCheckData) => screen.getByRole('group', { name: new RegExp(`^${escapeRe(f.label)}: `) });
+  const SPOKEN: Record<string, string> = {
+    'full-grid-days': 'Full-grid stella wall time: Arithmetic in PRD range. PRD range 14 to 15 days, computed 14.45 days, distance to the range 0.00',
+    'full-grid-usd': 'Full-grid stella cost: Arithmetic in PRD range. PRD range 3100 to 3200 USD, computed 3172.76 USD, distance to the range 0.00',
+    'halved-dt-days': 'Full-grid wall time, halved timestep: Arithmetic in PRD range. PRD range 28 to 30 days, computed 28.90 days, distance to the range 0.00',
+    'halved-dt-usd': 'Full-grid cost, halved timestep: Arithmetic in PRD range. PRD range 6200 to 6400 USD, computed 6345.52 USD, distance to the range 0.00',
+  };
+  for (const id of RANGE_IDS) {
+    const f = fixture(ARTIFACT, id);
+    expect(f.claimed).toBeNull();
+    expect(f.claimedRange).toHaveLength(2);
+    const r = row(f);
+    expect(r).toHaveAccessibleName(SPOKEN[id]);
+    expect(r).toHaveAttribute('data-claim', 'range');
+    expect(r).toHaveAttribute('data-outcome', 'match');
+    expect(within(r).getByText('PRD range')).toBeInTheDocument();
     expect(r).not.toHaveTextContent(/midpoint|Claimed/i);
-    const midpoint = fixture(ARTIFACT, id).claimed.toLocaleString('en-US').replace(/[.]/g, '\\.'); // 14.5, 3,150, 29, 6,300
-    expect(r).not.toHaveTextContent(new RegExp(`(^|[^0-9.,])${midpoint}([^0-9.,]|$)`));
-    expect(r).not.toHaveTextContent(new RegExp(`(^|[^0-9.,])${midpoint.replace(',', '')}([^0-9.,]|$)`));
+    expect(r).not.toHaveTextContent(MIDPOINT[id]!);
   }
-  expect(screen.getByRole('group', { name: 'Full-grid stella wall time: Inside PRD range. PRD range 14 to 15 days, computed 14.45 days' })).toBeInTheDocument();
-  expect(rangeFixture(fixture(ARTIFACT, 'halved-dt-days'))).toMatchObject({ lo: 28, hi: 30, inside: true, rangeAvailable: true });
+  expect(row(fixture(ARTIFACT, 'full-grid-usd')).querySelector('[data-testid="claimed"]')).toHaveTextContent(/^3100–3200\s*USD$/);
+  expect(screen.getAllByText('Arithmetic in PRD range')).toHaveLength(4);
+  expect(document.querySelector('.bg-range')).toBeNull();
 
-  // Ordinary fixtures still use claimed vs computed.
-  const slot = screen.getByRole('group', { name: /^Live slot, 15 min at \$6\.10\/h: Match\. Claimed 1\.53/ });
-  expect(slot).toHaveAttribute('data-basis', 'data');
-  expect(screen.getByRole('group', { name: /^GX bean benchmark, 1 GPU, 4×8: Not recomputable/ })).toBeInTheDocument();
-  // DS-13: 161 h × 288 = 46,368 only redoes the arithmetic on PRD-reported inputs (the scenario is
-  // PRD-reported): "Arithmetic consistent", never the "Match" of a value recomputed from data.
+  // FB-3: what a match is backed by is the fixture's own `basis` (absent = data), never a list kept here.
+  for (const f of ARTIFACT.fixtures) expect(row(f)).toHaveAttribute('data-basis', f.basis ?? 'data');
+  expect(ARTIFACT.fixtures.filter((f) => f.basis === 'arithmetic').map((f) => f.id)).toEqual([
+    'live-slot-usd', 'rehearsals-plus-slot-usd', 'planned-usd', 'remaining-usd', 'stella-published-cpu-h', ...RANGE_IDS,
+  ]);
+  // 161 h × 288 = 46,368 only redoes the arithmetic on PRD-reported inputs: "Arithmetic consistent", never "Match".
   const published = screen.getByRole('group', { name: /^Published stella bean: 161 h × 288 processors: Arithmetic consistent\. Claimed 46368 CPU-h, computed 46368 CPU-h/ });
-  expect(published).toHaveAttribute('data-basis', 'arithmetic');
   expect(within(published).queryByText('Match')).toBeNull();
-  expect(fixtureBasis(ARTIFACT, fixture(ARTIFACT, 'stella-published-cpu-h'))).toBe('arithmetic');
-  expect(fixtureBasis(ARTIFACT, fixture(ARTIFACT, 'planned-usd'))).toBe('data');
-  expect(screen.getAllByText('Arithmetic consistent')).toHaveLength(1);
+  expect(screen.getByRole('group', { name: /^Live slot, 15 min at \$6\.10\/h: Arithmetic consistent\. Claimed 1\.53 USD, computed 1\.53 USD/ })).toBeInTheDocument();
+  expect(screen.getAllByText('Arithmetic consistent')).toHaveLength(5);
+  expect(screen.queryByText('Match')).toBeNull();
+  expect(screen.getByRole('group', { name: /^GX bean benchmark, 1 GPU, 4×8: Not recomputable\. Claimed 28 min, computed value not available$/ })).toHaveAttribute('data-basis', 'data');
   // $18.17 is not a PRD figure (the PRD implies it; TASK.md states it): its column says so.
-  const remaining = screen.getByRole('group', { name: /^Remaining of the \$40 ceiling after the plan: Match\. Claimed 18\.17/ });
+  const remaining = screen.getByRole('group', { name: /^Remaining of the \$40 ceiling after the plan: Arithmetic consistent\. Claimed 18\.17/ });
   expect(within(remaining).getByText('Claimed (TASK.md)')).toBeInTheDocument();
   expect(remaining).not.toHaveTextContent('Claimed (PRD)');
-  expect(within(screen.getByRole('group', { name: /^Planned incl\. \$8\.10 posted: Match/ })).getByText('Claimed (PRD)')).toBeInTheDocument();
+  expect(within(screen.getByRole('group', { name: /^Planned incl\. \$8\.10 posted: Arithmetic consistent/ })).getByText('Claimed (PRD)')).toBeInTheDocument();
   expect(claimedLabelFor(fixture(ARTIFACT, 'remaining-usd'))).toBe('Claimed (TASK.md)');
   expect(claimedLabelFor(fixture(ARTIFACT, 'planned-usd'))).toBeUndefined();
 });
@@ -227,30 +300,33 @@ test('B7 range rows follow a modified artifact: outside the range, matches false
   };
   serve(null, a);
   render(<BudgetView livePollMs={60_000} />);
+  const group = (label: string) => screen.getByRole('group', { name: new RegExp(`^${escapeRe(label)}: `) });
 
-  const days = await screen.findByTestId('range-full-grid-days');
-  expect(days).toHaveAttribute('data-outcome', 'outside');
-  expect(days).toHaveAccessibleName('Full-grid stella wall time: Outside PRD range. PRD range 14 to 15 days, computed 15.20 days');
+  await screen.findByTestId('ledger-bar');
+  const days = group('Full-grid stella wall time');
+  expect(days).toHaveAttribute('data-outcome', 'mismatch');
+  expect(days).toHaveAccessibleName('Full-grid stella wall time: Outside PRD range. PRD range 14 to 15 days, computed 15.20 days, distance to the range plus 0.20');
   expect(within(days).getByText('Outside PRD range')).toBeInTheDocument();
 
-  const cost = screen.getByTestId('range-full-grid-usd');
-  expect(cost).toHaveAttribute('data-outcome', 'outside');
+  const cost = group('Full-grid stella cost');
+  expect(cost).toHaveAttribute('data-outcome', 'mismatch');
   expect(cost).toHaveAccessibleName(
-    'Full-grid stella cost: Outside PRD range. PRD range 3,100 to 3,200 USD, computed 3,173 USD. The match flag disagrees with the range test.',
+    'Full-grid stella cost: Mismatch. PRD range 3100 to 3200 USD, computed 3172.76 USD, distance to the range 0.00. The match flag disagrees with the range test.',
   );
-  expect(cost).toHaveTextContent('Match flag disagrees with the range test — treated as outside.');
+  expect(cost).toHaveTextContent('Match flag disagrees with the range test — treated as a mismatch.');
 
-  const halved = screen.getByTestId('range-halved-dt-days');
+  const halved = group('Full-grid wall time, halved timestep');
   expect(halved).toHaveAttribute('data-outcome', 'unknown');
-  expect(halved).toHaveAccessibleName('Full-grid wall time, halved timestep: Not recomputable. PRD range 28 to 30 days, computed 28.90 days');
-  expect(within(halved).queryByText('Inside PRD range')).toBeNull();
+  expect(halved).toHaveAccessibleName('Full-grid wall time, halved timestep: Not recomputable. PRD range 28 to 30 days, computed 28.90 days, distance to the range 0.00');
+  expect(within(halved).getByText('PRD range')).toBeInTheDocument();
 
-  const halvedCost = screen.getByTestId('range-halved-dt-usd');
-  expect(halvedCost).toHaveAttribute('data-outcome', 'outside');
+  const halvedCost = group('Full-grid cost, halved timestep');
+  expect(halvedCost).toHaveAttribute('data-outcome', 'mismatch');
   expect(halvedCost).toHaveAccessibleName(
-    'Full-grid cost, halved timestep: Outside PRD range. PRD range 6,200 to 6,400 USD, computed 6,500 USD. The match flag disagrees with the range test.',
+    'Full-grid cost, halved timestep: Outside PRD range. PRD range 6200 to 6400 USD, computed 6500.40 USD, distance to the range plus 100.40. The match flag disagrees with the range test.',
   );
-  expect(screen.queryByText('Inside PRD range')).toBeNull();
+  expect(screen.queryByText(/Inside PRD range|Arithmetic in PRD range/)).toBeNull();
+  for (const id of RANGE_IDS) expect(group(fixture(a, id).label)).not.toHaveTextContent(MIDPOINT[id]!);
 
   // An ordinary fixture that stops matching is a mismatch; a scenario whose provenance changes is relabelled.
   expect(screen.getByRole('group', { name: /^Live slot, 15 min at \$6\.10\/h: Mismatch\. Claimed 1\.53 USD, computed 1\.52 USD, difference minus 0\.01/ })).toBeInTheDocument();
@@ -261,38 +337,51 @@ test('B7 range rows follow a modified artifact: outside the range, matches false
   expect(screen.getAllByText('PRD-reported context')).toHaveLength(1);
 });
 
-test('B7 a range fixture that loses its range text shows the range as unavailable, never the midpoint as a PRD figure', async () => {
+test('FB-1 a range is read from claimedRange only: no range and no claim shows "—", prose is never parsed, an old midpoint is never shown', async () => {
   const a = clone();
+  // No claimedRange and claimed null: the PRD value is not available. The label still carries the old
+  // "PRD range [..]" prose, which must not be read back into a range.
   const f = fixture(a, 'halved-dt-days');
-  f.label = 'Full-grid wall time, halved timestep';
-  f.note = 'midpoint';
-  const g = fixture(a, 'full-grid-usd');
-  g.label = 'Full-grid stella cost';
-  delete g.note;
+  delete f.claimedRange;
+  f.label = 'Full-grid wall time, halved timestep — PRD range [28, 30] days';
+  // An old artifact's midpoint beside the range (the schema now forbids it): the range still wins.
+  fixture(a, 'full-grid-usd').claimed = 3150;
+  // The PRD column of the guard table reads the same fixture: no claim, no figure.
+  Object.assign(fixture(a, 'live-slot-usd'), { claimed: null, matches: null });
   serve(null, a);
-  render(<BudgetView livePollMs={60_000} />);
-  const row = await screen.findByTestId('range-halved-dt-days');
-  expect(row).toHaveAttribute('data-outcome', 'unknown');
-  expect(row).toHaveAccessibleName(
-    'Full-grid wall time, halved timestep: PRD range unavailable. The artifact does not carry the PRD range, so no comparison is made. Computed 28.90 days',
-  );
-  expect(within(row).getByText('PRD range unavailable')).toBeInTheDocument();
-  expect(row).toHaveTextContent('unavailable in the artifact');
-  expect(row).toHaveTextContent('28.90 days');
-  // The midpoint (29 / 3,150) is nowhere, and nothing in the row is labelled as a PRD claim or a match.
-  expect(row).not.toHaveTextContent(/(^|[^0-9.])29([^0-9.]|$)/);
-  expect(row).not.toHaveTextContent(/Claimed|Match|Inside PRD range/);
-  const cost = screen.getByTestId('range-full-grid-usd');
-  expect(cost).toHaveAttribute('data-outcome', 'unknown');
-  expect(cost).not.toHaveTextContent(/3,?150/);
-  expect(cost).toHaveTextContent('3,173 USD');
-  expect(screen.queryByRole('group', { name: /Claimed 29\b|Claimed 3,?150/ })).toBeNull();
-  expect(document.body).not.toHaveTextContent(/Claimed \(PRD\)\s*29(?![0-9.])/);
+  const first = render(<BudgetView livePollMs={60_000} />);
+  await screen.findByTestId('ledger-bar');
 
-  expect(isRangeFixture(f)).toBe(true);
-  expect(isRangeFixture(g)).toBe(true);
-  expect(rangeFixture(f)).toMatchObject({ rangeAvailable: false, lo: null, hi: null, inside: null, unit: 'days' });
-  expect(isRangeFixture(fixture(ARTIFACT, 'live-slot-usd'))).toBe(false);
+  const none = screen.getByRole('group', { name: /^Full-grid wall time, halved timestep — PRD range \[28, 30\] days: / });
+  expect(none).toHaveAccessibleName(
+    'Full-grid wall time, halved timestep — PRD range [28, 30] days: No PRD value. Claimed value not available, computed 29 days',
+  );
+  expect(none).toHaveAttribute('data-claim', 'none');
+  expect(none).toHaveAttribute('data-outcome', 'unknown');
+  expect(within(none).getByTestId('claimed')).toHaveTextContent(/^—$/);
+  expect(within(none).getByText('No PRD value')).toBeInTheDocument();
+  expect(within(none).queryByText('PRD range')).toBeNull();
+
+  const cost = screen.getByRole('group', { name: /^Full-grid stella cost: / });
+  expect(cost).toHaveAccessibleName('Full-grid stella cost: Arithmetic in PRD range. PRD range 3100 to 3200 USD, computed 3172.76 USD, distance to the range 0.00');
+  expect(cost).not.toHaveTextContent(MIDPOINT['full-grid-usd']!);
+  expect(screen.queryByRole('group', { name: /Claimed 3,?150/ })).toBeNull();
+
+  expect(screen.getByTestId('prd-slot')).toHaveTextContent(/^—$/);
+  expect(screen.getByRole('group', { name: /^Live slot, 15 min at \$6\.10\/h: No PRD value\. Claimed value not available, computed 1\.53 USD$/ })).toBeInTheDocument();
+  first.unmount();
+
+  // A slot price the PRD printed as a range is shown as that range in the guard table, never collapsed.
+  const ranged = clone();
+  Object.assign(fixture(ranged, 'live-slot-usd'), { claimed: null, claimedRange: [1.5, 1.6] });
+  serve(null, ranged);
+  render(<BudgetView livePollMs={60_000} />);
+  await screen.findByTestId('ledger-bar');
+  expect(screen.getByTestId('prd-slot')).toHaveTextContent(/^\$1\.50–\$1\.60$/);
+  expect(screen.getByRole('group', { name: /^Live slot, 15 min at \$6\.10\/h: Arithmetic in PRD range\. PRD range 1\.50 to 1\.60 USD/ })).toHaveAttribute('data-claim', 'range');
+  expect(screen.getByTestId('prd-slot')).not.toHaveTextContent('1.55');
+  expect(claimUsd({ ...fixture(ranged, 'live-slot-usd'), claimedRange: [1.6, 1.5] })).toBe('$1.50–$1.60');
+  expect(claimUsd(undefined)).toBe('—');
 });
 
 test('B7 a scenario whose provenance kind is "live" is shown as a recorded run: an artifact can never earn the LIVE pill', async () => {
@@ -322,16 +411,30 @@ test('A3 budget: a missing or invalid artifact shows an error naming the file, n
   first.unmount();
 
   serve(null, { ...ARTIFACT, schemaVersion: 2 });
-  render(<BudgetView livePollMs={60_000} />);
+  const second = render(<BudgetView livePollMs={60_000} />);
   expect(await screen.findByRole('note', { name: /artifacts\/budget\.json failed to load/ })).toHaveTextContent('unexpected schemaVersion');
+  second.unmount();
+
+  // An artifact from before D-023 has no guardPlan: named, never a half-drawn guard panel.
+  const old: Partial<BudgetArtifact> = clone();
+  delete old.guardPlan;
+  serve(null, old);
+  render(<BudgetView livePollMs={60_000} />);
+  expect(await screen.findByRole('note', { name: /artifacts\/budget\.json failed to load/ })).toHaveTextContent(
+    'artifacts/budget.json: guardPlan is missing (contract D-023)',
+  );
+  expect(screen.queryByTestId('ledger-bar')).toBeNull();
+  expect(checkBudget(ARTIFACT)).toBeNull();
+  expect(checkBudget({ ...ARTIFACT, guardPlan: { ...ARTIFACT.guardPlan, plannedTotalUsd: Number.NaN } })).toBe('guardPlan.plannedTotalUsd is not a number');
+  expect(checkBudget({ ...ARTIFACT, fixtures: undefined as unknown as FixtureCheckData[] })).toBe('scenarios or fixtures is missing');
 });
 
 test('DS-1 / DS-19 fixture rows reflow by the width of their card, and the scenario grid never orphans a card', () => {
   const css = readFileSync(resolve(__dirname, 'budget.css'), 'utf8');
-  // The rows sit in ~450–690 px cards on a 1440 px screen: a viewport media query never fires there.
+  // The rows sit in ~450–690 px cards on a 1440 px screen: a viewport media query never fires there, so
+  // the FixtureCheck rows (PRD ranges included) measure this wrapper. The hand-built range row is gone.
   expect(css).toMatch(/\.bg-fixtures\s*\{[^}]*container-type:\s*inline-size/);
-  expect(css).toMatch(/@container[^{]*\{[^@]*\.bg-range\s*\{[^}]*grid-template-columns/);
-  expect(css).not.toMatch(/@media[^{]*\{[^@]*\.bg-range\b/);
+  expect(css).not.toMatch(/\.bg-range/);
   // Two columns or one, by the width of the view: never three plus an orphan.
   expect(css).toMatch(/\.bg-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
   expect(css).not.toMatch(/auto-fit/);

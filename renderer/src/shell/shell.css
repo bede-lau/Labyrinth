@@ -36,21 +36,9 @@
 .shell-mode__detail { font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-subtle); text-align: right; max-width: 64ch; overflow-wrap: anywhere; }
 .shell-mode--broken .shell-mode__detail { color: var(--lab-status-failed-fg); font-weight: var(--lab-font-weight-semibold); }
 
-/* Danger on every route: termination failed / pending, or a session lost mid-run. Loud on purpose (role=alert). */
-.shell-alert {
-  flex: 1 1 100%;
-  display: flex; gap: var(--lab-space-3); align-items: flex-start;
-  padding: var(--lab-space-3) var(--lab-space-4);
-  border: 2px solid var(--lab-status-failed-border);
-  border-radius: var(--lab-radius-md);
-  background: var(--lab-status-failed-bg);
-  color: var(--lab-status-failed-fg);
-}
-.shell-alert__icon { flex: none; margin-top: var(--lab-space-0-5); }
-.shell-alert__text { min-width: 0; display: flex; flex-direction: column; gap: var(--lab-space-1); }
-.shell-alert__title { font-size: var(--lab-font-size-lg); line-height: var(--lab-line-height-lg); font-weight: var(--lab-font-weight-bold); text-transform: uppercase; }
-.shell-alert__body, .shell-alert__action { font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text); overflow-wrap: anywhere; }
-.shell-alert__link { color: var(--lab-status-failed-fg); font-weight: var(--lab-font-weight-semibold); }
+/* "GPUs may still be billing" on every route: the design system's Alert (DESIGN.md §5), a full-width row
+   of the header. Layout only here; the treatment is the Alert's. */
+.shell-alert { flex: 1 1 100%; min-width: 0; }
 
 .shell-nav {
   background: var(--lab-color-surface);

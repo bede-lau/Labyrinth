@@ -50,8 +50,28 @@ test('F9: the specimen chart draws GX with its markers, and lists the unsampled 
   ]);
   expect(lines[2]?.marker?.symbol).toBe('diamond');
   const rects = layout.shapes.filter((s) => s.type === 'rect').map((s) => s.name);
-  expect(rects[0]).toBe('unsampled');
-  expect(rects.slice(1).every((n) => /^window /.test(n ?? ''))).toBe(true);
+  expect(rects.slice(0, 2)).toEqual(['unsampled', 'unsampled label']);
+  expect(rects.slice(2).every((n) => /^window /.test(n ?? ''))).toBe(true);
+  expect(rects.length).toBeGreaterThan(2);
+});
+
+test('DL-6: the gallery shows the danger pill and alerts, range fixtures and both bases', () => {
+  const { container } = render(<Gallery />);
+  // The danger kind is in the status list, and the live-session panel shows the pills A's store produces.
+  expect(container.querySelector('.gal-status [data-status="billing-risk"]')).not.toBeNull();
+  const danger = screen.getByRole('region', { name: 'GPUs may still be billing' });
+  const pills = Array.from(danger.querySelectorAll('[data-status="billing-risk"]')).map((p) => p.textContent);
+  expect(pills).toEqual(expect.arrayContaining(['TERMINATE FAILED', 'TERMINATION PENDING', 'Stop not confirmed', 'Connection lost']));
+  const alerts = within(danger).getAllByRole('alert');
+  expect(alerts.length).toBeGreaterThanOrEqual(2);
+  expect(within(danger).getByRole('alert', { name: /^Danger: TERMINATE FAILED/ })).toHaveTextContent('kill switch raised, stop not confirmed');
+  expect(within(danger).getByRole('button', { name: 'Retry terminate' })).toBeInTheDocument();
+  // D-023 fixtures: a range inside (data), a range inside (arithmetic), a range outside; and the point bases.
+  expect(screen.getByRole('group', { name: /: Inside PRD range\. PRD range / })).toHaveAttribute('data-basis', 'data');
+  expect(screen.getByRole('group', { name: /: Arithmetic in PRD range\. PRD range / })).toHaveAttribute('data-basis', 'arithmetic');
+  expect(screen.getByRole('group', { name: /: Outside PRD range\. PRD range / })).toHaveAttribute('data-outcome', 'mismatch');
+  expect(screen.getByRole('group', { name: /: Arithmetic consistent\./ })).toHaveAttribute('data-basis', 'arithmetic');
+  expect(screen.getByRole('group', { name: /: Match\./ })).toHaveAttribute('data-basis', 'data');
 });
 
 test('F9: the palette table has whole headers, one row per series, and the measured minima with their gates', () => {

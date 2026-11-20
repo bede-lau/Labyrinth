@@ -109,11 +109,22 @@ def modal_timeout_s(kind: str) -> int:
     return planned_call_s(kind) - modal_startup_timeout_s()
 
 
+def _usable_usd(v) -> bool:
+    """A ledger amount the guard can reason about: a finite, non-negative int or float that is also finite as a
+    float. Never raises: an integer too large for a float (`math.isfinite(10**400)` raises OverflowError) is
+    simply not usable, so a hand-edited ledger.json can only ever make the guard refuse."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    try:
+        return math.isfinite(v) and v >= 0
+    except OverflowError:
+        return False
+
+
 def evaluate(ledger: Ledger, *, slot_min: float = LIVE_SLOT_MIN, setups: int = 1, ceiling_usd: float = CEILING_USD,
              rate_usd_per_h: float = LIVE_RATE_USD_PER_H) -> GuardDecision:
     estimate = slot_estimate_usd(slot_min, setups=setups, rate_usd_per_h=rate_usd_per_h)
-    values_ok = all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0
-                    for v in (ledger.billed, ledger.pending))
+    values_ok = all(_usable_usd(v) for v in (ledger.billed, ledger.pending))
     billed = float(ledger.billed) if values_ok else 0.0
     pending = float(ledger.pending) if values_ok else 0.0
     remaining = ceiling_usd - billed - pending

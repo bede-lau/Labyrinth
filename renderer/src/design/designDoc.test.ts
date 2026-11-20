@@ -254,6 +254,30 @@ describe('§5 status table: one row per status, with the icon and text the code 
     expect(s).toMatch(/`live` prop/);
     expect(s).toContain('Recorded run');
   });
+  // DL-1: the mapping table follows the states the live-status store exposes (lib/, read as text:
+  // the design system never imports from it).
+  test('the live-state mapping names every mode, store status and danger kind the store exposes', () => {
+    const lib = resolve(RENDERER, 'src/lib');
+    const contract = readFileSync(resolve(lib, 'liveContract.ts'), 'utf8');
+    const store = readFileSync(resolve(lib, 'liveStatus.ts'), 'utf8');
+    const quoted = (src: string | undefined) => [...(src ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1] as string);
+    const modes = quoted(/export type LiveMode = ([^;]+);/.exec(contract)?.[1]);
+    const stateType = /export type LiveState =([\s\S]*?);\n\n/.exec(store)?.[1] ?? '';
+    const statuses = [...stateType.matchAll(/status: '([a-z-]+)'/g)].map((m) => m[1] as string);
+    const kinds = quoted(/interface LiveDanger \{\s*kind: ((?:'[^']+'\s*\|?\s*)+);/.exec(store)?.[1]);
+    expect(modes).toEqual(['unavailable', 'idle', 'launching', 'live', 'fallback', 'terminated']);
+    expect(new Set(statuses)).toEqual(new Set(['connecting', 'unreachable', 'ready']));
+    expect(kinds.length).toBeGreaterThanOrEqual(3);
+    const table = tableIn(/^## 5\. Status semantics/, 'Live state');
+    const named = new Set(table.rows.flatMap((r) => codes(r[0])));
+    for (const name of [...modes, ...statuses, ...kinds, 'stale']) expect(named, name).toContain(name);
+    // Every danger row uses the billing-risk pill and the Alert.
+    for (const kind of kinds) {
+      const row = table.rows.find((r) => codes(r[0]).includes(kind));
+      expect(row?.[1], kind).toContain('status="billing-risk"');
+      expect(row?.[2], kind).toContain('<Alert');
+    }
+  });
 });
 
 // ---- §6, §7 charts and scene -------------------------------------------------------------------
@@ -291,8 +315,8 @@ describe('§8 components table and index.ts list the same components', () => {
     .flatMap((m) => (m[1] as string).split(','))
     .map((s) => s.trim())
     .filter((s) => s && !s.startsWith('type ') && /^[A-Z]/.test(s));
-  test('index.ts exports the nine primitives (the control for this test)', () => {
-    expect(exported.sort()).toEqual(['Callout', 'FixtureCheck', 'Icon', 'Panel', 'ProvenanceBadge', 'SegmentedControl', 'Stat', 'StatusPill', 'Unit']);
+  test('index.ts exports the ten primitives (the control for this test)', () => {
+    expect(exported.sort()).toEqual(['Alert', 'Callout', 'FixtureCheck', 'Icon', 'Panel', 'ProvenanceBadge', 'SegmentedControl', 'Stat', 'StatusPill', 'Unit']);
     for (const name of exported) expect(typeof (publicApi as Record<string, unknown>)[name], name).toBe('function');
   });
   test('every exported component has a row', () => {

@@ -17,27 +17,38 @@ export interface LastKnown {
   receivedAt: number;
 }
 
+/**
+ * Where a launch POSTed from this page stands (FA-4, maintainer decision 2026-11-20):
+ * `sent` the request is in flight · `accepted` 202 · `refused` 409, nothing was launched ·
+ * `unknown` no answer, or an answer that is neither (the backend may or may not have started a session).
+ */
+export type LaunchPhase = 'sent' | 'accepted' | 'refused' | 'unknown';
+
+/** The launch lock, carried on every store status while it holds. */
+interface LaunchLock {
+  /** Launch stays disabled: `sent`/`accepted` until a later snapshot reports a mode other than idle, `refused`/`unknown` until the next snapshot. */
+  launchLocked?: boolean;
+  launchPhase?: LaunchPhase;
+}
+
 export type LiveState =
-  | { status: 'connecting'; launchLocked?: boolean }
-  | {
+  | ({ status: 'connecting' } & LaunchLock)
+  | ({
       status: 'unreachable';
       message: string;
       /** Why: no answer, a non-2xx answer, an answer that broke the contract, or no fresh answer in time. */
       cause?: 'network' | 'http' | 'invalid' | 'timeout' | 'stale';
       /** The last valid snapshot seen before the API stopped answering (absent if there never was one). */
       lastKnown?: LastKnown;
-      launchLocked?: boolean;
-    }
-  | {
+    } & LaunchLock)
+  | ({
       status: 'ready';
       data: LiveStatus;
       /** When this snapshot arrived (ms since the epoch). */
       receivedAt?: number;
       /** How long after `receivedAt` it still counts as fresh (two poll intervals + the request timeout). */
       freshForMs?: number;
-      /** A launch was POSTed and the API has not reported another mode since. */
-      launchLocked?: boolean;
-    };
+    } & LaunchLock);
 
 /** True only when the backend itself reports live — the single source for any LIVE indicator. */
 export function isLive(s: LiveState): boolean {
@@ -45,8 +56,26 @@ export function isLive(s: LiveState): boolean {
 }
 
 /* ---- danger states (money safety) ----------------------------------------------------------- */
+// The backend's own wording, read from main/labyrinth_main/features/live_gx (read only, never imported):
+//   orchestrator.py:56   TERMINATE_FAILED  "TERMINATE FAILED — check Modal dashboard; GPUs may still be billing"
+//   orchestrator.py:57   TERMINATE_PENDING "TERMINATION PENDING — cancel queued, not yet confirmed; GPUs may still be billing"
+//   orchestrator.py:59   TERMINATING       "TERMINATION PENDING — terminating workers, no cancel confirmed yet; …"
+//   orchestrator.py:61   KILL_SWITCH_ONLY  "kill switch raised, stop not confirmed"  (modal_backend.py:183, under TERMINATE FAILED)
+//   modal_backend.py:184 "… and the run kill switch could not be set: <error>"    (under TERMINATE FAILED)
+//   modal_backend.py:325-326 pending clause "the run kill switch is raised" / "the run kill switch could NOT be set (…)"
+//   orchestrator.py:62   STOPPING          "Stop requested; terminating workers — not confirmed yet" (mode stays launching/live)
+//   orchestrator.py:320-333 how `reason` is assembled from them (the marker always leads its clause).
 export const TERMINATION_MARKERS = ['TERMINATE FAILED', 'TERMINATION PENDING'] as const;
 export type TerminationMarker = (typeof TERMINATION_MARKERS)[number];
+/**
+ * A stop that only raised the run's kill switch, or could not even set it: never confirmed
+ * (modal_backend.py:28-33 "a kill-switch-only stop is NEVER ok: true"). The backend reports both under
+ * TERMINATE FAILED; if a reason ever carries the phrase without the marker it is still a failed stop.
+ */
+const KILL_SWITCH_UNCONFIRMED = ['KILL SWITCH RAISED, STOP NOT CONFIRMED', 'KILL SWITCH COULD NOT BE SET'] as const;
+/** orchestrator.py:62 STOPPING: a stop was requested and no termination is confirmed yet. */
+export const STOP_REQUESTED = 'Stop requested; terminating workers — not confirmed yet';
+
 export interface TerminationProblem {
   marker: TerminationMarker;
   /** "TERMINATE FAILED — GPUs may still be billing" */
@@ -57,46 +86,67 @@ export interface TerminationProblem {
 
 const BILLING = 'GPUs may still be billing';
 
+function reasonOf(source: LiveState | LiveStatus | string | null | undefined): string | null {
+  if (typeof source === 'string') return source;
+  if (!source) return null;
+  if ('status' in source) return source.status === 'ready' ? source.data.reason : null;
+  return typeof source.reason === 'string' ? source.reason : null;
+}
+
 /**
  * The backend puts TERMINATE FAILED or TERMINATION PENDING into `reason` (in any mode) while a
  * worker's termination is unconfirmed. Found anywhere in the text, in any letter case; FAILED wins
- * when both occur. Accepts a state, a snapshot or a raw reason (e.g. from a POST answer).
+ * when both occur. A kill-switch-only stop (or a kill switch that could not be set) is TERMINATE FAILED
+ * even without the marker. Accepts a state, a snapshot or a raw reason (e.g. from a POST answer).
  */
 export function terminationProblem(source: LiveState | LiveStatus | string | null | undefined): TerminationProblem | null {
-  const reason =
-    typeof source === 'string'
-      ? source
-      : !source
-        ? null
-        : 'status' in source
-          ? source.status === 'ready'
-            ? source.data.reason
-            : null
-          : source.reason;
-  if (typeof reason !== 'string') return null;
+  const reason = reasonOf(source);
+  if (reason === null) return null;
   const upper = reason.toUpperCase();
-  const marker = TERMINATION_MARKERS.find((m) => upper.includes(m));
+  const marker: TerminationMarker | undefined =
+    TERMINATION_MARKERS.find((m) => upper.includes(m)) ??
+    (KILL_SWITCH_UNCONFIRMED.some((p) => upper.includes(p)) ? 'TERMINATE FAILED' : undefined);
   return marker ? { marker, title: `${marker} — ${BILLING}`, reason } : null;
+}
+
+/** orchestrator.py:62: "Stop requested; terminating workers — not confirmed yet" anywhere in the reason, any letter case. */
+export function stopUnconfirmed(source: LiveState | LiveStatus | string | null | undefined): boolean {
+  const reason = reasonOf(source);
+  return reason !== null && reason.toUpperCase().includes(STOP_REQUESTED.toUpperCase());
 }
 
 /** A snapshot other than a clean idle / unavailable / terminated one: workers may exist and bill. */
 export function sessionMayBeBilling(d: LiveStatus): boolean {
-  return d.mode === 'launching' || d.mode === 'live' || d.mode === 'fallback' || d.workers.length > 0 || terminationProblem(d) !== null;
+  return (
+    d.mode === 'launching' ||
+    d.mode === 'live' ||
+    d.mode === 'fallback' ||
+    d.workers.length > 0 ||
+    terminationProblem(d) !== null ||
+    stopUnconfirmed(d)
+  );
+}
+
+/** A launch from this page that may have started a session: in flight, accepted, or with no usable answer. */
+export function launchMayBeRunning(s: LiveState): boolean {
+  return s.launchPhase === 'sent' || s.launchPhase === 'accepted' || s.launchPhase === 'unknown';
 }
 
 export interface LiveDanger {
-  kind: 'terminate-failed' | 'termination-pending' | 'connection-lost';
+  kind: 'terminate-failed' | 'termination-pending' | 'stop-unconfirmed' | 'connection-lost';
   /** Short text for a pill. */
   pill: string;
   title: string;
+  /** The backend's reason, verbatim (connection-lost: what this app knows, since the API is silent). */
   detail: string;
 }
 
 const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour12: false });
 
 /**
- * The state that must be shown as a loud alert on every route: a failed or pending termination, or a
- * session that was not idle when the API stopped answering ("connection lost — session state unknown").
+ * The state that must be shown as a loud alert on every route (DESIGN.md §5 "Live state"): a failed or
+ * pending termination, a requested stop that is not confirmed, or a session that may be billing when the
+ * API stopped answering ("connection lost — session state unknown").
  */
 export function liveDanger(s: LiveState): LiveDanger | null {
   const problem = terminationProblem(s);
@@ -108,15 +158,19 @@ export function liveDanger(s: LiveState): LiveDanger | null {
       detail: problem.reason,
     };
   }
+  if (s.status === 'ready' && stopUnconfirmed(s.data)) {
+    return { kind: 'stop-unconfirmed', pill: 'Stop not confirmed', title: `STOP NOT CONFIRMED — ${BILLING}`, detail: s.data.reason };
+  }
   // `stale` is the moment between "the snapshot is too old to show" and the answer to the request that
   // is sent at once (a resumed tab): not an alarm yet. If that request fails, the cause changes and this fires.
-  if (s.status === 'unreachable' && s.cause !== 'stale' && s.lastKnown && sessionMayBeBilling(s.lastKnown.data)) {
+  if (s.status === 'unreachable' && s.cause !== 'stale' && s.lastKnown && (sessionMayBeBilling(s.lastKnown.data) || launchMayBeRunning(s))) {
     const { data, receivedAt } = s.lastKnown;
+    const launch = launchMayBeRunning(s) ? ' A launch request was sent from this page after that, and its outcome is not known.' : '';
     return {
       kind: 'connection-lost',
       pill: 'Connection lost',
       title: 'CONNECTION LOST — session state unknown',
-      detail: `The live API stopped answering (${s.message}). The last status, received at ${clock(receivedAt)}, reported mode "${data.mode}": ${data.reason} ${BILLING}.`,
+      detail: `The live API stopped answering (${s.message}). The last status, received at ${clock(receivedAt)}, reported mode "${data.mode}": ${data.reason}${launch} ${BILLING}.`,
     };
   }
   return null;
@@ -124,7 +178,7 @@ export function liveDanger(s: LiveState): LiveDanger | null {
 
 /* ---- mode -> indicator (DESIGN.md §5), shared by the header and the live panel ------------- */
 export interface ModePill {
-  status: 'live' | 'replay' | 'rehearsal' | 'failed';
+  status: 'live' | 'replay' | 'rehearsal' | 'failed' | 'billing-risk';
   text: string;
 }
 
@@ -157,7 +211,7 @@ export function modePills(s: LiveState): ModePill[] {
   } else pills = [REPLAY];
   if (!danger) return pills;
   // Danger leads, and no "Replay · $0" beside it: $0 is not known while GPUs may be billing.
-  return [{ status: 'failed', text: danger.pill }, ...pills.filter((p) => p.status !== 'replay')];
+  return [{ status: 'billing-risk', text: danger.pill }, ...pills.filter((p) => p.status !== 'replay')];
 }
 
 /* ---- HTTP ------------------------------------------------------------------------------------ */
@@ -279,8 +333,16 @@ export interface LiveStatusStore {
   refresh(): Promise<void>;
   /** Apply a status snapshot carried by a POST answer. Returns false (and changes nothing) if it is invalid. */
   apply(status: unknown): boolean;
-  /** Call right before POSTing a launch: Launch stays locked until the API reports a mode other than idle. */
+  /** Call right before POSTing a launch: Launch is locked (`launchPhase: 'sent'`) from here on. */
   lockLaunch(): void;
+  /**
+   * Call with the launch POST's outcome, BEFORE applying the status it carried (FA-4):
+   * `accepted` (202) stays locked until a later snapshot reports a mode other than idle;
+   * `refused` (409: nothing was launched) and `unknown` (no answer, or neither 2xx nor 409) are released
+   * by the next snapshot requested after this call, whatever it says — that snapshot decides whether
+   * launching is allowed. No-op when no launch is locked.
+   */
+  launchAnswered(outcome: Exclude<LaunchPhase, 'sent'>): void;
 }
 
 export const DEFAULT_POLL_MS = 2000;
@@ -296,7 +358,9 @@ export function createLiveStatusStore(opts: LiveStatusStoreOptions = {}): LiveSt
 
   let state: LiveState = { status: 'connecting' };
   let lastKnown: LastKnown | null = null;
-  let launchLocked = false;
+  // The launch lock and the newest request sequence number when it last changed: only a snapshot
+  // requested after that can release it (an older poll may predate the launch on the backend).
+  let launch: { phase: LaunchPhase; after: number } | null = null;
   let issued = 0; // sequence number of the newest request (or applied POST answer)
   let applied = 0; // sequence number of the answer on screen
   let epoch = 0; // bumped on reset: answers from before a reset are dropped
@@ -309,17 +373,23 @@ export function createLiveStatusStore(opts: LiveStatusStoreOptions = {}): LiveSt
   const interval = () => (listeners.size ? Math.min(...listeners.values()) : DEFAULT_POLL_MS);
   const timeout = () => Math.max(1, Math.min(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, Math.floor(interval() * 0.75)));
   const freshFor = () => 2 * interval() + timeout();
-  const lock = () => (launchLocked ? { launchLocked: true } : {});
+  const lock = (): LaunchLock => (launch ? { launchLocked: true, launchPhase: launch.phase } : {});
 
   const emit = (next: LiveState) => {
     state = next;
     for (const l of [...listeners.keys()]) l();
   };
 
+  /** Re-emit the current state with the current launch lock. */
+  const relock = () => {
+    const { launchLocked: _locked, launchPhase: _phase, ...rest } = state;
+    emit({ ...rest, ...lock() } as LiveState);
+  };
+
   const fail = (message: string, cause: Extract<Outcome, { ok: false }>['cause']) => {
     failures += 1;
     // While a session may be billing, keep polling at the normal pace: the unknown must be resolved fast.
-    const urgent = lastKnown !== null && sessionMayBeBilling(lastKnown.data);
+    const urgent = (lastKnown !== null && sessionMayBeBilling(lastKnown.data)) || (launch !== null && launch.phase !== 'refused');
     nextAttempt = backoff && !urgent ? now() + Math.min(backoff.maxMs, backoff.baseMs * 2 ** (failures - 1)) : 0;
     emit({ status: 'unreachable', message, cause, ...(lastKnown ? { lastKnown } : {}), ...lock() });
   };
@@ -332,7 +402,11 @@ export function createLiveStatusStore(opts: LiveStatusStoreOptions = {}): LiveSt
     nextAttempt = 0;
     const receivedAt = now();
     lastKnown = { data: outcome.data, receivedAt };
-    if (outcome.data.mode !== 'idle') launchLocked = false; // the mode changed since the launch was posted
+    if (launch && seq > launch.after) {
+      // refused / unknown: this snapshot, requested after the answer, says what is true now.
+      // sent / accepted: released once the mode changed (right after a 202 the API can still read idle).
+      if (launch.phase === 'refused' || launch.phase === 'unknown' || outcome.data.mode !== 'idle') launch = null;
+    }
     emit({ status: 'ready', data: outcome.data, receivedAt, freshForMs: freshFor(), ...lock() });
   };
 
@@ -395,7 +469,7 @@ export function createLiveStatusStore(opts: LiveStatusStoreOptions = {}): LiveSt
     nextAttempt = 0;
     pollInFlight = false;
     lastKnown = null;
-    launchLocked = false;
+    launch = null;
     state = { status: 'connecting' };
   };
 
@@ -420,8 +494,13 @@ export function createLiveStatusStore(opts: LiveStatusStoreOptions = {}): LiveSt
       return true;
     },
     lockLaunch() {
-      launchLocked = true;
-      emit({ ...state, launchLocked: true });
+      launch = { phase: 'sent', after: issued };
+      relock();
+    },
+    launchAnswered(outcome) {
+      if (!launch) return; // already released (the mode changed while the request was in flight)
+      launch = { phase: outcome, after: issued };
+      relock();
     },
   };
 }

@@ -19,9 +19,9 @@
 .lg-banner__text { min-width: 0; }
 .lg-banner[data-tone='warn'] { border-color: var(--lab-callout-warn-border); background: var(--lab-callout-warn-bg); }
 .lg-banner[data-tone='warn'] .lg-banner__icon { color: var(--lab-callout-warn-fg); }
-/* Danger: the filled alert above it is the loud part; the label keeps the outline only. */
-.lg-banner[data-tone='danger'] { border-color: var(--lab-status-failed-border); background: var(--lab-color-surface); }
-.lg-banner[data-tone='danger'] .lg-banner__icon { color: var(--lab-status-failed-fg); }
+/* Danger: the Alert above it is the loud part; the label keeps the billing-risk outline only. */
+.lg-banner[data-tone='danger'] { border-color: var(--lab-status-billing-risk-border); background: var(--lab-color-surface); }
+.lg-banner[data-tone='danger'] .lg-banner__icon { color: var(--lab-status-billing-risk-fg); }
 .lg-banner[data-live='true'] { border-color: var(--lab-status-live-border); background: var(--lab-color-surface); }
 .lg-banner[data-live='true'] .lg-banner__icon { color: var(--lab-status-live-border); }
 .lg-banner__title {
@@ -34,21 +34,8 @@
 .lg-banner__body { margin-top: var(--lab-space-1); font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text); }
 .lg-banner__fallback { font-weight: var(--lab-font-weight-semibold); }
 
-/* Danger: termination unconfirmed. Loud on purpose (role=alert). */
-.lg-danger {
-  display: flex;
-  gap: var(--lab-space-3);
-  align-items: flex-start;
-  margin-bottom: var(--lab-space-3);
-  padding: var(--lab-space-3) var(--lab-space-4);
-  border: 2px solid var(--lab-status-failed-border);
-  border-radius: var(--lab-radius-md);
-  background: var(--lab-status-failed-bg);
-  color: var(--lab-status-failed-fg);
-}
-.lg-danger__title { font-size: var(--lab-font-size-lg); line-height: var(--lab-line-height-lg); font-weight: var(--lab-font-weight-bold); text-transform: uppercase; }
-.lg-danger__body { margin-top: var(--lab-space-1); font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text); overflow-wrap: anywhere; }
-.lg-danger > .lab-icon { flex: none; margin-top: var(--lab-space-0-5); }
+/* "GPUs may still be billing": the design system's Alert (DESIGN.md §5). Layout only here. */
+.lg-alerts { display: flex; flex-direction: column; gap: var(--lab-space-2); margin-bottom: var(--lab-space-3); }
 
 .lg-budget { margin-top: var(--lab-space-3); font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text-muted); }
 .lg-budget strong { color: var(--lab-color-text); }

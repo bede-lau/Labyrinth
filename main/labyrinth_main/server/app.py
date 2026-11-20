@@ -14,6 +14,9 @@
 Binds 127.0.0.1 only. Requests whose Host/Origin is not loopback get 403 (DNS-rebinding / CSRF guard),
 and launch additionally requires `Content-Type: application/json` (no simple cross-site form POST).
 No CORS headers are sent: the UI reaches the API through its dev-server proxy or same origin.
+Only GET and POST exist: any other method (PUT, DELETE, PATCH, OPTIONS, HEAD, TRACE, CONNECT, or any other
+token) gets 405 with an `Allow` header naming what the path does accept — never the stdlib's 501 page.
+A connection that stops sending is dropped after `request_timeout_s`, and terminate never waits for a body.
 """
 from __future__ import annotations
 
@@ -33,6 +36,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
 MAX_BODY = 4096
 MAX_STREAMS = 8
+REQUEST_TIMEOUT_S = 15.0  # a client that announces a body (or headers) and stops sending holds a thread this long
 RUN_PATH = re.compile(r"^/api/live/runs/((?:rehearsal|live)-[0-9a-f]{12})$")
 GET_ROUTES = {"/api/health", "/api/live/status", "/api/live/stream"}
 POST_ROUTES = {"/api/live/launch", "/api/live/terminate"}
@@ -47,10 +51,11 @@ class LabyrinthServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
     def __init__(self, addr, *, service: LiveService, artifacts_dir: Path = ARTIFACTS, stream_interval_s: float = 1.0,
-                 max_streams: int = MAX_STREAMS):
+                 max_streams: int = MAX_STREAMS, request_timeout_s: float = REQUEST_TIMEOUT_S):
         self.service = service
         self.artifacts_dir = artifacts_dir.resolve()
         self.stream_interval_s = stream_interval_s
+        self.request_timeout_s = request_timeout_s
         self.stream_slots = threading.BoundedSemaphore(max_streams)
         self.stopping = threading.Event()
         super().__init__(addr, Handler)
@@ -74,6 +79,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):  # quiet by default; errors still go to the JSON body
         pass
+
+    def setup(self) -> None:
+        self.timeout = self.server.request_timeout_s  # socket timeout: a stalled client cannot hold a thread for ever
+        super().setup()
+
+    def __getattr__(self, name: str):
+        # BaseHTTPRequestHandler answers a method it finds no `do_<METHOD>` for with its own 501 HTML page
+        # (TRACE, CONNECT, "get", any token): every method other than GET and POST is a 405 here instead.
+        if name.startswith("do_"):
+            return self._refuse_method
+        raise AttributeError(name)
 
     # ---- helpers -------------------------------------------------------
     def _send(self, code: int, body: bytes, ctype: str, extra: dict | None = None) -> None:
@@ -110,9 +126,11 @@ class Handler(BaseHTTPRequestHandler):
         if n < 0 or n > MAX_BODY:
             return None, f"body must be at most {MAX_BODY} bytes"
         raw = self.rfile.read(n) if n else b""
+        if len(raw) < n:
+            return None, "body ended before its Content-Length"
         try:
             obj = json.loads(raw or b"{}")
-        except ValueError:
+        except (ValueError, RecursionError):  # RecursionError: "[[[[…" nested deeper than the parser's limit
             return None, "body is not valid JSON"
         return (obj, None) if isinstance(obj, dict) else (None, "body must be a JSON object")
 
@@ -145,14 +163,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(405, "use GET", {"Allow": "GET"})
         if path not in POST_ROUTES:
             return self._error(404, "not found")
-        body, err = self._read_json()
         svc = self.server.service
-        if path == "/api/live/terminate":
+        if path == "/api/live/terminate":  # the body is ignored, so it is never waited for: terminate comes first
             confirmed, message = svc.terminate()
             return self._json(200 if confirmed else 502, {"ok": confirmed, "reason": message, "status": svc.status()})
+
         def refuse(reason: str) -> None:  # every refusal: 409 with the reason and the current status
             self._json(409, {"ok": False, "reason": f"launch refused: {reason}", "status": svc.status()})
 
+        body, err = self._read_json()  # (bounded: MAX_BODY bytes within request_timeout_s) read even when refused
         ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
         if ctype != "application/json":
             return refuse("Content-Type must be application/json")
@@ -166,9 +185,18 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(202, {"ok": True, "reason": reason, "status": svc.status()})
 
     def _refuse_method(self) -> None:
-        self._error(405, "only GET and POST are supported", {"Allow": "GET, POST"})
+        if not self._origin_ok():
+            return self._error(403, "non-loopback Host/Origin refused")
+        path = self._path()
+        if path in POST_ROUTES:
+            allow = "POST"
+        elif path in GET_ROUTES or path.startswith(("/api/live/runs/", "/artifacts/")):
+            allow = "GET"
+        else:
+            allow = "GET, POST"
+        self._error(405, f"method {self.command[:32]} not allowed; this API answers only GET and POST", {"Allow": allow})
 
-    do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_HEAD = _refuse_method
+    do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_HEAD = do_TRACE = do_CONNECT = _refuse_method
 
     # ---- routes --------------------------------------------------------
     def _artifact(self, rel: str) -> None:
@@ -207,11 +235,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
                 if self.server.stopping.wait(self.server.stream_interval_s):
                     break
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError):  # the client went away
             pass
 
 
 def make_server(port: int = DEFAULT_PORT, *, service: LiveService | None = None, artifacts_dir: Path = ARTIFACTS,
-                stream_interval_s: float = 1.0, max_streams: int = MAX_STREAMS) -> LabyrinthServer:
+                stream_interval_s: float = 1.0, max_streams: int = MAX_STREAMS,
+                request_timeout_s: float = REQUEST_TIMEOUT_S) -> LabyrinthServer:
     return LabyrinthServer((DEFAULT_HOST, port), service=service or LiveService(), artifacts_dir=artifacts_dir,
-                           stream_interval_s=stream_interval_s, max_streams=max_streams)
+                           stream_interval_s=stream_interval_s, max_streams=max_streams, request_timeout_s=request_timeout_s)

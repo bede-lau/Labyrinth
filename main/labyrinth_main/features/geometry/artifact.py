@@ -58,6 +58,17 @@ def build() -> dict:
         + f"; vs stella's float64 out.nc bmag: max |error| {f64['maxAbsErrorBmag']:.2g} over "
         f"{f64['samplesCompared']} samples)."
     )
+    # D-023 §4: the float64 comparison as structured data. The errors (~1e-13) are rounded UP to 2 significant
+    # figures: at that level the later digits move with last-bit differences between CPUs / BLAS builds, and the
+    # artifact must rebuild byte-identically. allWithinTolerance is decided on the unrounded values.
+    float64_reference = {
+        "samplesCompared": f64["samplesCompared"],
+        "tolerance": stella_reference.FLOAT64_TOLERANCE,
+        "maxAbsError": stella_reference.ceil_sig(f64["maxAbsErrorBmag"], 2),
+        "maxRelError": stella_reference.ceil_sig(f64["maxRelErrorBmag"], 2),
+        "allWithinTolerance": f64["allWithinTolerance"],
+        "source": out_nc_src,
+    }
     units = (
         "R, Z, x, y, z in m; thetaStar, zeta, alpha in rad; bmag = |B|/B_ref with stella's "
         f"B_ref = 2|Phi_edge/2pi|/a^2 = {eq.b_ref:.6g} T, a = Aminor_p = {eq.l_ref:.6g} m"
@@ -96,6 +107,7 @@ def build() -> dict:
                 "allWithinPrintedPrecision": ok,
                 "source": geo_src,
             },
+            "float64Reference": float64_reference,
             "acceptance129": {"outcome": "blocked", "details": ACCEPTANCE_129_DETAILS},
         },
         "provenance": provenance(

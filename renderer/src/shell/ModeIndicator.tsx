@@ -1,4 +1,4 @@
-import { Icon, StatusPill, type StatusKind } from '../design';
+import { Alert, StatusPill, type StatusKind } from '../design';
 import { liveDanger, modePills, type LiveDanger, type LiveState } from '../lib/liveStatus';
 import { hrefFor, type RouteId } from './routes';
 
@@ -11,16 +11,19 @@ export interface ModeView {
   pills: ModePill[];
   /** One plain sentence: why the app is in this mode. */
   detail: string;
-  /** A failed or pending termination, or a lost connection to a session that was not idle. */
+  /** A failed, pending or merely requested termination, or a lost connection to a session that may be billing. */
   danger: LiveDanger | null;
 }
 
+const DANGER_DETAIL: Record<LiveDanger['kind'], string> = {
+  'terminate-failed': 'Termination is not confirmed: GPUs may still be billing.',
+  'termination-pending': 'Termination is not confirmed: GPUs may still be billing.',
+  'stop-unconfirmed': 'A stop was requested and is not confirmed yet: GPUs may still be billing.',
+  'connection-lost': 'The live API stopped answering during a session: its state is unknown.',
+};
+
 function detailFor(state: LiveState, danger: LiveDanger | null): string {
-  if (danger) {
-    return danger.kind === 'connection-lost'
-      ? 'The live API stopped answering during a session: its state is unknown.'
-      : 'Termination is not confirmed: GPUs may still be billing.';
-  }
+  if (danger) return DANGER_DETAIL[danger.kind];
   if (state.status === 'connecting') return 'Checking for a live backend…';
   if (state.status === 'unreachable') {
     if (state.cause === 'stale') return `The last status is too old to show (${state.message}); asking the live API again.`;
@@ -35,7 +38,7 @@ function detailFor(state: LiveState, danger: LiveDanger | null): string {
 /**
  * DESIGN.md §5: map /api/live/status to the global indicator. LIVE appears only when the backend
  * itself reports mode "live" on a valid, current answer; connecting, unreachable and every other mode
- * are replay. A termination problem or a lost session leads with a failed pill in every mode.
+ * are replay. A danger state leads with the billing-risk pill in every mode.
  * The pill mapping lives in lib/liveStatus.ts so the live panel shows the same thing.
  */
 export function modeView(state: LiveState): ModeView {
@@ -66,29 +69,27 @@ export function ModeIndicator({ state }: { state: LiveState }) {
 }
 
 /**
- * The loud part, on every route: a full-width `role="alert"` under the header while a termination is
- * failed or pending, or while a session that was not idle cannot be reached. Renders nothing otherwise.
+ * The loud part, on every route: the design system's Alert (DESIGN.md §5) under the header while
+ * GPUs may still be billing — a termination failed, pending or only requested, or a session that may
+ * be billing cannot be reached. It quotes the backend's reason verbatim. Renders nothing otherwise.
  */
 export function ModeAlert({ state, route }: { state: LiveState; route: RouteId }) {
   const danger = liveDanger(state);
   if (!danger) return null;
   return (
-    <div className="shell-alert" role="alert" data-kind={danger.kind}>
-      <Icon name="alert" size={20} className="shell-alert__icon" />
-      <div className="shell-alert__text">
-        <p className="shell-alert__title">{danger.title}</p>
-        <p className="shell-alert__body">{danger.detail}</p>
-        <p className="shell-alert__action">
-          {route === 'advance' ? (
-            'Use Terminate on this page'
-          ) : (
-            <a className="shell-alert__link" href={hrefFor('advance')}>
-              Open Advance plasma to send Terminate
-            </a>
-          )}
-          , and check the Modal dashboard until both workers are confirmed stopped.
-        </p>
-      </div>
-    </div>
+    <Alert
+      className="shell-alert"
+      title={danger.title}
+      reason={danger.detail}
+      action={
+        route === 'advance' ? (
+          <span>Use Terminate in the Advance plasma panel below.</span>
+        ) : (
+          <a href={hrefFor('advance')}>Open Advance plasma to send Terminate</a>
+        )
+      }
+    >
+      Check the Modal dashboard until both workers are confirmed stopped.
+    </Alert>
   );
 }

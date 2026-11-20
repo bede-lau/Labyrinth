@@ -236,6 +236,22 @@ test('F5 the failed verification and the mismatch are the first thing on the pag
   expect(page).not.toMatch(/same as the previous(ly)? (revealed )?observ|identical to the previous/i);
 });
 
+test('FB-3 what a score match is backed by is the fixture basis (D-023): arithmetic reads as such, never softens a mismatch', async () => {
+  // The committed scores are data-backed (no basis = data).
+  expect(ARTIFACT.fixtures.map((f) => f.basis)).toEqual([undefined, undefined]);
+  const a = clone();
+  a.fixtures[0] = { ...a.fixtures[0]!, computed: 0.04441, matches: true, basis: 'arithmetic' };
+  a.fixtures[1] = { ...a.fixtures[1]!, basis: 'arithmetic' };
+  serve(a);
+  render(<ForecastView />);
+  const final = await screen.findByRole('region', { name: /Final scores: recomputed vs PRD claim/ });
+  const rows = [...within(final).getByTestId('final-scores').querySelectorAll('.lab-fixture')];
+  expect(rows.map((r) => `${r.getAttribute('data-basis')}|${r.getAttribute('data-outcome')}|${r.querySelector('.lab-fixture__outcome-text')?.textContent}`)).toEqual([
+    'arithmetic|match|Arithmetic consistent',
+    'arithmetic|mismatch|Mismatch',
+  ]);
+});
+
 test('F5 the mismatch narrative follows the artifact: it goes away when both scores match and stays when one does not', async () => {
   // Both fixtures reproduce (flag and printed value): no mismatch row, no mismatch callout, no failed pill.
   const ok = clone();

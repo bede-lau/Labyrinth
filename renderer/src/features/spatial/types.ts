@@ -1,5 +1,5 @@
 // TS mirror of contracts/spatial.schema.json (artifact: artifacts/spatial.json).
-import type { Provenance } from '../../design';
+import type { FixtureCheckData, Provenance } from '../../design';
 
 export interface SpatialArtifact {
   schemaVersion: 1;
@@ -13,6 +13,8 @@ export interface SpatialArtifact {
   runs: { controlled: number; passedReference: number };
   timing: { cpuMeanS: number; gpuMeanS: number; speedup: number; speedupRecomputed: number };
   independenceNote: string;
+  /** PRD figures checked here (D-023): the speedup (arithmetic only), the run tally and the two means. */
+  fixtures: FixtureCheckData[];
   provenance: Provenance;
 }
 
@@ -23,5 +25,6 @@ export function checkSpatial(a: SpatialArtifact): string | null {
   if (!Array.isArray(a.exchanges)) return 'exchanges is missing';
   for (const e of a.exchanges) if (e.planes.length !== 2) return 'each exchange must name [from plane, to plane]';
   if (!a.timing || !a.runs) return 'timing or runs is missing';
+  if (!Array.isArray(a.fixtures)) return 'fixtures is missing (contract D-023)';
   return null;
 }

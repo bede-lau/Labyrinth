@@ -24,9 +24,10 @@ names something that exists.
 1. **Evidence first.** Every number sits with its unit, window, source and verification state.
    Provenance is a first-class element: a compact `ProvenanceBadge` that expands to the full record.
    It is never a footnote.
-2. **Honest states.** Live, replay, rehearsal, archive, derived, PRD-reported, unverified, verified,
-   failed, blocked and mismatch each have one consistent treatment, made of colour, icon and text.
-   Colour is never the only signal. The live treatment cannot be produced from replayed data
+2. **Honest states.** Live, billing risk, replay, rehearsal, archive, derived, PRD-reported,
+   unverified, verified, failed, blocked and mismatch each have one consistent treatment, made of
+   colour, icon and text. Colour is never the only signal. The live treatment cannot be produced
+   from replayed data, and "GPUs may still be billing" is never left to a feature to improvise
    (see §5).
 3. **Quiet chrome, loud data.** Surfaces are neutral, there is one accent (teal) and motion is
    restrained. **Gray always means unsampled or context, never data.**
@@ -50,7 +51,7 @@ names something that exists.
 | `plotTheme.ts` | Plotly layout, config, series styles, uncertainty bands, window and unsampled shapes, and `axisTitle` (§6). |
 | `sceneTheme.ts` | Three.js colours, the field-line identity colours, the gray surface and the `bmag` colormap (§7). |
 | `format.ts` | Number, delta, window and unit formatting (true minus sign, en dash, subscripts). |
-| `status.ts` | Label, icon and meaning for every status, and `provenanceStatus()`, the rule that keeps LIVE out of replayed provenance (§5). |
+| `status.ts` | Label, icon and meaning for every status, the Alert's treatment, and `provenanceStatus()`, the rule that keeps LIVE out of replayed provenance (§5). |
 | `types.ts` | Structural types for provenance and fixture data (they mirror the contracts; nothing is imported from them). |
 | `components/` | Primitives and `components.css` (§8). |
 | `index.ts` | The public surface (§11). Import from here only. |
@@ -182,6 +183,7 @@ own solid fill. No two statuses share a label or an icon (`components.test.tsx` 
 | Status | Icon | Text | Treatment | When |
 |---|---|---|---|---|
 | `live` | `live` (drawn as a pulsing dot) | Live | **The only solid-filled pill**: crimson, white text, set in uppercase. The fill is at least 3:1 against every surface. | Only when `/api/live/status` reports `mode === "live"` |
+| `billing-risk` | `danger` (a solid octagon with a knocked-out !) | Billing risk | **The only outlined pill**: raspberry tint, a solid outline in its own text colour (at least 3:1 against every surface and against its tint), bold text. Never a solid fill (that is live). | GPUs may still be billing: a stop is not confirmed, or the session state is unknown. Only the danger rows of the live-state table below; paired with an `Alert`. |
 | `replay` | `replay` ↻ | Replay | neutral slate tint | Saved evidence, $0. The global mode shows "Replay · $0". |
 | `rehearsal` | `rehearsal` ◉ | Rehearsal | indigo tint | A recorded GX run playing back. Never styled like live. |
 | `archive` | `archive` (box) | Archive | slate-blue tint | Read from a pinned upstream file (sha256) |
@@ -196,16 +198,29 @@ own solid fill. No two statuses share a label or an icon (`components.test.tsx` 
 
 **Dashed outlines mean the value is not backed by data in this repo.** Because the dash carries that
 meaning, the two dashed outlines are at least 3:1 against every surface and against their own tint.
-An arithmetic-only fixture row (§8) is dashed for the same reason.
+An arithmetic-only fixture row (§8) is dashed for the same reason. The billing-risk outline is solid
+and drawn in the pill's text colour; it carries meaning too and is held to the same 3:1.
 
-**Mapping the live-status mode to the global indicator.** This mapping is the frontend's job:
+**Mapping the live-status store to the UI.** `useLiveStatus()` in `lib/liveStatus.ts` returns one
+store status (`connecting`, `unreachable` or `ready`); `modePills()` and `liveDanger()` there turn it
+into what the header and the live panel show. That code is the frontend's; this table is the
+contract it follows. A danger row wins over every mode row: its billing-risk pill leads, no
+"Replay · $0" is shown beside it ($0 is not known while GPUs may be billing), and its `Alert` sits
+under the header on every route and in the live panel.
 
-| `mode` | Indicator |
-|---|---|
-| `live` | `<StatusPill status="live">LIVE · GPU 0 / GPU 1</StatusPill>` |
-| `fallback` | `<StatusPill status="failed">Worker failed</StatusPill>` + `<StatusPill status="replay">Playing saved run</StatusPill>` |
-| `unavailable`, `idle`, `terminated` | `<StatusPill status="replay">Replay · $0</StatusPill>` |
-| `launching` | `<StatusPill status="rehearsal">Launching…</StatusPill>`. It is not live until workers report. |
+| Live state | Indicator | Alert |
+|---|---|---|
+| `connecting` | `<StatusPill status="replay">Replay · $0</StatusPill>` | none |
+| `unreachable` with cause `stale`: the snapshot outlived its freshness and a new request is already on its way | `<StatusPill status="replay">Checking status…</StatusPill>` | none |
+| `unreachable` with cause `network`, `http`, `invalid` or `timeout`, when the last snapshot could not be billing (or there was none) | `<StatusPill status="replay">Replay · $0</StatusPill>` | none |
+| `ready` with mode `unavailable`, `idle` or `terminated` | `<StatusPill status="replay">Replay · $0</StatusPill>` | none |
+| `ready` with mode `launching` | `<StatusPill status="rehearsal">Launching…</StatusPill>`. It is not live until workers report. | none |
+| `ready` with mode `live` | `<StatusPill status="live">LIVE · GPU 0 / GPU 1</StatusPill>` | none |
+| `ready` with mode `fallback` | `<StatusPill status="failed">{fallback cause}</StatusPill>` + `<StatusPill status="replay">Playing saved run</StatusPill>` ("Replay · $0" when no saved run is playable) | none |
+| danger `terminate-failed`: the reason contains TERMINATE FAILED, in any mode. It covers a stop that only raised the run's kill switch ("kill switch raised, stop not confirmed") and a kill switch that could not be set. | `<StatusPill status="billing-risk">TERMINATE FAILED</StatusPill>`, then the mode's other pills | `<Alert title="TERMINATE FAILED — GPUs may still be billing" reason={reason} action={<button>Retry terminate</button>}>` |
+| danger `termination-pending`: the reason contains TERMINATION PENDING (a cancel is queued, not confirmed) | `<StatusPill status="billing-risk">TERMINATION PENDING</StatusPill>`, then the mode's other pills | `<Alert title="TERMINATION PENDING — GPUs may still be billing" reason={reason} action={<button>Terminate</button>}>` |
+| danger `stop-unconfirmed` (not in the store yet): mode `launching` or `live` and the reason starts with "Stop requested; terminating workers — not confirmed yet" | `<StatusPill status="billing-risk">Stop not confirmed</StatusPill>` beside the mode pill: LIVE stays while the API reports live | `<Alert title="STOP NOT CONFIRMED — GPUs may still be billing" reason={reason}>` |
+| danger `connection-lost`: `unreachable` (any cause but `stale`) after a snapshot that may be billing ("connection lost — session state unknown") | `<StatusPill status="billing-risk">Connection lost</StatusPill>` | `<Alert title="CONNECTION LOST — session state unknown" reason={detail} action={<a>Open Advance plasma to send Terminate</a>}>` |
 
 **Provenance never produces LIVE by itself.** Provenance `kind` maps to the status of the same name
 for `archive`, `derived`, `prd-reported` and `rehearsal`. Kind `live` is different: a record read
@@ -220,7 +235,9 @@ not-applicable → `not-applicable`.
 
 Callouts have three tones: **info** (context), **warn** (read with care, for example unverified
 data) and **blocked** (cannot be checked; always say what would unblock it). Each has its own icon
-and a screen-reader prefix: "Note:", "Warning:", "Blocked:".
+and a screen-reader prefix: "Note:", "Warning:", "Blocked:". A callout is static (`role="note"`).
+Money at risk now is not a callout tone: it is an `Alert` (`role="alert"`, the billing-risk
+treatment, the prefix "Danger:"), used only for the danger rows above.
 
 ## 6. Chart conventions (Plotly, `plotTheme.ts`)
 
@@ -246,11 +263,16 @@ and a screen-reader prefix: "Note:", "Warning:", "Blocked:".
   `plot.bandAlpha` (18% light, 22% dark). Add it before its line, with no legend entry. Window means
   appear as `meanSegment(...)` across the window, with the band around them. A mean without σ is
   shown as a value only; never invent a band.
-* **Gray = unsampled.** `unsampledShape(range, theme)` covers ranges with no samples in the
-  `plot.unsampled` gray at `plot.unsampledAlpha` (35% light, 35% dark). Its label "unsampled" runs up
-  the inside of the block's left edge: Plotly clips shape labels at the plot edge, so a horizontal
-  word is cut whenever the block is narrower than the word. List it before any window it overlaps,
-  so the window's edge is drawn over the gray. Never interpolate across it.
+* **Gray = unsampled.** `unsampledShapes(range, theme)` returns two shapes; spread both into `shapes`.
+  The first, `unsampled`, covers a range with no samples in the `plot.unsampled` gray at
+  `plot.unsampledAlpha` (35% light, 35% dark), under the grid and the data. The second,
+  `unsampled label`, is transparent and carries the word "unsampled": Plotly draws every shape that
+  refers to the paper and is not layer `above` under the grid lines, label included, so a grid line
+  used to cut through the word. The label shape is `above`; it adds only the word, and the top layer
+  takes no pointer events, so hover still reaches the traces. The word runs up the inside of the
+  block's left edge: Plotly clips shape labels at the plot edge, so a horizontal word is cut whenever
+  the block is narrower than the word. List the pair before any window it overlaps, so the window's
+  edge is drawn over the gray. Never interpolate across it.
 * **Published or claimed means** (triangular 2.22 on 1200–1500) use `meanSegment` in the series style.
   They are never drawn as if they were a trace.
 * **Narrow charts.** The hover modebar is about 216px wide and would cover a top legend on a phone.
@@ -295,9 +317,10 @@ Import everything from `src/design` (`index.ts`).
 |---|---|---|
 | `Panel` | Titled region (`section` with `aria-labelledby`) | Eyebrow is the view name. The title says what is shown. The subtitle gives the *how* in plain words. `status` holds the ProvenanceBadge, `actions` holds controls, and `footer` holds sources and captions. Use `density="compact"` in side columns. The body is an inline-size query container: lay content out with `@container`, never with a viewport `@media` width query, so a 450px card on a wide screen gets the narrow layout. |
 | `Stat` | A number with its unit, ±σ and window | `unit` is required. `decimals` must match a precision you can defend. `null` renders "— not available" and never 0. The accessible name reads the full sentence. Uncertainty uses the same decimals as the value. |
-| `StatusPill` | State label | Use one status per pill. Override the text only with a synonym ("Replay · $0"). Only use `live` when the API reports live. |
-| `ProvenanceBadge` | Kind + verification outcome; expands to solver revision, units, coverage, runtime, verification and sources (sha256) | Put one on every result panel or table. Escape closes the card and returns focus to the badge. A click outside closes it and leaves focus where the click landed. `align="start"` applies when it sits on the left edge. Kind `live` shows the live pill only with the `live` prop (§5); without it the badge reads "Recorded run". |
-| `FixtureCheck` | PRD claim vs computed value at printed precision, with Δ and an outcome in glyph and words | A match requires both `matches === true` and identical printed strings. Otherwise it is a mismatch, and any disagreement between the flag and the values is called out. Reading order, in the DOM and in both layouts, is name, claimed, computed, Δ, outcome, note. Stacked by default (name, then the three numbers in equal columns, then the outcome). Inside a query container at least 500px wide the outcome sits beside the numbers; at least 720px wide the check becomes one table row whose four data columns have fixed minimum widths, so stacked rows line up, and the name, the values and the outcome share a line. Only the note can collapse: a note longer than 160 characters shows two lines behind "Show full note". `basis="arithmetic"` marks a check that only redid the arithmetic on PRD-reported inputs: a match then reads "Arithmetic consistent" with an = glyph, neutral colour and a dashed edge, never the green ✓ "Match" of a data-backed check. The basis never softens a mismatch. |
+| `StatusPill` | State label | Use one status per pill. Override the text only with a synonym ("Replay · $0", "TERMINATE FAILED"). Only use `live` when the API reports live, and `billing-risk` only for the danger rows of §5. |
+| `Alert` | Money at risk now: GPUs may still be billing | `role="alert"` with the billing-risk treatment (solid octagon icon, raspberry tint, solid outline, 4px leading bar) and a spoken "Danger:" before the `title`. `reason` is the backend's text, printed verbatim: never re-cased, shortened or paraphrased, and long tokens wrap. `children` say what to do; `action` holds the control that acts (Terminate, Retry, or a link to the page that has it). Use it only for the danger rows of §5; anything else is a `Callout`. |
+| `ProvenanceBadge` | Kind + verification outcome; expands to solver revision, units, coverage, runtime, verification and sources (sha256) | Put one on every result panel or table. Escape closes the card and returns focus to the badge. A click outside closes it and leaves focus where the click landed. `align="start"` applies when it sits on the left edge. Kind `live` shows the live pill only with the `live` prop (§5); without it the badge reads "Recorded run". Only an http(s) source is a link; any other (a repository file such as `PRD.md`) is named as text with its reference beside it. Units are typeset with `Unit`. |
+| `FixtureCheck` | PRD claim (a value or a range) vs computed value, with Δ and an outcome in glyph and words | A match requires both `matches === true` and the values: identical printed strings for a claimed value. Otherwise it is a mismatch, and any disagreement between the flag and the values is called out. **Ranges (D-023):** when the fixture has `claimedRange` (and `claimed` is null), the claimed column reads "PRD range" with lo–hi (never broken at its dash; only the unit may wrap) and the unit, and the check is lo ≤ computed ≤ hi, unrounded: "Inside PRD range" ✓ or "Outside PRD range" ✗. The computed value is printed with two more decimals than the PRD prints (more when needed, so it never lands on the other side of a bound), and Δ becomes "Δ to range": 0 inside, otherwise the signed distance to the nearer bound. No midpoint is ever shown or spoken, even when an old artifact still has one in `claimed`. `claimed` null without a range shows "—" and "No PRD value". Reading order, in the DOM and in both layouts, is name, claimed, computed, Δ, outcome, note. Stacked by default (name, then the three numbers in equal columns, then the outcome). Inside a query container at least 500px wide the outcome sits beside the numbers; at least 720px wide the check becomes one table row whose four data columns have fixed minimum widths, so stacked rows line up, and the name, the values and the outcome share a line. Only the note can collapse: a note longer than 160 characters shows two lines behind "Show full note". **Basis:** taken from the fixture's `basis` (D-023); the `basis` prop only overrides it. `arithmetic` marks a check that only redid the arithmetic on PRD-reported inputs: a match then reads "Arithmetic consistent" (or "Arithmetic in PRD range") with an = glyph, neutral colour and a dashed edge, never the green ✓ of a data-backed check. The basis never softens a mismatch. |
 | `SegmentedControl` | One choice among 2–5 peers (bean / triangular, window) | It is a radiogroup with one tab stop. ←→↑↓ move and select, Home/End jump, and disabled options are skipped. The track never clips: the focus ring sits 2px outside the segment, and a control wider than its container wraps. For more than 5 options, or for navigation, use tabs or a select instead. |
 | `Callout` | Inline info, warn or blocked explanation | `role="note"` (static, not an alert). A blocked callout always says what would unblock it (`action`). |
 | `Icon`, `Unit` | 16-grid stroke icons (`currentColor`, aria-hidden); unit subscripts (`Q_gB`, `a/v_{th,i}`) | Icons always sit next to text. Every icon name draws a different shape. |
@@ -310,6 +333,9 @@ Import everything from `src/design` (`index.ts`).
 | Show the reduced Modal run as `5.79 Q_gB` with the **PRD-reported** pill, beside 2.55/2.68 | Plot 5.79 as a trace, or style it like archive data |
 | Show the global "Replay · $0" indicator whenever the API is not `live` | Use red, a pulse or the word "live" for anything replayed or rehearsed |
 | Pass `live` to a ProvenanceBadge only from the live-status path | Decide LIVE from a provenance record's kind |
+| Show "GPUs may still be billing" with the billing-risk pill and an `Alert` that quotes the backend's reason | Improvise a red box, reuse the `failed` pill, or paraphrase or shorten the reason |
+| Show a PRD range as "PRD range 14–15 days" with Inside or Outside | Show or speak the range's midpoint as if the PRD printed it |
+| Name a repository file as a source in text | Link a relative path: it resolves to the app itself |
 | Mark arithmetic on PRD-reported inputs with `basis="arithmetic"` | Show a green ✓ "Match" for a number no data in this repo backs |
 | Label every axis with its unit: "Time t (a/v<sub>th,i</sub>)" | Leave unitless axes ("Q", "time") |
 | Leave unsampled ranges gray and labelled | Interpolate a line across missing data, or colour gray regions |
@@ -332,7 +358,8 @@ Enforced by tests unless a line says otherwise.
   * Labels inside charts are at least 4.5:1 on the fill under them: the window label on the window
     band, the "unsampled" label on the gray block, also where the block lies over a band.
   * Control borders, the focus ring, the accent, chart lines, |B| stops, the LIVE fill on every
-    surface, both dashed outlines and the window edge are at least 3:1.
+    surface, both dashed outlines, the billing-risk outline and the window edge are at least 3:1.
+  * A link in an `Alert` (accent text on the billing-risk tint) is at least 4.5:1.
   * Measured worst cases: text 4.81:1 (light) and 4.77:1 (dark); non-text 3.14:1 (light) and 3.10:1 (dark).
 * Colour is never the only signal: no two statuses share a label or an icon, and the four fixture
   outcomes differ in words and glyph (`components.test.tsx`).
@@ -348,8 +375,8 @@ Enforced by tests unless a line says otherwise.
   fill.
 * Targets: `summary` elements are at least 24px tall and keep their disclosure triangle; segments
   and the fixture note toggle are at least 24px tall.
-* Names: Stat, FixtureCheck, ProvenanceBadge and Callout expose full spoken sentences, including the
-  tone and outcome words.
+* Names: Stat, FixtureCheck, ProvenanceBadge, Callout and Alert expose full spoken sentences,
+  including the tone and outcome words.
 * Motion: `prefers-reduced-motion` is honoured globally (`tokens.css`).
 * Colour-blind safety: `palette.test.ts` (see §4).
 * Not covered by unit tests, because jsdom lays nothing out: that the container layouts, the
@@ -365,10 +392,10 @@ Everything `index.ts` exports at runtime. Import from `src/design`, never from a
 | `tokens.ts` | `THEMES`, `STATUS_KINDS`, `SERIES_IDS`, `CALLOUT_TONES`, `themes`, `font`, `typeScale`, `fontWeight`, `space`, `radius`, `motion`, `shadow`, `zIndex`, `themeCssVars`, `staticCssVars`, `renderTokensCss`, `renderTokenReferenceMd` |
 | `theme.ts` | `resolveTheme`, `setThemePreference`, `useResolvedTheme`, `useThemeTokens` |
 | `format.ts` | `formatNumber`, `formatSigned`, `formatWindow`, `trimNumber`, `spokenWindow`, `parseUnit`, `spokenUnit`, `plotlyUnit` |
-| `status.ts` | `STATUS_META`, `VERIFICATION_STATUS`, `CALLOUT_META`, `provenanceStatus` |
-| `plotTheme.ts` | `SERIES_LABEL`, `NARROW_CHART_QUERY`, `axisTitle`, `plotLayout`, `plotConfig`, `seriesColorway`, `seriesStyle`, `uncertaintyBand`, `windowShape`, `unsampledShape`, `meanSegment` |
+| `status.ts` | `STATUS_META`, `VERIFICATION_STATUS`, `CALLOUT_META`, `ALERT_META`, `provenanceStatus` |
+| `plotTheme.ts` | `SERIES_LABEL`, `NARROW_CHART_QUERY`, `axisTitle`, `plotLayout`, `plotConfig`, `seriesColorway`, `seriesStyle`, `uncertaintyBand`, `windowShape`, `unsampledShapes`, `meanSegment` |
 | `sceneTheme.ts` | `sceneTheme`, `toThreeHex`, `bmagColor`, `normalizeBmag`, `bmagGradientCss` |
-| `components/` | `Panel`, `Stat`, `StatusPill`, `ProvenanceBadge`, `FixtureCheck`, `fixtureOutcome`, `SegmentedControl`, `Callout`, `Icon`, `Unit` |
+| `components/` | `Panel`, `Stat`, `StatusPill`, `ProvenanceBadge`, `FixtureCheck`, `fixtureOutcome`, `SegmentedControl`, `Callout`, `Alert`, `Icon`, `Unit` |
 
 Types are exported beside them: the token and theme types, `Provenance`, `FixtureCheckData`,
 `FixtureBasis`, `PlotLayout`, `PlotLayoutOverrides`, `PlotLayoutOptions`, `SeriesStyle`, `SceneTheme`,
@@ -406,6 +433,9 @@ rewrites the tables between the two markers, and `designDoc.test.ts` fails if th
 | `--lab-status-live-fg` | `#ffffff` | `#ffffff` |
 | `--lab-status-live-bg` | `#c4122f` | `#da2a48` |
 | `--lab-status-live-border` | `#c4122f` | `#da2a48` |
+| `--lab-status-billing-risk-fg` | `#9b1145` | `#ff8fb4` |
+| `--lab-status-billing-risk-bg` | `#fce9f0` | `#36101f` |
+| `--lab-status-billing-risk-border` | `#9b1145` | `#ff8fb4` |
 | `--lab-status-replay-fg` | `#42565e` | `#b4c2c8` |
 | `--lab-status-replay-bg` | `#eef2f4` | `#18252b` |
 | `--lab-status-replay-border` | `#c9d3d8` | `#34464e` |

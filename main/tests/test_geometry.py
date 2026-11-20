@@ -195,7 +195,59 @@ def test_reproduces_stella_float64_bmag():
     res = stella_reference.compare_out_nc(eq(), paths.STELLA_TEST2_INPUT, paths.STELLA_TEST2_OUT_NC)
     assert res["samplesCompared"] == 25
     assert res["maxAbsErrorZed"] < 1e-12
-    assert res["maxAbsErrorBmag"] < 1e-10
+    assert stella_reference.FLOAT64_TOLERANCE == 1e-10
+    assert res["maxAbsErrorBmag"] < stella_reference.FLOAT64_TOLERANCE
+    assert res["allWithinTolerance"] is True
+    # relative error from the same arrays, recomputed here straight from the out.nc file
+    with netCDF4.Dataset(paths.STELLA_TEST2_OUT_NC) as d:
+        ref = np.array(d.variables["bmag"][...], dtype=float)[:, 0]
+    assert 0 < res["maxRelErrorBmag"] <= res["maxAbsErrorBmag"] / np.abs(ref).min() * (1 + 1e-12)
+    assert res["maxRelErrorBmag"] >= res["maxAbsErrorBmag"] / np.abs(ref).max() * (1 - 1e-12)
+    # ceil_sig is a conservative (upward) rounding
+    assert stella_reference.ceil_sig(2.937650123158164e-13, 2) == 3.0e-13
+    assert stella_reference.ceil_sig(2.9e-13, 2) == 2.9e-13
+    assert stella_reference.ceil_sig(1.2345e-4, 3) == 1.24e-4
+    assert stella_reference.ceil_sig(0.0, 2) == 0.0
+
+
+def test_float64_reference_exposed_in_artifact():
+    """D-023 §4: the float64 out.nc comparison is a structured field, not prose the UI has to scrape."""
+    res = stella_reference.compare_out_nc(eq(), paths.STELLA_TEST2_INPUT, paths.STELLA_TEST2_OUT_NC)
+    f64 = built()["validation"]["float64Reference"]
+    assert set(f64) == {"samplesCompared", "tolerance", "maxAbsError", "maxRelError", "allWithinTolerance", "source"}
+    assert f64["samplesCompared"] == res["samplesCompared"] == 25
+    assert f64["tolerance"] == stella_reference.FLOAT64_TOLERANCE
+    # the values the backend computed, rounded UP to 2 significant figures: errors at the 1e-13 level move in their
+    # 3rd digit with last-bit differences between CPUs/BLAS builds, and the artifact must rebuild byte-identically
+    for key, raw in (("maxAbsError", res["maxAbsErrorBmag"]), ("maxRelError", res["maxRelErrorBmag"])):
+        assert f64[key] == stella_reference.ceil_sig(raw, 2), key
+        assert raw <= f64[key] <= raw * 1.1, key
+        assert f64[key] == float(f"{f64[key]:.1e}"), key
+    assert f64["maxAbsError"] < f64["tolerance"] and f64["allWithinTolerance"] is True
+    assert f64["source"]["path"] == "data/raw/stella_test2_vmec_geometry.out.nc"
+    assert f64["source"]["sha256"] == io.sha256_file(paths.STELLA_TEST2_OUT_NC)
+    assert f64["source"]["url"].endswith("EXPECTED_OUTPUT.vmec_geometry.out.nc")
+    v = _validator()
+    v.validate(built())
+    a = json.loads(json.dumps(built()))
+    del a["validation"]["float64Reference"]
+    assert not v.is_valid(a)
+    a = json.loads(json.dumps(built()))
+    a["validation"]["float64Reference"]["allWithinTolerance"] = "yes"
+    assert not v.is_valid(a)
+
+
+def test_float64_reference_reports_a_failure(monkeypatch):
+    """allWithinTolerance follows the comparison: a tracer off by more than the tolerance reads false."""
+    real = stella_reference.compare_out_nc
+
+    def worse(*a, **kw):
+        out = real(*a, **kw)
+        return {**out, "maxAbsErrorBmag": 3e-9, "allWithinTolerance": False}
+
+    monkeypatch.setattr(stella_reference, "compare_out_nc", worse)
+    f64 = artifact.build()["validation"]["float64Reference"]
+    assert f64["maxAbsError"] == 3e-9 and f64["allWithinTolerance"] is False
 
 
 def test_stella_reference_rejects_mismatched_input(tmp_path):
@@ -356,3 +408,20 @@ def test_acceptance129_is_blocked_not_passed():
     assert prov["verification"]["outcome"] != "passed"
     assert prov["verification"]["outcome"] == "blocked"
     assert "Tracer validated vs stella rho 0.7: passed" in prov["verification"]["details"]
+
+
+def test_acceptance129_schema_rejects_passed():
+    """D-023 §3: the contract itself, not only this backend, forbids acceptance129 other than blocked (D-007)."""
+    v = _validator()
+    assert v.is_valid(built())
+    for outcome in ("passed", "failed", "not-applicable", "BLOCKED", None):
+        a = json.loads(json.dumps(built()))
+        a["validation"]["acceptance129"]["outcome"] = outcome
+        assert not v.is_valid(a), outcome
+    # it keeps the verification shape: details required, nothing extra
+    a = json.loads(json.dumps(built()))
+    del a["validation"]["acceptance129"]["details"]
+    assert not v.is_valid(a)
+    a = json.loads(json.dumps(built()))
+    a["validation"]["acceptance129"]["extra"] = 1
+    assert not v.is_valid(a)

@@ -26,5 +26,6 @@ export {
   type SegmentedOption,
 } from './components/SegmentedControl';
 export { Callout, type CalloutProps } from './components/Callout';
+export { Alert, type AlertProps } from './components/Alert';
 export { Icon, type IconName, type IconProps } from './components/Icon';
 export { Unit } from './components/Unit';

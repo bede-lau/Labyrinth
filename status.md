@@ -5,6 +5,28 @@
 > Branch **`main`**, pushed to `github.com/bede-lau/Labyrinth` (D-021). `claude/focused-cori-6s5ucw` on GitHub is the hand-over snapshot (`f0ca8e6`).
 > **Environment changed:** every command runs inside WSL through `scripts/dev.sh` — see CLAUDE.md "Running commands on this machine" and D-020.
 
+## Session 3 (2026-11-20, maintainer on Opus) — live log, newest first
+
+- **Wave 3 done (workflow `labyrinth-wave3-leftovers`), committed locally, NOT reviewed yet.** `verify.sh all` exit 0: 59 gate, 274 backend,
+  1164 frontend tests; the renderer suite now takes ~35 s (was ~150 s: vitest `vmThreads`, F13).
+  | Agent | Result |
+  |---|---|
+  | backend data + contracts | D-023 items 1–6 implemented and tested (contracts, producers, regenerated artifacts; ajv and jsonschema agree) |
+  | backend live-GX | LV-1…LV-10 closed: "terminated" wording follows the round-6 invariant everywhere; signal-test race fixed (30/30 ×2 loops); tests robust to an inherited SIG_IGN; R14/R15/S02/S04–S06/S09 killed; every 409 carries status; 405 + `Allow`; shutdown print/exit race; idle shutdown immediate |
+  | design-lead | danger primitive (`billing-risk` status + `Alert`), text-only non-http sources, `Unit` in badge, unsampled label above the grid (`unsampledShapes`), `FixtureCheck` for ranges/basis (24-combination matrix); 26/26 mutants killed |
+  | frontend A | FA-1…FA-9: `Alert` for every billing-risk state on every route, round-6 strings classified, `live` badge prop, launch lock (`launchPhase`; 409 re-enables on the next snapshot), vitest pool, closed saved-run validator; 96/96 mutants killed |
+  | frontend B | FB-1…FB-8: D-023 consumed (ranges via `FixtureCheck`, `guardPlan` from the artifact, `basis` from data, spatial fixtures drive pills/tallies, geometry `float64Reference`); 43/43 mutants killed |
+  | docs | interface.md §1–§10 and architecture.md rewritten against the code |
+  Known open, carried into the review round: saved-run id pattern is stricter on the server (`^(rehearsal|live)-[0-9a-f]{12}$`) than in `live-run.schema.json` /
+  `live-status.schema.json` / `renderer/src/lib/liveContract.ts` `SAVED_RUN_ID` (`^[A-Za-z0-9_.-]{1,80}$`); DESIGN.md §5 says stop-unconfirmed is "not in the store yet" (it is)
+  and lacks the panel-only "LAUNCH NOT CONFIRMED" alert; `POST /api/live/runs/*` answers 404 (documented).
+  Process note: messaging a running workflow agent by id started a duplicate copy; it was stopped (memory note added).
+- **Decided this session:** D-023 (contract tightenings, closes interface.md §10). Launch after a 409 re-enables on the next fresh snapshot that allows
+  launching (nothing was launched); after a 202 it stays disabled until the mode changes.
+- **Plan after the workflow:** maintainer `verify.sh all` + commit → review workflow (frontend shell/lib/live, frontend features, design system,
+  scripts/gates, backend live-GX, backend data/contracts; each finding adversarially verified; fix → re-review until APPROVE) → push to `main` (D-021)
+  → verification workflow (every task 00–09 on the committed tree, D-022 format) → mark DONE → commit, push.
+
 ## HANDOVER (2026-11-20, session 2 → next agent) — read this section first, it overrides anything older below
 
 The owner stopped session 2 because the usage budget was nearly exhausted. **Nothing is half-dispatched: no agent is running.** No task is `DONE`.

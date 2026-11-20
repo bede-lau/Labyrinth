@@ -4,6 +4,7 @@
   "title": "Saved GX rehearsal run (GET /api/live/runs/<savedRunId>). Only a run whose checks all passed qualifies live mode.",
   "type": "object",
   "required": ["savedRunId", "initVerified", "continuationVerified", "checks", "phases"],
+  "additionalProperties": false,
   "properties": {
     "savedRunId": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,80}$" },
     "initVerified": { "type": "boolean" },

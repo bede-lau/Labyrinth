@@ -95,7 +95,7 @@
     },
     "validation": {
       "type": "object",
-      "required": ["stellaReference", "acceptance129"],
+      "required": ["stellaReference", "float64Reference", "acceptance129"],
       "additionalProperties": false,
       "properties": {
         "stellaReference": {
@@ -112,9 +112,25 @@
             "source": { "$ref": "common.schema.json#/$defs/source" }
           }
         },
+        "float64Reference": {
+          "description": "Our tracer's bmag vs stella's float64 bmag(zed, alpha) in EXPECTED_OUTPUT.vmec_geometry.out.nc (same rho=0.7 run, 25 samples). tolerance is absolute on bmag = |B|/B_ref; allWithinTolerance is true only when every sample's bmag error, and the zed grid offset, are within it. maxAbsError/maxRelError are rounded UP to 2 significant figures (errors this small differ in later digits between CPUs).",
+          "type": "object",
+          "required": ["samplesCompared", "tolerance", "maxAbsError", "maxRelError", "allWithinTolerance", "source"],
+          "additionalProperties": false,
+          "properties": {
+            "samplesCompared": { "type": "integer" },
+            "tolerance": { "type": "number" },
+            "maxAbsError": { "type": "number" },
+            "maxRelError": { "type": "number" },
+            "allWithinTolerance": { "type": "boolean" },
+            "source": { "$ref": "common.schema.json#/$defs/source" }
+          }
+        },
         "acceptance129": {
-          "description": "PRD acceptance: bean |B| agrees with all 129 saved stella samples at rho=0.8.",
-          "$ref": "common.schema.json#/$defs/verification"
+          "description": "PRD acceptance: bean |B| agrees with all 129 saved stella samples at rho=0.8. Always blocked until those samples exist (D-007, D-023); unblocking is a schema change with its own decision entry.",
+          "$ref": "common.schema.json#/$defs/verification",
+          "type": "object",
+          "properties": { "outcome": { "const": "blocked" } }
         }
       }
     },

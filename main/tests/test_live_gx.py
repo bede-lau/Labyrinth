@@ -42,6 +42,7 @@ from labyrinth_main.features.live_gx.orchestrator import (
     TERMINATE_BACKOFF_S,
     TERMINATE_FAILED,
     TERMINATE_PENDING,
+    TERMINATING,
     Checkpoint,
     LaunchInFlight,
     Orchestrator,
@@ -171,7 +172,7 @@ def test_L1_ledger_reservation_is_locked_across_processes(tmp_path):
 # ---------------------------------------------------------------- L2 concurrency, devices, clocks, units
 def test_L2_two_workers_run_concurrently_with_devices_clocks_and_archive_units():
     backend = FakeBackend(steps=6, dt_raw=10.0, step_wall_s=0.03)
-    orch, snaps = run_session(backend)
+    orch, snaps = run_session(backend, clock=time.monotonic)  # local intervals immune to a wall-clock step on this machine
     assert [(t, g) for t, g, _ in backend.launch_calls] == [("bean", 0), ("triangular", 1)]
     final = snaps[-1]
     assert final["mode"] == "terminated"
@@ -183,6 +184,8 @@ def test_L2_two_workers_run_concurrently_with_devices_clocks_and_archive_units()
     assert max(iv["bean"][0], iv["triangular"][0]) < min(iv["bean"][1], iv["triangular"][1])
     b, t = backend.workers
     assert max(b.thread_start, t.thread_start) < min(b.thread_end, t.thread_end)
+    # the workers' own reported intervals (what the rehearsal's overlap check uses when all four ends are reported)
+    assert orch.remote_intervals() == {"bean": (b.thread_start, b.thread_end), "triangular": (t.thread_start, t.thread_end)}
     assert all(w["wallStart"] for w in final["workers"])
     # simulation clocks advance monotonically
     for i in (0, 1):
@@ -194,6 +197,39 @@ def test_L2_two_workers_run_concurrently_with_devices_clocks_and_archive_units()
         assert len(w["samples"]) == 6
         for s, (traw, qraw) in zip(w["samples"], fw.samples_raw, strict=True):
             assert s["t"] == pytest.approx(traw * TIME_MULTIPLIER) and s["Q"] == pytest.approx(qraw / HEAT_FLUX_DIVISOR)
+
+
+def test_L2_the_test_only_fake_pair_overlaps_however_late_its_second_spawn_runs():
+    """LV-2: the fake rehearsal behind every qualified test fixture must not depend on thread scheduling. A loaded
+    machine delayed the second worker past the first one's last step (the fixture's rehearsal then failed its
+    overlap check: 3 setup errors in 26 signal-test loops). The fake models two concurrent containers: a worker
+    does not finish before its sibling has started, and reports its own interval."""
+    class LateSecond(FakeBackend):
+        def launch(self, tube, gpu_index, checkpoint):
+            if tube == "triangular":
+                time.sleep(0.2)  # longer than bean's whole run (3 steps of 0.02 s)
+            return super().launch(tube, gpu_index, checkpoint)
+
+    backend = LateSecond(steps=3)
+    orch, _ = run_session(backend)
+    b, t = backend.workers
+    assert orch.mode == "terminated" and b.thread_end > t.thread_start and rehearse._overlap(orch)
+    assert orch.remote_intervals() == {"bean": (b.thread_start, b.thread_end), "triangular": (t.thread_start, t.thread_end)}
+
+
+def test_L2_the_test_only_fake_pair_overlap_survives_a_wall_clock_step_back(monkeypatch):
+    """LV-2: this machine's wall clock stepped back 0.56 s inside a fake rehearsal (a reported interval ended
+    before it began), failing the fixture's overlap check. The fake times its workers on the monotonic clock."""
+    real, offset = time.time, [0.0]
+    monkeypatch.setattr(time, "time", lambda: real() + offset[0])
+
+    class SteppingBack(FakeBackend):
+        def poll(self, w):
+            offset[0] -= 0.5  # before every report the wall clock steps back half a second
+            return super().poll(w)
+
+    orch, _ = run_session(SteppingBack(steps=3))
+    assert orch.mode == "terminated" and rehearse._overlap(orch)
 
 
 # ---------------------------------------------------------------- L3 failure -> fallback
@@ -262,11 +298,46 @@ def test_L3_malformed_or_erroring_poll_result_falls_back_with_label(bad):
 
 def test_L3_hard_timeout_before_both_workers_finish_is_a_labelled_fallback():
     backend = FakeBackend(steps=1000, step_wall_s=0.01)
-    _, snaps = run_session(backend, hard_timeout_s=0)
+    _, snaps = run_session(backend, hard_timeout_s=0.05)  # both spawns are instant; the timeout fires while polling
     final = snaps[-1]
-    assert final["mode"] == "fallback" and final["reason"].startswith("Hard timeout reached")
+    assert final["mode"] == "fallback"
+    assert final["reason"] == "Hard timeout reached: 0.05 s elapsed before both workers finished; workers terminated."
     assert final["fallback"]["label"] == TIMEOUT_LABEL and "Worker failed" not in final["reason"]
     assert [w.terminate_calls for w in backend.workers] == [1, 1]
+
+
+class _SlowSpawnClock:
+    """TEST-ONLY monotonic clock that a spawn advances by `spawn_s` (nothing sleeps for real)."""
+
+    def __init__(self, spawn_s: float):
+        self.now, self.spawn_s = 100.0, spawn_s
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_L3_hard_timeout_is_checked_between_the_two_spawns():
+    """Verifier R2-13: a first spawn that uses up the allocation must not be followed by the second one."""
+    clock = _SlowSpawnClock(spawn_s=15.0)
+
+    class SlowSpawn(FakeBackend):
+        def launch(self, tube, gpu_index, checkpoint):
+            clock.now += clock.spawn_s
+            return super().launch(tube, gpu_index, checkpoint)
+
+    backend = SlowSpawn(steps=10**6, step_wall_s=0.01)
+    orch, snaps = run_session(backend, hard_timeout_s=10, monotonic=clock)
+    final = snaps[-1]
+    assert [t for t, _, _ in backend.launch_calls] == ["bean"]  # triangular was never spawned
+    assert final["mode"] == "fallback" and final["fallback"]["label"] == TIMEOUT_LABEL
+    assert final["reason"] == ("Hard timeout reached: 10 s elapsed before both workers finished; "
+                               "GPU 0 (bean) terminated; GPU 1 (triangular) never launched.")
+    assert backend.workers[0].terminate_calls == 1 and orch.termination_confirmed
+    # a spawn inside the allocation is still followed by the second one
+    clock = _SlowSpawnClock(spawn_s=9.0)
+    backend = SlowSpawn(steps=3)
+    orch, snaps = run_session(backend, hard_timeout_s=10, monotonic=clock)
+    assert [t for t, _, _ in backend.launch_calls] == ["bean", "triangular"]
 
 
 def test_L3_transient_poll_errors_are_tolerated_then_fail():
@@ -564,8 +635,9 @@ def test_L8_modal_app_defines_guarded_gx_workers_and_is_never_imported():
     assert ast.unparse(assigns["REHEARSAL_PHASE_TIMEOUT_S"]) == "guard.modal_timeout_s('rehearsal')"
     assert ast.unparse(assigns["STARTUP_TIMEOUT_S"]) == "guard.modal_startup_timeout_s()"
     # no silent degradation: a deploy whose modal cannot take startup_timeout must raise
-    guards = [n for n in tree.body if isinstance(n, ast.If) and "'startup_timeout' not in _function_params" in ast.unparse(n.test)]
+    guards = [n for n in tree.body if isinstance(n, ast.If) and "_startup_param is None" in ast.unparse(n.test)]
     assert len(guards) == 1 and "modal.is_local()" in ast.unparse(guards[0].test)
+    assert "inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY" in ast.unparse(guards[0].test)
     assert isinstance(guards[0].body[0], ast.Raise) and ast.unparse(guards[0].body[0].exc.func) == "RuntimeError"
     assert "STARTUP" not in assigns and "safe" not in (ast.get_docstring(tree) or "").lower()
     fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef) and n.decorator_list}
@@ -904,8 +976,14 @@ from labyrinth_main.features.live_gx import modal_backend, rehearse
 modal_backend.CALL_TIMEOUT_S = call_timeout
 rehearse.CONFIRM_WAIT_S = confirm_wait
 factory = lambda rid, t: modal_backend.ModalBackend(run_id=rid, hard_timeout_s=t, kind="rehearsal")
-sys.exit(rehearse.main(["--confirm-cost-usd", str(cost)], availability_check=lambda: (True, "test harness"),
-                       backend_factory=factory, poll_interval_s=0.02))
+code = rehearse.main(["--confirm-cost-usd", str(cost)], availability_check=lambda: (True, "test harness"),
+                     backend_factory=factory, poll_interval_s=0.02, restore_signals=False)  # as the command line does
+if sys.argv[6:] == ["signal-after-exit"]:  # stop signals that land after the last line was printed (verifier R2-9)
+    import os
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        os.kill(os.getpid(), s)
+    time.sleep(0.2)
+sys.exit(code)
 """
 CANCEL_BEAN = "cancel bean [('terminate_containers', True)]"
 KILL_SWITCH = "kill-switch init/abort=True"
@@ -916,14 +994,14 @@ class _RehearseCli:
     flight until `release()`. The stub backend is injected through main()'s keyword hooks, which the command
     line cannot reach. Every stubbed Modal call is appended to a log the test reads."""
 
-    def __init__(self, tmp_path, *, call_timeout=modal_backend.CALL_TIMEOUT_S, confirm_wait=30.0):
+    def __init__(self, tmp_path, *, call_timeout=modal_backend.CALL_TIMEOUT_S, confirm_wait=30.0, signal_after_exit=False):
         self.state, self._log, self._release = tmp_path / "state", tmp_path / "modal-calls.log", tmp_path / "release"
         self.state.mkdir()
         write_ledger(self.state)
         env = {k: v for k, v in os.environ.items() if not k.startswith("MODAL_")}
         env.update(HOME=str(tmp_path), LABYRINTH_STATE_DIR=str(self.state))
         argv = [sys.executable, "-c", REHEARSE_HARNESS, str(self._log), str(self._release), str(call_timeout), str(confirm_wait),
-                str(guard.rehearsal_estimate_usd())]
+                str(guard.rehearsal_estimate_usd()), *(["signal-after-exit"] if signal_after_exit else [])]
         self.proc = subprocess.Popen(argv, cwd=REPO_ROOT / "main", env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      text=True)
 
@@ -993,7 +1071,8 @@ def test_L6_rehearse_cli_signal_during_in_flight_spawn_never_loses_its_handle(si
     code, out, err = cli.finish()
     assert code == 2, out + err
     assert cli.log() == ["spawn-sent bean", "spawn-returned bean", KILL_SWITCH, CANCEL_BEAN]  # and triangular never spawned
-    assert "phase 1: workers terminated. Stopped on request; workers terminated." in out and "NOT confirmed" not in out + err
+    assert ("phase 1: workers terminated. Stopped on request; GPU 0 (bean) terminated; GPU 1 (triangular) never launched."
+            in out) and "NOT confirmed" not in out + err
     assert "Rehearsal interrupted; nothing qualified." in out and out.rstrip().endswith("Rehearsal did NOT pass; workers terminated.")
     assert not (cli.state / "qualification.json").exists()
     # the reservation stays pending and unreconciled: a human reconciles before the next allocation
@@ -1034,6 +1113,19 @@ def test_L6_rehearse_cli_signal_with_a_spawn_that_never_returns_exits_2_unconfir
     assert out.rstrip().endswith("Rehearsal did NOT pass; workers NOT confirmed terminated — check Modal dashboard.")
     assert "workers terminated" not in out  # termination is never claimed
     assert not (cli.state / "qualification.json").exists()
+
+
+def test_L6_rehearse_cli_exit_code_survives_stop_signals_after_its_last_line(rehearse_cli):
+    """Verifier R2-9: the command line keeps its stop handlers installed until the process has exited, so SIGTERM,
+    SIGINT and SIGHUP landing after the last line (the old code had restored the defaults by then) leave exit
+    code 2 as it is instead of "killed by SIGTERM" (−15)."""
+    cli = rehearse_cli(signal_after_exit=True)
+    cli.spawn_in_flight()
+    cli.send(signal.SIGINT)
+    cli.release()
+    code, out, err = cli.finish()
+    assert code == 2, (code, out, err)
+    assert out.rstrip().endswith("Rehearsal did NOT pass; workers terminated.") and "Traceback" not in err
 
 
 def test_L6_rehearsal_stop_request_reserves_and_launches_nothing_further(tmp_path):
@@ -1089,10 +1181,11 @@ def test_L6_rehearse_cli_cannot_reach_the_test_hooks_and_is_inert_without_creden
     options = [ast.literal_eval(n.args[0]) for n in ast.walk(tree)
                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "add_argument"]
     assert options == ["--confirm-cost-usd"]  # the only switch
-    assert ast.unparse(tree.body[-1]) == "if __name__ == '__main__':\n    sys.exit(main())"  # hooks never passed
+    # the test hooks are never passed; the command line keeps its stop handlers installed until it has exited
+    assert ast.unparse(tree.body[-1]) == "if __name__ == '__main__':\n    sys.exit(main(restore_signals=False))"
     main_fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
     assert [a.arg for a in main_fn.args.args] == ["argv"]
-    assert {a.arg for a in main_fn.args.kwonlyargs} == {"availability_check", "backend_factory", "poll_interval_s"}
+    assert {a.arg for a in main_fn.args.kwonlyargs} == {"availability_check", "backend_factory", "poll_interval_s", "restore_signals"}
     assert "fake_backend" not in src and "environ" not in src and "getenv" not in src  # no hidden selector
     for k in ("MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET", "MODAL_CONFIG_PATH"):
         monkeypatch.delenv(k, raising=False)
@@ -1112,6 +1205,11 @@ def test_L6_rehearse_cli_cannot_reach_the_test_hooks_and_is_inert_without_creden
 def test_L6_rehearse_cli_in_process_pass_and_crash_paths(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("LABYRINTH_STATE_DIR", str(tmp_path))
     cost = ["--confirm-cost-usd", str(guard.rehearsal_estimate_usd())]
+    inherited = {s: signal.getsignal(s) for s in rehearse.STOP_SIGNALS}
+    # start like a foreground terminal session, whatever dispositions the test runner inherited (review R2-5: a
+    # runner started as a background job has SIGINT ignored, and an ignored signal rightly stays ignored)
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
     before = {s: signal.getsignal(s) for s in rehearse.STOP_SIGNALS}
     signal.signal(signal.SIGHUP, signal.SIG_IGN)  # as under nohup
     try:
@@ -1145,9 +1243,16 @@ def test_L6_rehearse_cli_in_process_pass_and_crash_paths(tmp_path, monkeypatch, 
         assert "Rehearsal crashed" in err and "factory exploded" in err
         assert "phase 1: workers terminated." in out and out.rstrip().endswith("Rehearsal did NOT pass; workers terminated.")
         assert [w.terminate_calls for w in backends[0].workers] == [1, 1] and service.load_qualification(tmp_path) is None
+        # nothing launched (the guard refuses an unreconciled ledger): never "workers terminated"
+        assert rehearse.main(cost, availability_check=available, backend_factory=crashing, poll_interval_s=0.005) == 2
+        out, err = capsys.readouterr()
+        assert "not reconciled" in out and out.rstrip().endswith("Rehearsal did NOT pass; nothing was launched.")
+        assert "terminated" not in out.rstrip().splitlines()[-1]
     finally:
         signal.signal(signal.SIGHUP, before[signal.SIGHUP])
     assert {s: signal.getsignal(s) for s in rehearse.STOP_SIGNALS} == before
+    for s, old in inherited.items():
+        signal.signal(s, old)
 
 
 def test_L6_rehearse_cli_ctrl_c_with_both_workers_running_terminates_both(tmp_path, monkeypatch, capsys):
@@ -1214,6 +1319,11 @@ def unsignable(registered):  # inspect.signature() cannot describe it
             return lambda fn: registered.__setitem__(fn.__name__, {"startup_timeout": kw.get("startup_timeout")}) or fn
     return Function()
 
+def positional_only(registered):  # a parameter of that NAME which no keyword reaches: the keyword lands in **kw
+    def function(self, startup_timeout=None, /, **kw):
+        return lambda fn: registered.__setitem__(fn.__name__, {"startup_timeout": startup_timeout}) or fn
+    return function
+
 def deploy(make_function, *, is_local=True, gx_ref="0123abc"):
     registered, dicts, volumes = {}, [], []
     class Image:  # modal.Image.from_registry(...).apt_install(...).pip_install(...).env(...) ...
@@ -1244,6 +1354,7 @@ print(json.dumps({
     "without": deploy(without),
     "kwargs-only": deploy(kwargs_only),
     "unsignable": deploy(unsignable),
+    "positional-only": deploy(positional_only),
     "in-container": deploy(kwargs_only, is_local=False, gx_ref=""),
     "no-gx-ref": deploy(accepting, gx_ref=""),
 }))
@@ -1267,7 +1378,7 @@ def test_L8_modal_app_refuses_to_deploy_when_startup_timeout_is_not_accepted():
         assert kw["timeout"] == guard.modal_timeout_s(kind) and kw["startup_timeout"] + kw["timeout"] == guard.planned_call_s(kind)
         assert (kw["gpu"], kw["retries"], kw["max_containers"], kw["scaledown_window"]) == ("A100-40GB", 0, 2, 2)
         assert (kw["cpu"], kw["memory"], kw["volumes"]) == ([4.0, 4.0], [16384, 16384], ["/ckpt"])
-    for variant in ("without", "kwargs-only", "unsignable"):
+    for variant in ("without", "kwargs-only", "unsignable", "positional-only"):  # positional-only: verifier R2-18
         bad = r[variant]
         assert bad["error"] is not None and bad["error"][0] == "RuntimeError" and "startup_timeout" in bad["error"][1], (variant, bad)
         assert bad["registered"] == {}, variant  # refused BEFORE any GPU function is registered
@@ -1503,8 +1614,9 @@ def test_L6_worst_case_stop_bound_counts_every_bounded_modal_call(stub_modal, mo
     assert (launch, poll, terminate) == (modal_backend.LAUNCH_CALLS, modal_backend.POLL_CALLS, modal_backend.TERMINATE_CALLS)
     per_call, workers = modal_backend.CALL_TIMEOUT_S, len(Orchestrator(b, hard_timeout_s=1).workers)
     in_flight = max(launch, workers * poll) * per_call + service.POLL_INTERVAL_S  # one launch, or one poll round + its sleep
-    terminating = workers * (sum(TERMINATE_BACKOFF_S) + (1 + len(TERMINATE_BACKOFF_S)) * terminate * per_call)
-    assert service.WORST_CASE_STOP_S == in_flight + terminating == 497.0 and service.TERMINATE_ROUND_S == terminating
+    # every attempt of both workers takes its full bound; the workers are retried together, so the pauses count once
+    terminating = sum(TERMINATE_BACKOFF_S) + workers * (1 + len(TERMINATE_BACKOFF_S)) * terminate * per_call
+    assert service.WORST_CASE_STOP_S == in_flight + terminating == 489.5 and service.TERMINATE_ROUND_S == terminating
     assert inspect.signature(service.LiveService.__init__).parameters["poll_interval_s"].default == service.POLL_INTERVAL_S
 
 
@@ -1584,8 +1696,9 @@ def test_L6_stop_bound_holds_on_a_virtual_clock_when_every_modal_call_takes_its_
                                                  clock=lambda c=clock: 1.8e9 + c.now, sleep=clock.spend, retry_sleep=clock.spend)
                 orch.run(poll_interval_s=service.POLL_INTERVAL_S)
                 scenario = dict(stop_at=stop_at, dies_at=dies_at, put_ok=put_ok, cancel_ok=cancel_ok, hard_timeout_s=hard)
-                assert orch.terminate_rounds == 1, scenario  # never a second round for the same stop
-                assert orch.termination_confirmed is cancel_ok, scenario
+                # never a second round for the same stop (none at all when the stop came before the first spawn was sent)
+                assert orch.terminate_rounds == (1 if orch.launched_any else 0), scenario
+                assert orch.termination_confirmed is (cancel_ok or not orch.launched_any), scenario
                 if clock.t_stop is None:
                     continue  # the session had ended on its own before the stop request
                 runs += 1
@@ -1615,7 +1728,7 @@ def test_L6_service_terminate_runs_one_round_per_stop_and_the_next_call_retries(
         while svc.status()["mode"] != "live":
             assert time.time() < deadline
             time.sleep(0.005)
-        one_round = ["bean"] * ATTEMPTS + ["triangular"] * ATTEMPTS
+        one_round = ["bean", "triangular"] * ATTEMPTS  # every worker's first cancel before any retry
         warned = []
         t0 = time.monotonic()
         confirmed, message = svc.terminate(on_unconfirmed=warned.append)
@@ -1654,7 +1767,7 @@ def test_L6_rehearse_cli_reports_a_hard_cancel_failure_at_once_instead_of_sleepi
     assert line in out and line in err and "not confirmed yet" not in out + err  # said at once; no wait was announced
     assert out.rstrip().endswith("Rehearsal did NOT pass; workers NOT confirmed terminated — check Modal dashboard.")
     assert "workers terminated" not in out and service.load_qualification(tmp_path) is None
-    assert attempts == ["bean"] * 5 + ["triangular"] * 5
+    assert attempts == ["bean", "triangular"] * 5
 
 
 COST_CONFIRMATIONS = {  # for the $2.65 slot estimate
@@ -1816,9 +1929,10 @@ class _Cell:
 
 
 def _round(put: str, cancel_ok: bool = True, attempts: int = 1) -> tuple:
-    """One terminate round for two spawned calls: (put, cancel) per attempt — bean, then triangular."""
+    """One terminate round for two spawned calls: (put, cancel) per attempt — bean, then triangular, and only
+    then the retries (review R2-12: a failing cancel of one GPU never delays the first cancel of the other)."""
     tail = "" if cancel_ok else " FAILED"
-    return (put, f"cancel bean{tail}") * attempts + (put, f"cancel triangular{tail}") * attempts
+    return (put, f"cancel bean{tail}", put, f"cancel triangular{tail}") * attempts
 
 
 UNCONFIRMED_AFTER = f"terminate unconfirmed after {ATTEMPTS} attempts"
@@ -1855,12 +1969,13 @@ TERMINATION_MATRIX = {
 def _assert_reported(mode: str, reason: str, state: str, says: str = "") -> None:
     """The one place that says what each reported state must look like, on every surface."""
     if state == CONFIRMED:
-        assert TERMINATE_FAILED not in reason and TERMINATE_PENDING not in reason, reason
-        assert mode in ("terminated", "fallback", "idle") and "terminated." in reason, (mode, reason)
+        assert TERMINATE_FAILED not in reason and "TERMINATION PENDING" not in reason, reason
+        # "workers terminated." or, when only bean was spawned, "GPU 0 (bean) terminated; GPU 1 (triangular) never launched."
+        assert mode in ("terminated", "fallback", "idle") and "terminated" in reason, (mode, reason)
         return
     assert reason.startswith(f"{state}: GPU 0 (bean) "), reason
     assert mode in ("launching", "live", "fallback"), mode  # never `terminated`, never back to idle
-    assert "workers terminated" not in reason and "Other worker terminated" not in reason, reason  # no such claim
+    assert "terminated" not in reason, reason  # no such claim, about any worker (LV-1)
     assert says in reason, (says, reason)
 
 
@@ -2147,3 +2262,451 @@ def test_L6_backend_terminate_returns_only_when_a_cancel_succeeded(stub_modal, m
     assert settled == [(True, None)] and h.cancelled
     b.terminate(h)  # returns: the cancel succeeded (the put is still made first)
     assert stub.log == ["spawn bean", PUT_FAILED, PUT, LATE_CALL, "cancel bean", PUT]
+
+
+# ---------------------------------------------------------------- verifier runs 06/07 on c6244ec: the leftovers (LV-1 … LV-10)
+PENDING_MARKER = "TERMINATION PENDING"
+
+
+@pytest.mark.parametrize("cause", ["worker", "timeout"])
+def test_L6_a_fallback_reads_termination_pending_from_the_instant_its_mode_is_set(cause):
+    """LV-1 / verifier R2-2, R2-3. The mode becomes `fallback` and the reason carries the TERMINATION PENDING
+    marker in the same locked step: while the fallback's cancels are in flight no snapshot claims anything was
+    terminated (the old reason did: "Other worker terminated." / "workers terminated."), and none shows a
+    fallback without the marker. Seen from inside the first cancel call, and by a status read meanwhile."""
+    seen, release, holder = [], threading.Event(), []
+
+    class SlowCancel(FakeBackend):
+        def terminate(self, w):
+            orch = holder[0]
+            seen.append((w.tube, orch.mode, orch.reason, orch.termination_confirmed))
+            assert release.wait(10)
+            super().terminate(w)
+
+    backend = SlowCancel(steps=10**6, step_wall_s=0.01, fail={"triangular": 3} if cause == "worker" else None)
+    orch = Orchestrator(backend, hard_timeout_s=60 if cause == "worker" else 0.1, retry_sleep=lambda s: None)
+    holder.append(orch)
+    session = threading.Thread(target=orch.run, kwargs={"poll_interval_s": 0.005}, daemon=True)
+    session.start()
+    try:
+        _until(lambda: seen, "the fallback's first cancel")
+        snap = orch.snapshot(BUDGET, qualified=False)  # a status poll while that cancel is in flight
+    finally:
+        release.set()
+        session.join(10)
+    tube, mode, reason, confirmed = seen[0]
+    assert (tube, mode, confirmed, snap["mode"]) == ("bean", "fallback", False, "fallback")
+    for text in (reason, snap["reason"]):
+        assert text.startswith(f"{TERMINATING}: GPU 0 (bean), GPU 1 (triangular). "), text
+        assert "terminated" not in text
+    final = orch.reason
+    assert orch.termination_confirmed and PENDING_MARKER not in final and TERMINATE_FAILED not in final
+    assert final.endswith(". Other worker terminated." if cause == "worker" else "; workers terminated."), final
+
+
+def test_L6_a_worker_that_never_launched_is_never_called_terminated(tmp_path):
+    """LV-1. "Terminated" is said of launched workers whose cancel returned, and of nothing else."""
+    # the first spawn fails before anything was sent: nothing to terminate, and nothing is called terminated
+    backend = FakeBackend(fail_launch={"bean"})
+    orch, snaps = run_session(backend)
+    assert snaps[-1]["mode"] == "fallback" and orch.termination_confirmed
+    assert orch.reason == "GPU 0 (bean) worker failed: launch failed: RuntimeError: simulated launch failure for bean. Nothing was launched."
+
+    # the first spawn may have started a worker (LaunchInFlight); its cancel succeeds; the second was never spawned
+    class InFlight(FakeBackend):
+        def launch(self, tube, gpu_index, checkpoint):
+            raise LaunchInFlight("Function.spawn did not return within 20 s", super().launch(tube, gpu_index, checkpoint))
+
+    backend = InFlight(steps=10**6)
+    orch, _ = run_session(backend)
+    assert orch.reason.endswith("; if the call still arrives it is cancelled at once. GPU 0 (bean) terminated; "
+                                "GPU 1 (triangular) never launched."), orch.reason
+    assert len(backend.workers) == 1 and backend.workers[0].terminate_calls == 1
+    # a stop before the first spawn ends the session `terminated`, and says what that means
+    orch = Orchestrator(FakeBackend(), hard_timeout_s=60)
+    orch.request_stop()
+    orch.run(poll_interval_s=0.005)
+    assert (orch.mode, orch.reason, orch.launched_any) == ("terminated", "Stopped on request; nothing was launched.", False)
+    # the service: a terminate of such a session says so, and never "Workers terminated."
+    qualify(tmp_path)
+    svc = service.LiveService(state_dir=tmp_path, availability_check=available, poll_interval_s=0.005,
+                              backend_factory=lambda rid, t: FakeBackend(fail_launch={"bean"}))
+    assert svc.launch(guard.slot_estimate_usd())[0]
+    svc._thread.join(10)
+    assert svc.terminate() == (True, "Nothing was launched.") and svc.launched_any is False
+    assert svc.status()["reason"].endswith("Nothing was launched.")
+
+
+def test_L6_every_worker_gets_its_first_cancel_before_any_retry():
+    """Verifier R2-12: a cancel that keeps failing for GPU 0 never delays GPU 1's first cancel; the retry passes
+    share one backoff pause each."""
+    calls, sleeps = [], []
+
+    class BeanStuck(FakeBackend):
+        def terminate(self, w):
+            calls.append(w.tube)
+            if w.tube == "bean":
+                raise ConnectionError("Modal API unreachable")
+            super().terminate(w)
+
+    backend = BeanStuck(steps=3)
+    orch, _ = run_session(backend, retry_sleep=sleeps.append)
+    assert calls == ["bean", "triangular"] + ["bean"] * len(TERMINATE_BACKOFF_S)
+    assert sleeps == list(TERMINATE_BACKOFF_S)
+    assert orch.workers[1].terminated and not orch.workers[0].terminated and orch.mode == "live"
+    assert orch.reason.startswith(f"{TERMINATE_FAILED}: GPU 0 (bean) terminate unconfirmed after {ATTEMPTS} attempts")
+
+
+def test_L6_a_stop_during_the_function_lookup_sends_no_spawn(stub_modal, monkeypatch):
+    """Verifier R2-14: the stop request reaches the backend, which then sends no spawn (a spawn sent after the
+    stop costs a container start and needs a cancel)."""
+    planned, holder = guard.planned_call_s("live"), []
+    stub, lookup = sys.modules["modal"], sys.modules["modal"].Function.from_name
+
+    def lookup_during_which_the_operator_stops(app, name):
+        holder[0].request_stop()  # e.g. Ctrl-C while Function.from_name is in flight
+        return lookup(app, name)
+
+    monkeypatch.setattr(stub.Function, "from_name", lookup_during_which_the_operator_stops)
+    orch = Orchestrator(modal_backend.ModalBackend(run_id="r", hard_timeout_s=planned), hard_timeout_s=planned,
+                        retry_sleep=lambda s: None)
+    holder.append(orch)
+    orch.run(poll_interval_s=0.01)
+    assert stub_modal.names == [("labyrinth-gx", "gx_worker_live")] and stub_modal.spawned == []
+    assert (orch.mode, orch.reason) == ("terminated", "Stopped on request; nothing was launched.")
+    assert not orch.launched_any and stub_modal.log == []  # no worker, so no kill switch and no cancel either
+
+
+def test_L3_fallback_never_names_a_saved_run_that_is_no_longer_served(tmp_path):
+    """Verifier R2-15: the saved run is deleted while a session runs; the fallback must not say it plays it."""
+    saved = qualify(tmp_path)
+    fail_now = threading.Event()
+
+    class FailsOnCue(FakeBackend):
+        def poll(self, w):
+            result = super().poll(w)
+            return {**result, "state": "failed", "error": "GX crash"} if fail_now.is_set() else result
+
+    svc = service.LiveService(state_dir=tmp_path, availability_check=available, poll_interval_s=0.005,
+                              backend_factory=lambda rid, t: FailsOnCue(steps=10**6, step_wall_s=0.01))
+    assert svc.launch(guard.slot_estimate_usd())[0]
+    try:
+        _until(lambda: svc.status()["mode"] == "live", "live")
+        assert svc.status()["fallback"] == {"active": False, "label": "", "savedRunId": saved}
+        (tmp_path / "runs" / f"{saved}.json").unlink()
+        fail_now.set()
+        _until(lambda: svc.status()["mode"] == "fallback", "the fallback")
+        assert svc.status()["fallback"] == {"active": True, "label": FAILED_LABEL, "savedRunId": None}
+        assert svc.saved_run(saved) is None  # ... which /api/live/runs/<id> answers with 404
+    finally:
+        assert svc.shutdown() is True
+
+
+def test_L1_a_ledger_amount_too_large_for_a_float_is_refused_and_never_raises(tmp_path, validator):
+    """LV-8 / verifier R2-6, S2-5: `math.isfinite(10**400)` raises OverflowError; such a ledger made status(),
+    the SSE stream and both POST routes fail. It is just a ledger the guard refuses."""
+    for billed, pending in ((10**400, 0.0), (0.0, 10**400), (10**309, 10**309), (-(10**400), 0.0)):
+        d = guard.evaluate(guard.Ledger(billed, pending, True))
+        assert not d.approved and "finite, non-negative numbers" in d.reason
+        assert d.budget_snapshot()["slotFits"] is False and d.hard_timeout_s == 0
+        assert not guard.evaluate(guard.Ledger(billed, pending, True), slot_min=75.0, setups=2).approved
+    qualify(tmp_path)
+    raw = '{"billedUsd": 1' + "0" * 400 + ', "pendingUsd": 0.0, "reconciled": true}'  # as a human could write it
+    (tmp_path / "ledger.json").write_text(raw)
+    built: list = []
+    svc = service.LiveService(state_dir=tmp_path, availability_check=available, backend_factory=lambda rid, t: built.append(rid))
+    st = svc.status()
+    assert_valid(validator, st)
+    assert st["mode"] == "idle" and st["budget"]["slotFits"] is False and "finite" in st["reason"]
+    accepted, reason = svc.launch(guard.slot_estimate_usd())
+    assert not accepted and "finite" in reason
+    ok, rec = rehearse.run_rehearsal(rehearsal_factory(built), state_dir=tmp_path, confirm_cost_usd=guard.rehearsal_estimate_usd(),
+                                     poll_interval_s=0.005)
+    assert not ok and "finite" in rec["reason"]
+    assert built == [] and (tmp_path / "ledger.json").read_text() == raw
+
+
+LEDGER_STATES = {  # ledger.json as found on disk -> both entrypoints must refuse, build nothing and leave it untouched
+    "missing": None,
+    "unreconciled": '{"billedUsd": 8.1, "pendingUsd": 0.0, "reconciled": false}',
+    "over the ceiling": '{"billedUsd": 37.36, "pendingUsd": 0.0, "reconciled": true}',
+    "truncated": '{"billedUsd": 8.1, "pend',
+    "a list": "[8.1, 0.0, true]",
+    "a key missing": '{"billedUsd": 8.1, "reconciled": true}',
+    "amounts as strings": '{"billedUsd": "8.1", "pendingUsd": "0", "reconciled": true}',
+    "reconciled: \"true\"": '{"billedUsd": 8.1, "pendingUsd": 0.0, "reconciled": "true"}',
+    "reconciled: 1": '{"billedUsd": 8.1, "pendingUsd": 0.0, "reconciled": 1}',
+    "reconciled: [true]": '{"billedUsd": 8.1, "pendingUsd": 0.0, "reconciled": [true]}',
+}
+
+
+@pytest.mark.parametrize("entrypoint", ["live", "rehearsal"])
+@pytest.mark.parametrize("ledger", LEDGER_STATES.values(), ids=LEDGER_STATES.keys())
+def test_L1_both_entrypoints_refuse_every_ledger_that_is_not_reconciled_with_room(ledger, entrypoint, qualified_template, tmp_path):
+    """Verifier R2-4 (mutants R15, S04, S05, S06): the guard's verdict is wired into the live launch AND the
+    rehearsal, and a missing, malformed or not-literally-`true` ledger reads as unreconciled."""
+    state = tmp_path / "state"
+    shutil.copytree(qualified_template, state)
+    path = state / "ledger.json"
+    path.unlink()
+    if ledger is not None:
+        path.write_text(ledger)
+    built: list = []
+    if entrypoint == "live":
+        svc = service.LiveService(state_dir=state, availability_check=available, backend_factory=lambda rid, t: built.append(rid))
+        accepted, reason = svc.launch(guard.slot_estimate_usd())
+        assert svc.status()["budget"]["slotFits"] is False
+    else:
+        accepted, rec = rehearse.run_rehearsal(rehearsal_factory(built), state_dir=state,
+                                               confirm_cost_usd=guard.rehearsal_estimate_usd(), poll_interval_s=0.005)
+        reason = rec["reason"]
+    assert not accepted and reason.startswith("Budget guard refused"), reason
+    assert built == [] and (path.read_text() if path.exists() else None) == ledger
+    assert sorted(p.name for p in state.iterdir()) == sorted(["qualification.json", "runs"] + (["ledger.json"] if ledger else []))
+
+
+@pytest.mark.parametrize("entrypoint", ["live", "rehearsal"])
+def test_L1_a_reservation_in_progress_in_another_process_is_waited_for_and_seen(entrypoint, qualified_template, tmp_path):
+    """Verifier R2-4 (mutants R14, S02). Read-check-reserve runs under the O_EXCL lock file every Labyrinth
+    process uses. Here "another process" holds that lock while it reserves the slot; this entrypoint must wait
+    for it and then see that reservation (pending, unreconciled) instead of the stale ledger."""
+    state = tmp_path / "state"
+    shutil.copytree(qualified_template, state)
+    write_ledger(state)
+    store = service.LedgerStore(state / "ledger.json")
+    os.close(os.open(store.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))  # the other process's lock
+
+    def other_process_reserves():
+        time.sleep(0.4)
+        store.save(guard.Ledger(8.10, guard.slot_estimate_usd(), False))  # its reservation ...
+        store.lock_path.unlink()                                          # ... then its unlock
+
+    other = threading.Thread(target=other_process_reserves)
+    other.start()
+    built: list = []
+    t0 = time.monotonic()
+    try:
+        if entrypoint == "live":
+            svc = service.LiveService(state_dir=state, availability_check=available, backend_factory=lambda rid, t: built.append(rid))
+            accepted, reason = svc.launch(guard.slot_estimate_usd())
+        else:
+            accepted, rec = rehearse.run_rehearsal(rehearsal_factory(built), state_dir=state,
+                                                   confirm_cost_usd=guard.rehearsal_estimate_usd(), poll_interval_s=0.005)
+            reason = rec["reason"]
+        waited = time.monotonic() - t0
+    finally:
+        other.join(10)
+    assert waited >= 0.35 and not accepted and "not reconciled" in reason and built == [], (waited, reason)
+    assert store.load() == guard.Ledger(8.10, guard.slot_estimate_usd(), False)  # the other reservation, untouched
+    assert not store.lock_path.exists()
+
+
+def test_L4_available_but_unqualified_is_unavailable_and_launches_nothing(tmp_path, validator):
+    """Verifier R2-4 (mutant S09): credentials and `modal` present, a reconciled ledger with room, but no recorded
+    rehearsal qualified the solver: unavailable, and a launch with the right cost is refused."""
+    write_ledger(tmp_path)
+    built: list = []
+    svc = service.LiveService(state_dir=tmp_path, availability_check=available, backend_factory=lambda rid, t: built.append(rid))
+    st = svc.status()
+    assert_valid(validator, st)
+    assert st["mode"] == "unavailable" and st["reason"].startswith("Not qualified") and st["qualified"] is False
+    assert st["fallback"] == {"active": True, "label": NO_REHEARSAL_LABEL, "savedRunId": None}
+    assert svc.launch(guard.slot_estimate_usd()) == (False, st["reason"]) and built == []
+    assert service.LedgerStore(tmp_path / "ledger.json").load() == guard.Ledger(8.10, 0.0, True)
+
+
+def test_L6_terminate_never_confirms_while_the_session_thread_is_still_in_a_backend_call(tmp_path):
+    """Verifier R2-16 (mutant S11): the session thread is stuck in a backend call past the join timeout; it owns
+    the terminate round, so terminate() reports unconfirmed (and says so first) instead of racing it."""
+    qualify(tmp_path)
+    in_poll, release, backends = threading.Event(), threading.Event(), []
+
+    class HungPoll(FakeBackend):
+        def poll(self, w):
+            in_poll.set()
+            assert release.wait(10)
+            return super().poll(w)
+
+    svc = service.LiveService(state_dir=tmp_path, availability_check=available, poll_interval_s=0.005, join_timeout_s=0.2,
+                              backend_factory=lambda rid, t: backends.append(HungPoll(steps=10**6, step_wall_s=0.01)) or backends[-1])
+    assert svc.launch(guard.slot_estimate_usd())[0]
+    try:
+        assert in_poll.wait(5)
+        warned: list = []
+        confirmed, message = svc.terminate(on_unconfirmed=warned.append)
+        assert not confirmed and message.startswith("Session thread still running after 0 s; termination unconfirmed.")
+        assert warned == [message] and [w.terminate_calls for w in backends[0].workers] == [0, 0]
+    finally:
+        release.set()
+        svc._thread.join(10)
+    assert [w.terminate_calls for w in backends[0].workers] == [1, 1]  # the session thread's own round
+    assert svc.terminate() == (True, "Workers terminated.")
+
+
+def test_L6_shutdown_waits_only_while_a_cancel_is_queued_on_a_virtual_clock(tmp_path, monkeypatch):
+    """LV-9 / verifier R2-8, S2-7. With the real constants (join_timeout_s = WORST_CASE_STOP_S + 10 s) every wait
+    the shutdown makes is taken on a virtual clock instead of slept: nothing launched, a session that ended
+    confirmed and a cancel that failed hard return at once; only a queued cancel is waited for, once, for at most
+    the bound."""
+    waits: list[float] = []
+
+    def virtual_wait(self, timeout_s):  # stands in for Orchestrator.wait_terminated: the whole wait passes
+        waits.append(timeout_s)
+        return self.termination_confirmed
+
+    monkeypatch.setattr(Orchestrator, "wait_terminated", virtual_wait)
+    monkeypatch.setattr(orchestrator, "TERMINATE_BACKOFF_S", (0.0,) * len(TERMINATE_BACKOFF_S))
+
+    class Failing(FakeBackend):
+        def terminate(self, w):
+            raise ConnectionError("Modal API unreachable")
+
+    class Queued(FakeBackend):
+        def terminate(self, w):
+            super().terminate(w)
+            raise TerminationPending("spawn still in flight", lambda cb: None)  # never settles
+
+    def shut_down(backend_cls) -> tuple[bool, list, float]:
+        state = tmp_path / f"state-{len(list(tmp_path.iterdir()))}"
+        state.mkdir()
+        svc = service.LiveService(state_dir=state, availability_check=available, poll_interval_s=0.005)
+        if backend_cls is not None:
+            qualify(state)
+            svc.backend_factory = lambda rid, t: backend_cls(steps=3)
+            assert svc.launch(guard.slot_estimate_usd())[0]
+            svc._thread.join(10)  # the session has ended (its own round done): nothing is still running
+        del waits[:]
+        t0 = time.monotonic()
+        ok = svc.shutdown()
+        return ok, list(waits), time.monotonic() - t0
+
+    assert service.LiveService().join_timeout_s == service.WORST_CASE_STOP_S + 10.0
+    for backend_cls, confirmed in ((None, True), (FakeBackend, True), (Failing, False)):
+        ok, made, elapsed = shut_down(backend_cls)
+        assert (ok, made) == (confirmed, []) and elapsed < 2.0, (backend_cls, ok, made, elapsed)
+    ok, made, _ = shut_down(Queued)
+    assert (ok, made) == (False, [service.WORST_CASE_STOP_S + 10.0])
+
+
+@pytest.mark.parametrize("bad", [[[10.0, 1.0], [10.0, 1.0]], [[10.0, 1.0], [9.5, 1.0]]], ids=["repeated", "backwards"])
+def test_L2_flux_sample_times_must_advance(bad):
+    """Verifier R2-16 (mutant O31): samples whose times repeat or go back are a failed worker, not data."""
+    class Garbled(FakeBackend):
+        def poll(self, w):
+            return {**super().poll(w), "new_samples_raw": bad, "sim_time_raw": 10.0}
+
+    _, snaps = run_session(Garbled(steps=50))
+    assert snaps[-1]["mode"] == "fallback" and "flux sample times must advance" in snaps[-1]["workers"][0]["error"]
+
+
+def _qualification_rehearsal(tmp_path, phase_backends):
+    """run_rehearsal with one backend class per phase -> (ok, record, phases started)."""
+    write_ledger(tmp_path)
+    store: dict = {}
+    built: list = []
+
+    def factory(run_id, timeout):
+        built.append(phase_backends[len(built)](steps=3, dt_raw=10.0, restart_store=store))
+        return built[-1]
+
+    ok, rec = rehearse.run_rehearsal(factory, state_dir=tmp_path, confirm_cost_usd=guard.rehearsal_estimate_usd(), poll_interval_s=0.005)
+    return ok, rec, len(built)
+
+
+def _reports(**extra_by_tube):
+    """A FakeBackend whose every report also carries `extra_by_tube[tube]`."""
+    class Reporting(FakeBackend):
+        def poll(self, w):
+            return {**super().poll(w), **extra_by_tube.get(w.tube, {})}
+    return Reporting
+
+
+def test_L5_qualification_checks_fail_in_the_failing_direction(tmp_path):
+    """Verifier R2-16 (mutants R07, R08, R09, R17): each qualification check must be able to say no."""
+    # R08: both workers on one device
+    same = _reports(bean={"device_id": "GPU-SAME"}, triangular={"device_id": "GPU-SAME"})
+    ok, rec, phases = _qualification_rehearsal(tmp_path / "a", [same, same])
+    assert not ok and rec["checks"] == {"init": True, "continuation": True, "distinctDevices": False, "overlap": True}
+    # R09: the workers ran one after the other (their own reported intervals do not overlap)
+    sequential = _reports(bean={"wall_start": 1000.0, "wall_end": 1001.0}, triangular={"wall_start": 1002.0, "wall_end": 1003.0})
+    ok, rec, phases = _qualification_rehearsal(tmp_path / "b", [sequential, sequential])
+    assert not ok and rec["checks"] == {"init": True, "continuation": True, "distinctDevices": True, "overlap": False}
+
+    # R07: the continuation reports a sample AT the checkpoint and its clock never moves beyond it
+    class Stalled(FakeBackend):
+        def launch(self, tube, gpu_index, checkpoint):
+            self.launch_calls.append((tube, gpu_index, checkpoint))
+            return types.SimpleNamespace(gpu_index=gpu_index, t=checkpoint.sim_time_raw, polls=0)
+
+        def poll(self, w):
+            w.polls += 1
+            return {"device_id": f"GPU-{w.gpu_index}", "state": "done", "sim_time_raw": w.t, "error": None,
+                    "new_samples_raw": [[w.t, 1.0]] if w.polls == 1 else [],
+                    "wall_start": 1000.0 + w.gpu_index, "wall_end": 1010.0 + w.gpu_index}
+
+        def terminate(self, w):
+            pass
+
+    overlapping = _reports(bean={"wall_start": 1000.0, "wall_end": 1010.0}, triangular={"wall_start": 1001.0, "wall_end": 1011.0})
+    ok, rec, phases = _qualification_rehearsal(tmp_path / "c", [overlapping, Stalled])
+    assert phases == 2 and not ok
+    assert rec["checks"] == {"init": True, "continuation": False, "distinctDevices": True, "overlap": True}
+    # R17: both checkpoints were reported, but phase 1 itself failed: no continuation is launched on them
+    checkpointing = _reports(bean={"checkpoint": {"ref": "ck/bean", "sim_time_raw": 0.0}},
+                             triangular={"checkpoint": {"ref": "ck/triangular", "sim_time_raw": 0.0}})
+
+    class FailsLater(checkpointing):
+        def __init__(self, **kw):
+            super().__init__(fail={"bean": 3}, **kw)
+
+    ok, rec, phases = _qualification_rehearsal(tmp_path / "d", [FailsLater, FakeBackend])
+    assert phases == 1 and not ok and rec["phases"][0]["mode"] == "fallback"
+    assert rec["checks"]["init"] is False and rec["checks"]["continuation"] is False
+
+
+def test_L6_worker_stops_gx_at_its_own_execution_deadline(gx_container):
+    """Verifier R2-16 (mutant A12): the worker stops GX at hard_timeout_s − CHECKPOINT_MARGIN_S from its own start
+    (60.3 − 60 = 0.3 s here), whether or not anyone terminates it."""
+    progress = _KillSwitchDict("run-1")  # the kill switch is never raised
+    t0 = time.monotonic()
+    with pytest.raises(RuntimeError, match="GX exited with code -15 and 0 flux samples"):
+        gx_container.worker(progress)(tube="bean", gpu_index=0, progress_key="run-1/bean", input_toml="# test",
+                                      checkpoint_ref=None, hard_timeout_s=60.3)
+    assert 0.3 <= time.monotonic() - t0 < 5
+    pid = int((gx_container.work / "run-1_bean" / "gx.pid").read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)  # GX was stopped and reaped
+    assert progress["run-1/bean"]["state"] == "failed" and progress["run-1/bean"]["wall_end"] is not None
+
+
+def test_L6_a_rescheduled_input_keeps_its_deadline_and_never_starts_gx(gx_container):
+    """Verifier R2-16 (mutant A13): Modal re-delivers an input whose first container already started; the worker
+    refuses it (a new container would restart the deadline) and never starts GX."""
+    progress = _KillSwitchDict("run-1")
+    progress["run-1/bean"] = {"state": "running", "wall_start": time.time()}  # what the first container reported
+    with pytest.raises(RuntimeError, match="input was rescheduled; refusing to extend the original deadline"):
+        gx_container.worker(progress)(tube="bean", gpu_index=0, progress_key="run-1/bean", input_toml="# test",
+                                      checkpoint_ref=None, hard_timeout_s=1200)
+    assert progress["run-1/bean"]["state"] == "failed" and gx_container.flux_reads == []
+    assert not (gx_container.work / "run-1_bean" / "gx.pid").exists()
+
+
+def test_L8_deployed_functions_cap_the_execution_budget_they_are_given():
+    """Verifier R2-16 (mutant A16): whatever hard_timeout_s a caller passes, a deployed function hands the worker
+    at most its own Modal-enforced execution timeout. (The two functions are compiled out of modal_app.py's AST
+    without their decorator; modal_app and modal are never imported.)"""
+    tree = ast.parse((LIVE_GX / "modal_app.py").read_text())
+    fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("gx_worker_live", "gx_worker_rehearsal")]
+    assert len(fns) == 2 and all(len(f.decorator_list) == 1 for f in fns)
+    for f in fns:
+        f.decorator_list = []
+    calls: list = []
+    ns = {"_worker": lambda **kw: calls.append(kw) or kw, "LIVE_TIMEOUT_S": guard.modal_timeout_s("live"),
+          "REHEARSAL_PHASE_TIMEOUT_S": guard.modal_timeout_s("rehearsal")}
+    exec(compile(ast.Module(body=[ast.parse("from __future__ import annotations").body[0], *fns], type_ignores=[]),
+                 "modal_app_functions", "exec"), ns)
+    for name, kind in (("gx_worker_live", "live"), ("gx_worker_rehearsal", "rehearsal")):
+        for asked, given in ((10**6, guard.modal_timeout_s(kind)), (100, 100)):
+            del calls[:]
+            ns[name](tube="bean", gpu_index=0, progress_key="r/bean", input_toml="#", checkpoint_ref=None, hard_timeout_s=asked)
+            assert calls[0]["hard_timeout_s"] == given, (name, asked)

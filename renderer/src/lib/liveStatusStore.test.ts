@@ -12,6 +12,7 @@ import {
   postLiveLaunch,
   postLiveTerminate,
   sessionMayBeBilling,
+  stopUnconfirmed,
   terminationProblem,
   type LiveState,
   type LiveStatus,
@@ -53,7 +54,7 @@ const advance = (ms: number) => vi.advanceTimersByTimeAsync(ms);
 
 /* ---- polling, back-off ----------------------------------------------------------------------- */
 
-test('with no backend the store backs off (4 s doubling to a 60 s cap) instead of polling every interval', async () => {
+test('A2 with no backend the store backs off (4 s doubling to a 60 s cap) instead of polling every interval', async () => {
   const b = backend(down);
   const store = createLiveStatusStore({ fetchImpl: b.fetch });
   const stop = store.subscribe(() => {}, 2000);
@@ -81,7 +82,7 @@ test('with no backend the store backs off (4 s doubling to a 60 s cap) instead o
   stop();
 });
 
-test('an HTML page answered with status 200 (static host) is a failure for the back-off, not a success', async () => {
+test('A2 an HTML page answered with status 200 (static host) is a failure for the back-off, not a success', async () => {
   const b = backend(() => new Response('<!doctype html><html><body>app shell</body></html>', { status: 200, headers: { 'Content-Type': 'text/html' } }));
   const store = createLiveStatusStore({ fetchImpl: b.fetch });
   const stop = store.subscribe(() => {}, 2000);
@@ -94,7 +95,7 @@ test('an HTML page answered with status 200 (static host) is a failure for the b
   stop();
 });
 
-test('a valid answer resets the back-off; a backend that comes up is picked up; refresh() does not wait', async () => {
+test('A2 a valid answer resets the back-off; a backend that comes up is picked up; refresh() does not wait', async () => {
   const b = backend(down);
   const store = createLiveStatusStore({ fetchImpl: b.fetch });
   const stop = store.subscribe(() => {}, 2000);
@@ -118,7 +119,7 @@ test('a valid answer resets the back-off; a backend that comes up is picked up; 
   stop();
 });
 
-test('no back-off while a session may be billing: after live -> unreachable the store keeps asking every interval', async () => {
+test('A2 L9 no back-off while a session may be billing: after live -> unreachable the store keeps asking every interval', async () => {
   const b = backend(() => json(snapshot('live')));
   const store = createLiveStatusStore({ fetchImpl: b.fetch });
   const stop = store.subscribe(() => {}, 2000);
@@ -137,7 +138,7 @@ test('no back-off while a session may be billing: after live -> unreachable the 
 
 /* ---- timeout, ordering, staleness -------------------------------------------------------------- */
 
-test('a request is aborted after a timeout shorter than the poll interval and the state becomes unreachable', async () => {
+test('A2 a request is aborted after a timeout shorter than the poll interval and the state becomes unreachable', async () => {
   const signals: AbortSignal[] = [];
   const hang = ((_: RequestInfo | URL, init?: RequestInit) => {
     signals.push(init!.signal!);
@@ -163,7 +164,29 @@ test('a request is aborted after a timeout shorter than the poll interval and th
   stop();
 });
 
-test('answers are applied in request order only: an older answer that arrives late is dropped, success or failure', async () => {
+test('A2 requests never stack up: while one is in flight no poll sends another, even after a faster subscriber shortens the interval', async () => {
+  const signals: AbortSignal[] = [];
+  const hang = ((_: RequestInfo | URL, init?: RequestInit) => {
+    signals.push(init!.signal!);
+    return new Promise<Response>(() => {});
+  }) as unknown as typeof fetch;
+  const store = createLiveStatusStore({ fetchImpl: hang, backoff: false });
+  const stop = store.subscribe(() => {}, 2000); // request 1: 1500 ms timeout
+  await advance(0);
+  expect(signals).toHaveLength(1);
+  const stopFast = store.subscribe(() => {}, 400); // polls every 400 ms from now on
+  await advance(1_200); // ticks at 400, 800, 1200: request 1 is still open
+  expect(signals).toHaveLength(1);
+  await advance(300); // 1500 ms: request 1 times out
+  expect(signals[0]!.aborted).toBe(true);
+  expect(store.getState()).toMatchObject({ status: 'unreachable', cause: 'timeout' });
+  await advance(100); // next tick (1600 ms) sends request 2
+  expect(signals).toHaveLength(2);
+  stopFast();
+  stop();
+});
+
+test('A2 answers are applied in request order only: an older answer that arrives late is dropped, success or failure', async () => {
   const waiting: ((r: Response | Error) => void)[] = [];
   const slow = (() =>
     new Promise<Response>((resolve, reject) => {
@@ -191,7 +214,7 @@ test('answers are applied in request order only: an older answer that arrives la
   stop();
 });
 
-test('a snapshot that outlived its freshness is not shown as current: at the next tick it becomes unreachable (stale)', async () => {
+test('A2 a snapshot that outlived its freshness is not shown as current: at the next tick it becomes unreachable (stale)', async () => {
   let clock = 1_000_000;
   let answer: () => Response | Promise<Response> = () => json(snapshot('live'));
   const store = createLiveStatusStore({ fetchImpl: (async () => answer()) as unknown as typeof fetch, now: () => clock });
@@ -217,7 +240,7 @@ test('a snapshot that outlived its freshness is not shown as current: at the nex
 
 /* ---- one store for everyone -------------------------------------------------------------------- */
 
-test('subscribers share one poller at the fastest requested pace; the last one leaving stops and resets it', async () => {
+test('A2 subscribers share one poller at the fastest requested pace; the last one leaving stops and resets it', async () => {
   const b = backend(() => json(snapshot('idle')));
   const store = createLiveStatusStore({ fetchImpl: b.fetch });
   const seenA: string[] = [];
@@ -246,7 +269,7 @@ test('subscribers share one poller at the fastest requested pace; the last one l
   expect(b.calls).toBe(5); // and nothing polls any more
 });
 
-test('apply() takes a status from a POST answer (valid ones only) and lockLaunch() holds until another mode is reported', async () => {
+test('L10 apply() takes a status from a POST answer (valid ones only) and lockLaunch() holds until another mode is reported', async () => {
   const b = backend(() => json(snapshot('idle')));
   const store = createLiveStatusStore({ fetchImpl: b.fetch });
   const stop = store.subscribe(() => {}, 2000);
@@ -280,9 +303,112 @@ test('apply() takes a status from a POST answer (valid ones only) and lockLaunch
   stop();
 });
 
+test('L10 FA-4 launch lock: a 202 holds until a later snapshot reports another mode; a 409 or no answer is released by the next snapshot', async () => {
+  const b = backend(() => json(snapshot('idle')));
+  const store = createLiveStatusStore({ fetchImpl: b.fetch });
+  const stop = store.subscribe(() => {}, 2000);
+  await advance(0);
+  store.launchAnswered('accepted'); // nothing is locked: no-op
+  expect(store.getState().launchLocked).toBeUndefined();
+
+  // 202: idle snapshots after the answer (the session thread has not started yet) keep it locked.
+  store.lockLaunch();
+  expect(store.getState()).toMatchObject({ status: 'ready', launchLocked: true, launchPhase: 'sent' });
+  store.launchAnswered('accepted');
+  expect(store.apply(snapshot('idle', { reason: 'carried by the 202' }))).toBe(true);
+  await advance(4_000);
+  expect(store.getState()).toMatchObject({ status: 'ready', data: { mode: 'idle' }, launchLocked: true, launchPhase: 'accepted' });
+  b.next = () => json(snapshot('launching'));
+  await store.refresh();
+  expect(store.getState()).toMatchObject({ status: 'ready', data: { mode: 'launching' } });
+  expect(store.getState().launchLocked).toBeUndefined();
+  expect(store.getState().launchPhase).toBeUndefined();
+
+  // 409: nothing was launched. The status the refusal carries (applied after launchAnswered) releases it.
+  b.next = () => json(snapshot('idle'));
+  await store.refresh();
+  store.lockLaunch();
+  store.launchAnswered('refused');
+  expect(store.getState()).toMatchObject({ launchLocked: true, launchPhase: 'refused' });
+  expect(store.apply(snapshot('idle', { reason: 'carried by the 409' }))).toBe(true);
+  expect(store.getState()).toMatchObject({ status: 'ready', data: { reason: 'carried by the 409' } });
+  expect(store.getState().launchLocked).toBeUndefined();
+
+  // No answer: the next snapshot requested after it says what is true, idle or not.
+  store.lockLaunch();
+  store.launchAnswered('unknown');
+  expect(store.getState()).toMatchObject({ launchLocked: true, launchPhase: 'unknown' });
+  b.next = down; // a failed poll decides nothing
+  await store.refresh();
+  expect(store.getState()).toMatchObject({ status: 'unreachable', launchLocked: true, launchPhase: 'unknown' });
+  b.next = () => json(snapshot('idle'));
+  await store.refresh();
+  expect(store.getState()).toMatchObject({ status: 'ready', data: { mode: 'idle' } });
+  expect(store.getState().launchLocked).toBeUndefined();
+  stop();
+});
+
+test('L10 FA-4 only a snapshot requested after the lock changed can release it: an older poll answering late cannot', async () => {
+  const waiting: ((r: Response) => void)[] = [];
+  const slow = (() => new Promise<Response>((resolve) => waiting.push(resolve))) as unknown as typeof fetch;
+  const store = createLiveStatusStore({ fetchImpl: slow, backoff: false });
+  const stop = store.subscribe(() => {}, 60_000);
+  waiting[0]!(json(snapshot('idle')));
+  await advance(0);
+  expect(store.getState()).toMatchObject({ status: 'ready', data: { mode: 'idle' } });
+
+  // A poll sent before the POST answers after a "no answer" outcome: it predates the launch on the backend.
+  const older = store.refresh();
+  store.lockLaunch();
+  store.launchAnswered('unknown');
+  waiting[1]!(json(snapshot('idle', { reason: 'older' })));
+  await older;
+  expect(store.getState()).toMatchObject({ data: { reason: 'older' }, launchLocked: true, launchPhase: 'unknown' });
+  const newer = store.refresh();
+  waiting[2]!(json(snapshot('idle', { reason: 'newer' })));
+  await newer;
+  expect(store.getState()).toMatchObject({ data: { reason: 'newer' } });
+  expect(store.getState().launchLocked).toBeUndefined();
+
+  // The same for a 202: a non-idle answer to a request sent before the lock does not release it.
+  const before = store.refresh();
+  store.lockLaunch();
+  store.launchAnswered('accepted');
+  waiting[3]!(json(snapshot('unavailable')));
+  await before;
+  expect(store.getState()).toMatchObject({ data: { mode: 'unavailable' }, launchLocked: true, launchPhase: 'accepted' });
+  stop();
+});
+
+test.each([
+  ['sent', 'connection-lost'],
+  ['accepted', 'connection-lost'],
+  ['unknown', 'connection-lost'],
+  ['refused', null],
+] as const)('A2 L10 FA-4 launch %s, then the API stops answering after an idle snapshot: danger %s, polling stays at full pace while it may bill', async (phase, expected) => {
+  const b = backend(() => json(snapshot('idle')));
+  const store = createLiveStatusStore({ fetchImpl: b.fetch });
+  const stop = store.subscribe(() => {}, 2000);
+  await advance(0);
+  store.lockLaunch();
+  if (phase !== 'sent') store.launchAnswered(phase);
+  b.next = down;
+  await store.refresh();
+  const s = store.getState();
+  expect(s).toMatchObject({ status: 'unreachable', lastKnown: { data: { mode: 'idle' } } });
+  expect(liveDanger(s)?.kind ?? null).toBe(expected);
+  expect((liveDanger(s)?.detail ?? '').includes('A launch request was sent from this page after that, and its outcome is not known.')).toBe(expected !== null);
+  expect(modePills(s)[0]!.status).toBe(expected ? 'billing-risk' : 'replay');
+  // 2 s later: a launch that may bill is polled at the normal pace; a refused one backs off (4 s).
+  const calls = b.calls;
+  await advance(2_000);
+  expect(b.calls).toBe(calls + (expected ? 1 : 0));
+  stop();
+});
+
 /* ---- danger rules ------------------------------------------------------------------------------ */
 
-test('terminationProblem finds either marker anywhere in the reason, in every mode, and titles the alert from it', () => {
+test('A2 L9 terminationProblem finds either marker anywhere in the reason, in every mode, and titles the alert from it', () => {
   expect(terminationProblem(`${FAILED}: GPU 0 (bean) terminate unconfirmed.`)).toEqual({
     marker: 'TERMINATE FAILED',
     title: 'TERMINATE FAILED — GPUs may still be billing',
@@ -311,7 +437,104 @@ test('terminationProblem finds either marker anywhere in the reason, in every mo
   expect(terminationProblem({ status: 'unreachable', message: FAILED })).toBeNull(); // an error text is not a status
 });
 
-test('connection lost is a danger only when the last valid snapshot was not a clean idle one', () => {
+/* ---- FA-2: backend round-6 wording, assembled exactly as the backend assembles it ------------------
+ * main/labyrinth_main/features/live_gx/orchestrator.py:56-62 (constants), :320-333 (`reason` = marker +
+ * ": " + "GPU <i> (<tube>) <terminate_error>" + ". " + base; :561 joins the GPU clauses), :516 ("termination
+ * pending: " + message), :502 ("terminate unconfirmed after <n> attempts: " + error), :523 (a
+ * TerminationUnconfirmed message as is); modal_backend.py:181-184 (_no_call), :325-327 (pending message);
+ * service.py:340-341, :348 and server/app.py:172 (launch refusals: "launch refused: " + reason). */
+const BASE_FAILED_SPAWN =
+  "GPU 0 (bean) worker failed: launch failed client-side (ConnectionError: reset) and a worker may have started; there is no call to cancel, only the run's kill switch can stop it.";
+const NO_CALL = 'the spawn failed client-side (ConnectionError: reset) after it may have reached Modal, there is no call to cancel';
+const ROUND6 = {
+  // modal_backend.py:183 via orchestrator.py:523/:328 — the kill switch was raised, nothing could be cancelled.
+  killSwitchOnly: `${FAILED}: GPU 0 (bean) kill switch raised, stop not confirmed: ${NO_CALL} and a worker that started stops only when it reads the switch. ${BASE_FAILED_SPAWN}`,
+  // modal_backend.py:184 raised as RuntimeError, retried, then orchestrator.py:502 (1 + 4 backoff steps).
+  killSwitchNotSet: `${FAILED}: GPU 0 (bean) terminate unconfirmed after 5 attempts: RuntimeError: ${NO_CALL} and the run kill switch could not be set: TimeoutError: Dict.put(abort) timed out. ${BASE_FAILED_SPAWN}`,
+  // modal_backend.py:325,327 + orchestrator.py:516, pending only -> TERMINATE_PENDING (orchestrator.py:327-328).
+  pendingRaised: `${PENDING}: GPU 1 (triangular) termination pending: spawn still in flight; it is cancelled the moment it returns; the run kill switch is raised. GPU 1 (triangular) worker failed: launch did not complete in time (Function.spawn did not return within 30 s); if the call still arrives it is cancelled at once.`,
+  pendingNotSet: `${PENDING}: GPU 1 (triangular) termination pending: spawn still in flight; it is cancelled the moment it returns; the run kill switch could NOT be set (TimeoutError: Dict.put(abort) timed out); the next terminate retries it. GPU 1 (triangular) worker failed: launch did not complete in time (Function.spawn did not return within 30 s); if the call still arrives it is cancelled at once.`,
+  // orchestrator.py:62 STOPPING + ". " + base, while the mode is still launching / live (orchestrator.py:331-332).
+  stoppingLive: 'Stop requested; terminating workers — not confirmed yet. Both workers launched; streaming GX output (live).',
+  stoppingLaunching: 'Stop requested; terminating workers — not confirmed yet. Launching GX workers (live); hard timeout 1500 s.',
+  // service.py:378-379: a terminate answer (502) whose session thread did not stop in time.
+  threadStillRunning:
+    'Session thread still running after 30 s; termination unconfirmed. Stop requested; terminating workers — not confirmed yet. Launching GX workers (live); hard timeout 1500 s.',
+  // service.py:340-341 and :348 behind server/app.py:172.
+  refusedCost: 'launch refused: confirmCostUsd must equal the current slot estimate $2.65 to the cent (got 2.6).',
+  refusedLedger: 'launch refused: The ledger could not be updated (OSError: [Errno 28] No space left on device); nothing reserved, nothing launched.',
+  refusedLedgerKept:
+    'launch refused: The ledger could not be updated (PermissionError: [Errno 13] Permission denied); the reservation was written and stays pending, nothing launched.',
+} as const;
+
+test.each([
+  ['kill switch raised, stop not confirmed', ROUND6.killSwitchOnly],
+  ['kill switch could not be set', ROUND6.killSwitchNotSet],
+] as const)('A2 L9 FA-2 %s: TERMINATE FAILED in every mode, never terminated or replay', (_name, reason) => {
+  expect(terminationProblem(reason)).toEqual({ marker: 'TERMINATE FAILED', title: 'TERMINATE FAILED — GPUs may still be billing', reason });
+  // The marker leads the backend's text; the phrase alone (a reason that lost its marker) still means a failed stop.
+  const bare = reason.slice(`${FAILED}: `.length);
+  expect(terminationProblem(bare)?.marker).toBe('TERMINATE FAILED');
+  for (const mode of ['unavailable', 'idle', 'launching', 'live', 'fallback', 'terminated'] as const) {
+    const s: LiveState = { status: 'ready', data: snapshot(mode, { reason: bare }) };
+    expect(liveDanger(s)).toMatchObject({ kind: 'terminate-failed', pill: 'TERMINATE FAILED', detail: bare });
+    expect(sessionMayBeBilling(snapshot(mode, { reason: bare }))).toBe(true);
+    const pills = modePills(s);
+    expect(pills[0]).toEqual({ status: 'billing-risk', text: 'TERMINATE FAILED' });
+    expect(pills.some((p) => p.status === 'replay')).toBe(false);
+  }
+});
+
+test.each([
+  ['the run kill switch is raised', ROUND6.pendingRaised],
+  ['the run kill switch could NOT be set', ROUND6.pendingNotSet],
+] as const)('A2 L9 FA-2 a pending cancel whose clause ends "%s" is TERMINATION PENDING (the backend\'s marker wins)', (_name, reason) => {
+  expect(terminationProblem(reason)?.marker).toBe('TERMINATION PENDING');
+  const s: LiveState = { status: 'ready', data: snapshot('fallback', { reason }) };
+  expect(liveDanger(s)).toMatchObject({ kind: 'termination-pending', title: 'TERMINATION PENDING — GPUs may still be billing', detail: reason });
+  expect(modePills(s)[0]).toEqual({ status: 'billing-risk', text: 'TERMINATION PENDING' });
+});
+
+test('A2 L9 FA-2 "Stop requested; terminating workers — not confirmed yet." is a danger of its own: LIVE stays, never replay or terminated', () => {
+  for (const [mode, reason] of [
+    ['live', ROUND6.stoppingLive],
+    ['launching', ROUND6.stoppingLaunching],
+  ] as const) {
+    const data = snapshot(mode, { reason });
+    const s: LiveState = { status: 'ready', data };
+    expect(stopUnconfirmed(data)).toBe(true);
+    expect(stopUnconfirmed(reason)).toBe(true);
+    expect(terminationProblem(data)).toBeNull(); // not a failed or pending cancel: no cancel was sent yet
+    expect(liveDanger(s)).toEqual({ kind: 'stop-unconfirmed', pill: 'Stop not confirmed', title: 'STOP NOT CONFIRMED — GPUs may still be billing', detail: reason });
+    expect(sessionMayBeBilling(data)).toBe(true);
+    const pills = modePills(s).map((p) => `${p.status}:${p.text}`);
+    expect(pills[0]).toBe('billing-risk:Stop not confirmed');
+    expect(pills.some((p) => p.startsWith('replay:'))).toBe(false);
+    expect(pills).toContain(mode === 'live' ? 'live:LIVE · GPU 0 / GPU 1' : 'rehearsal:Launching…');
+  }
+  // Found anywhere and in any letter case (a terminate answer puts it after its own words: service.py:378-379),
+  // and in a mode where it would make no sense it is still not taken as a clean state.
+  expect(stopUnconfirmed(ROUND6.threadStillRunning)).toBe(true);
+  expect(stopUnconfirmed(ROUND6.stoppingLive.toUpperCase())).toBe(true);
+  expect(sessionMayBeBilling(snapshot('idle', { reason: ROUND6.stoppingLive }))).toBe(true);
+  expect(liveDanger({ status: 'ready', data: snapshot('terminated', { reason: ROUND6.stoppingLive }) })?.kind).toBe('stop-unconfirmed');
+  // A confirmed stop is not.
+  for (const reason of ['Stopped on request; workers terminated.', 'Last session ended: Stopped on request; GPU 0 (bean) terminated; GPU 1 (triangular) never launched. Qualified.']) {
+    expect(stopUnconfirmed(reason)).toBe(false);
+    expect(liveDanger({ status: 'ready', data: snapshot('idle', { reason }) })).toBeNull();
+  }
+});
+
+test('A2 L10 FA-2 launch refusals (409) are not billing dangers: nothing was launched', () => {
+  for (const reason of [ROUND6.refusedCost, ROUND6.refusedLedger, ROUND6.refusedLedgerKept]) {
+    expect(terminationProblem(reason)).toBeNull();
+    expect(stopUnconfirmed(reason)).toBe(false);
+    expect(liveDanger({ status: 'ready', data: snapshot('idle', { reason }) })).toBeNull();
+    expect(sessionMayBeBilling(snapshot('idle', { reason }))).toBe(false);
+  }
+});
+
+test('A2 L9 connection lost is a danger only when the last valid snapshot was not a clean idle one', () => {
   const lost = (data: LiveStatus): LiveState => ({ status: 'unreachable', message: '/api/live/status: HTTP 502', lastKnown: { data, receivedAt: 0 } });
   for (const mode of ['launching', 'live', 'fallback'] as const) {
     const d = liveDanger(lost(snapshot(mode)));
@@ -319,7 +542,7 @@ test('connection lost is a danger only when the last valid snapshot was not a cl
     expect(d!.detail).toContain(`mode "${mode}"`);
     expect(d!.detail).toContain('HTTP 502');
     expect(d!.detail).toContain('GPUs may still be billing');
-    expect(modePills(lost(snapshot(mode)))).toEqual([{ status: 'failed', text: 'Connection lost' }]);
+    expect(modePills(lost(snapshot(mode)))).toEqual([{ status: 'billing-risk', text: 'Connection lost' }]);
   }
   expect(liveDanger(lost(snapshot('idle', { reason: `${FAILED}.` })))?.kind).toBe('connection-lost');
   const worker = { gpuIndex: 0 as const, deviceId: '', tube: 'bean' as const, state: 'pending' as const, simTime: null, samples: [] };
@@ -333,13 +556,15 @@ test('connection lost is a danger only when the last valid snapshot was not a cl
   expect(liveDanger({ status: 'connecting' })).toBeNull();
 });
 
-test('mode pills: LIVE only for mode live; danger leads and removes "Replay · $0"; fallback text comes from the backend label', () => {
+test('A2 L9 mode pills: LIVE only for mode live; danger leads and removes "Replay · $0"; fallback text comes from the backend label', () => {
   const ready = (mode: LiveStatus['mode'], extra: Partial<LiveStatus> = {}): LiveState => ({ status: 'ready', data: snapshot(mode, extra) });
   const text = (s: LiveState) => modePills(s).map((p) => `${p.status}:${p.text}`);
   expect(text(ready('live'))).toEqual(['live:LIVE · GPU 0 / GPU 1']);
-  expect(text(ready('live', { reason: `${FAILED}.` }))).toEqual(['failed:TERMINATE FAILED', 'live:LIVE · GPU 0 / GPU 1']);
-  expect(text(ready('idle', { reason: `${PENDING}.` }))).toEqual(['failed:TERMINATION PENDING']);
-  expect(text(ready('launching', { reason: `${PENDING}.` }))).toEqual(['failed:TERMINATION PENDING', 'rehearsal:Launching…']);
+  // FA-1: every danger pill is the design system's billing-risk pill (DESIGN.md §5), never `failed`.
+  expect(text(ready('live', { reason: `${FAILED}.` }))).toEqual(['billing-risk:TERMINATE FAILED', 'live:LIVE · GPU 0 / GPU 1']);
+  expect(text(ready('idle', { reason: `${PENDING}.` }))).toEqual(['billing-risk:TERMINATION PENDING']);
+  expect(text(ready('launching', { reason: `${PENDING}.` }))).toEqual(['billing-risk:TERMINATION PENDING', 'rehearsal:Launching…']);
+  expect(text(ready('fallback', { reason: `${FAILED}.` }))).toEqual(['billing-risk:TERMINATE FAILED', 'failed:Fallback']);
   for (const mode of ['unavailable', 'idle', 'launching', 'fallback', 'terminated'] as const) {
     expect(modePills(ready(mode)).some((p) => p.status === 'live')).toBe(false);
     expect(modePills(ready(mode, { reason: `${FAILED}.` })).some((p) => p.status === 'live' || p.status === 'replay')).toBe(false);
@@ -359,7 +584,7 @@ test('mode pills: LIVE only for mode live; danger leads and removes "Replay · $
 
 /* ---- /api/live/* calls (FE-8) ----------------------------------------------------------------- */
 
-test('postLiveLaunch / postLiveTerminate: ok only for a 2xx answer saying ok:true; the carried status is validated', async () => {
+test('L10 postLiveLaunch / postLiveTerminate: ok only for a 2xx answer saying ok:true; the carried status is validated', async () => {
   vi.useRealTimers();
   const calls: { url: string; init: RequestInit }[] = [];
   const answer = (res: () => Response) =>
@@ -392,7 +617,7 @@ test('postLiveLaunch / postLiveTerminate: ok only for a 2xx answer saying ok:tru
   expect(none).toEqual({ ok: false, httpStatus: null, reason: 'No response from /api/live/launch (Failed to fetch)', status: null });
 });
 
-test('fetchSavedRun validates the id, the HTTP status and the shape of the run', async () => {
+test('L9 fetchSavedRun validates the id, the HTTP status and the shape of the run', async () => {
   vi.useRealTimers();
   const run: SavedRun = {
     savedRunId: 'rehearsal-0123456789ab',

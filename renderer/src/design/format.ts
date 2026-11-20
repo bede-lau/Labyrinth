@@ -44,11 +44,13 @@ export interface UnitPart {
 
 /**
  * Split a unit string into normal and subscript runs. `_x` subscripts one word, `_{...}` a group:
- * `Q_gB` -> Q + sub(gB); `a/v_{th,i}` -> a/v + sub(th,i).
+ * `Q_gB` -> Q + sub(gB); `a/v_{th,i}` -> a/v + sub(th,i). Words joined by a bare comma stay in one
+ * subscript, the way the artifacts write units in prose: `Q_gB,i` -> Q + sub(gB,i); a comma followed
+ * by a space ends it (`Q_i, Q_e`).
  */
 export function parseUnit(unit: string): UnitPart[] {
   const parts: UnitPart[] = [];
-  const re = /_\{([^}]*)\}|_([A-Za-z0-9]+)/g;
+  const re = /_\{([^}]*)\}|_([A-Za-z0-9]+(?:,[A-Za-z0-9]+)*)/g;
   let last = 0;
   for (let m = re.exec(unit); m; m = re.exec(unit)) {
     if (m.index > last) parts.push({ text: unit.slice(last, m.index), sub: false });

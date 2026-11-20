@@ -4,6 +4,7 @@ import { STATUS_META, VERIFICATION_STATUS, provenanceStatus } from '../status';
 import type { Provenance } from '../types';
 import { Icon } from './Icon';
 import { StatusPill } from './StatusPill';
+import { Unit } from './Unit';
 import './components.css';
 
 export interface ProvenanceBadgeProps {
@@ -24,6 +25,8 @@ export interface ProvenanceBadgeProps {
 }
 
 const shortHash = (sha: string) => (sha === 'n/a' ? 'n/a' : `${sha.slice(0, 10)}…`);
+/** Only absolute http(s) addresses become links. */
+const isWebUrl = (url: string) => /^https?:\/\/\S/i.test(url);
 
 /**
  * Compact provenance: kind + verification outcome. Click (or Enter/Space) to expand the record the
@@ -98,7 +101,9 @@ export function ProvenanceBadge({
           <dt>Solver revision</dt>
           <dd className="lab-mono">{provenance.solverRevision}</dd>
           <dt>Units</dt>
-          <dd>{provenance.units}</dd>
+          <dd>
+            <Unit unit={provenance.units} />
+          </dd>
           <dt>Coverage</dt>
           <dd>
             {provenance.coverage.description}
@@ -125,13 +130,22 @@ export function ProvenanceBadge({
               <span className="lab-prov__none">None recorded</span>
             ) : (
               <ul className="lab-prov__sources">
-                {provenance.sources.map((s) => (
-                  <li key={`${s.url}|${s.sha256}`}>
-                    <a href={s.url} target="_blank" rel="noreferrer noopener">
-                      {s.label}
-                      <Icon name="external" size={11} />
-                      <span className="lab-visually-hidden"> (opens in a new tab)</span>
-                    </a>
+                {provenance.sources.map((s, i) => (
+                  <li key={`${i}|${s.url}|${s.sha256}`}>
+                    {isWebUrl(s.url) ? (
+                      <a href={s.url} target="_blank" rel="noreferrer noopener">
+                        {s.label}
+                        <Icon name="external" size={11} />
+                        <span className="lab-visually-hidden"> (opens in a new tab)</span>
+                      </a>
+                    ) : (
+                      // A repository file ("PRD.md") or anything else that is not a web address: named,
+                      // never linked (a relative href would open the app shell, a scheme could run code).
+                      <span className="lab-prov__source-text">{s.label}</span>
+                    )}
+                    {!isWebUrl(s.url) && s.url && s.url !== s.label && s.url !== s.path && (
+                      <span className="lab-prov__ref lab-mono">{s.url}</span>
+                    )}
                     <span className="lab-prov__hash lab-mono" title={`sha256 ${s.sha256}`}>
                       sha256 {shortHash(s.sha256)}
                     </span>

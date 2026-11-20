@@ -327,39 +327,48 @@ export function windowShape(
 }
 
 /**
- * Gray block marking a range with no samples (gray = unsampled, everywhere).
+ * A range with no samples (gray = unsampled, everywhere), as two shapes: spread them into `shapes`.
+ *
+ * 1. `unsampled`: the gray block. Layer "below", so it sits under the grid and the data like the
+ *    analysis windows. List it BEFORE any `windowShape` it overlaps, so the window's dotted edge is
+ *    drawn on top of the gray and keeps its contrast.
+ * 2. `unsampled label`: a transparent, unstroked rect over the same range that carries the word.
+ *    Plotly draws a shape that is not "above" and refers to the paper under the grid, label and all,
+ *    so a grid line would cut through the word; this one is "above". It adds nothing but the word
+ *    over the data, and the top layer takes no pointer events, so hover still reaches the traces.
  *
  * The label runs up the inside of the block's left edge. Plotly clips shape labels at the plot
  * edge, so a horizontal word is cut as soon as the block is narrower than the word (46px at 390px
  * wide); vertical text needs one line height. Plotly places the text before it rotates it, so the
  * padding is what moves the rotated glyphs inside the block: 12px puts the baseline 12px in and
  * the tallest ascender 4px in.
- *
- * List this shape BEFORE any `windowShape` it overlaps, so the window's dotted edge is drawn on top
- * of the gray and keeps its contrast.
  */
-export function unsampledShape(range: readonly [number, number], theme: ThemeName): PlotShape {
+export function unsampledShapes(range: readonly [number, number], theme: ThemeName): PlotShape[] {
   const t = themes[theme];
-  return {
-    type: 'rect',
-    xref: 'x',
-    yref: 'paper',
-    x0: range[0],
-    x1: range[1],
-    y0: 0,
-    y1: 1,
-    fillcolor: withAlpha(t.plot.unsampled, t.plot.unsampledAlpha),
-    line: { width: 0 },
-    layer: 'below',
-    name: 'unsampled',
-    label: {
-      text: 'unsampled',
-      textangle: -90,
-      textposition: 'bottom left',
-      padding: 12,
-      font: { family: font.sans, size: typeScale['2xs'][0], color: t.color.textMuted },
+  const span = { type: 'rect', xref: 'x', yref: 'paper', x0: range[0], x1: range[1], y0: 0, y1: 1 } as const;
+  return [
+    {
+      ...span,
+      fillcolor: withAlpha(t.plot.unsampled, t.plot.unsampledAlpha),
+      line: { width: 0 },
+      layer: 'below',
+      name: 'unsampled',
     },
-  };
+    {
+      ...span,
+      fillcolor: withAlpha(t.plot.unsampled, 0),
+      line: { width: 0 },
+      layer: 'above',
+      name: 'unsampled label',
+      label: {
+        text: 'unsampled',
+        textangle: -90,
+        textposition: 'bottom left',
+        padding: 12,
+        font: { family: font.sans, size: typeScale['2xs'][0], color: t.color.textMuted },
+      },
+    },
+  ];
 }
 
 /** Horizontal segment for a published/claimed mean over a window (e.g. triangular 2.22 on 1200–1500). */

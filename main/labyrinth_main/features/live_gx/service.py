@@ -39,6 +39,7 @@ import json
 import math
 import os
 import re
+import sys
 import tempfile
 import threading
 import time
@@ -62,11 +63,12 @@ POLL_INTERVAL_S = 2.0
 # Upper bound for a session to notice a stop and finish terminating when every Modal call takes its full
 # client-side bound: the step in flight when the stop is requested — one launch, or a poll of both workers
 # followed by the poll sleep (the orchestrator checks for the stop before the next spawn / poll) — plus ONE
-# round of terminate retries for both workers (kill-switch put + cancel per attempt). The orchestrator never
-# runs a second round for the same stop (a step that fails runs the round itself and the session's exit does
-# not repeat it), which a test drives on a virtual clock. A terminate that still fails after that is reported
-# unconfirmed, never as terminated, however long the caller waited.
-TERMINATE_ROUND_S = len(TUBES) * (sum(TERMINATE_BACKOFF_S) + (1 + len(TERMINATE_BACKOFF_S)) * TERMINATE_CALLS * CALL_TIMEOUT_S)
+# round of terminate retries for both workers (kill-switch put + cancel per attempt; the workers are retried
+# together, so the backoff pauses count once). The orchestrator never runs a second round for the same stop (a
+# step that fails runs the round itself and the session's exit does not repeat it), which a test drives on a
+# virtual clock. A terminate that still fails after that is reported unconfirmed, never as terminated, however
+# long the caller waited.
+TERMINATE_ROUND_S = sum(TERMINATE_BACKOFF_S) + len(TUBES) * (1 + len(TERMINATE_BACKOFF_S)) * TERMINATE_CALLS * CALL_TIMEOUT_S
 WORST_CASE_STOP_S = max(LAUNCH_CALLS, len(TUBES) * POLL_CALLS) * CALL_TIMEOUT_S + POLL_INTERVAL_S + TERMINATE_ROUND_S
 RUN_KEYS = {"savedRunId", "initVerified", "continuationVerified", "checks", "phases"}
 CENT = Decimal("0.01")
@@ -74,6 +76,34 @@ CENT = Decimal("0.01")
 
 def default_state_dir() -> Path:
     return Path(os.environ.get("LABYRINTH_STATE_DIR") or Path.home() / ".labyrinth")
+
+
+def say(line: str, *, to_stderr: bool = False) -> None:
+    """Print one line for the operator (flushed) from an entrypoint's exit path, where nothing may raise.
+
+    A dead terminal (hangup) or a closed pipe makes the write fail: the stream's file descriptor is then pointed
+    at /dev/null, so neither this call nor the interpreter's own final flush of what is still buffered can raise,
+    print a traceback or change the exit status (CPython exits 120 when that final flush fails)."""
+    stream = sys.stderr if to_stderr else sys.stdout
+    try:
+        print(line, file=stream, flush=True)  # stream None (descriptor closed at start-up): print does nothing
+    except (OSError, ValueError):
+        _silence(stream)
+
+
+def _silence(stream) -> None:
+    try:
+        fd = stream.fileno()
+    except (AttributeError, OSError, ValueError):  # closed: the final flush skips a closed stream
+        return
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, fd)
+        finally:
+            os.close(devnull)
+    except OSError:
+        pass
 
 
 class LedgerLocked(RuntimeError):
@@ -112,11 +142,12 @@ class LedgerStore:
                                             "reconciled": ledger.reconciled}, indent=2) + "\n")
 
     @contextmanager
-    def locked(self, timeout_s: float = LOCK_TIMEOUT_S) -> Iterator[None]:
-        """Cross-process exclusive section (O_CREAT|O_EXCL lock file). A stale lock is never broken
-        automatically: refusing to spend is the safe failure."""
+    def locked(self, timeout_s: float | None = None) -> Iterator[None]:
+        """Cross-process exclusive section (O_CREAT|O_EXCL lock file), waiting up to `timeout_s` (default
+        LOCK_TIMEOUT_S) for another holder. A stale lock is never broken automatically: refusing to spend is the
+        safe failure."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        deadline = time.monotonic() + timeout_s
+        deadline = time.monotonic() + (LOCK_TIMEOUT_S if timeout_s is None else timeout_s)
         while True:
             try:
                 fd = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -223,6 +254,14 @@ class LiveService:
         self._lock = threading.Lock()
         self._run: Orchestrator | None = None
         self._thread: threading.Thread | None = None
+        self._launched_before = False  # an earlier session (no longer `_run`) launched a worker
+
+    @property
+    def launched_any(self) -> bool:
+        """Whether any session of this service launched a worker (only then can anything be "terminated")."""
+        with self._lock:
+            run, before = self._run, self._launched_before
+        return before or (run is not None and run.launched_any)
 
     def decision(self) -> guard.GuardDecision:
         return guard.evaluate(self.ledger.load())
@@ -254,7 +293,11 @@ class LiveService:
         with self._lock:
             run, busy = self._run, self._busy()
         if run is not None and (busy or run.mode == "fallback"):
-            return run.snapshot(decision.budget_snapshot(), qualified=qual is not None)
+            # the fallback names its saved run only while that run is still served (/api/live/runs/<id>)
+            available = run.saved_run_id is not None and (
+                (qual is not None and qual.get("savedRunId") == run.saved_run_id)  # already loaded and checked above
+                or load_saved_run(self.state_dir, run.saved_run_id) is not None)
+            return run.snapshot(decision.budget_snapshot(), qualified=qual is not None, saved_run_available=available)
         mode, reason, qual = self._gate()
         if run is not None:  # a finished, cleanly terminated session: back to the gate (idle when allowed)
             reason = f"Last session ended: {run.reason} " + reason
@@ -305,6 +348,7 @@ class LiveService:
                 return False, f"The ledger could not be updated ({type(e).__name__}: {e}); {kept}, nothing launched."
             run_id = f"live-{uuid.uuid4().hex[:12]}"
             backend = self.backend_factory(run_id, decision.hard_timeout_s)
+            self._launched_before |= self._run is not None and self._run.launched_any
             self._run = Orchestrator(backend, hard_timeout_s=decision.hard_timeout_s, saved_run_id=qual["savedRunId"])
             self._thread = threading.Thread(target=self._run.run, kwargs={"poll_interval_s": self.poll_interval_s},
                                             name=run_id, daemon=True)
@@ -344,7 +388,9 @@ class LiveService:
                 run.wait_terminated(wait_s)
                 if not run.termination_pending:  # settled: confirmed, or failed with a call that can now be cancelled
                     confirmed = run.stop_and_terminate()
-        return (True, "Workers terminated.") if confirmed else (False, run.reason)
+        if not confirmed:
+            return False, run.reason
+        return True, ("Workers terminated." if run.launched_any else "Nothing was launched.")
 
     def shutdown(self, on_unconfirmed: Callable[[str], None] | None = None) -> bool:
         """Process exit path (SIGINT/SIGTERM/server shutdown): refuse new launches, never leave GPU workers

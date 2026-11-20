@@ -7,6 +7,7 @@ export type IconName =
   | 'dash'
   | 'equals'
   | 'alert'
+  | 'danger'
   | 'blocked'
   | 'question'
   | 'replay'
@@ -26,6 +27,9 @@ const PATHS: Record<IconName, { stroke?: string[]; fill?: string[]; circle?: [nu
   dash: { stroke: ['M4 8h8'] },
   equals: { stroke: ['M4 6h8', 'M4 10h8'] },
   alert: { circle: [[8, 8, 6, false], [8, 11, 0.9, true]], stroke: ['M8 4.75v3.75'] },
+  // A SOLID octagon (the stop sign) with a knocked-out "!": billing risk. At 12px an outlined octagon
+  // reads as the circle of `alert`; a filled one does not (and it is not the triangle of `warn`).
+  danger: { fill: ['M5.2 1.5h5.6l3.7 3.7v5.6l-3.7 3.7H5.2l-3.7-3.7V5.2zM7.1 4.1h1.8v5H7.1zM8 10.3a1 1 0 1 1 0 2a1 1 0 1 1 0-2z'] },
   blocked: { circle: [[8, 8, 6, false]], stroke: ['M3.9 12.1l8.2-8.2'] },
   question: {
     circle: [[8, 8, 6, false], [8, 11.4, 0.85, true]],
@@ -72,7 +76,8 @@ export function Icon({ name, size = 14, className }: IconProps) {
           strokeWidth={1.6}
         />
       ))}
-      {p.fill?.map((d, i) => <path key={`f${i}`} d={d} fill="currentColor" />)}
+      {/* evenodd: a sub-path inside a filled shape is a hole (the "!" of `danger`). */}
+      {p.fill?.map((d, i) => <path key={`f${i}`} d={d} fill="currentColor" fillRule="evenodd" />)}
       {p.stroke?.map((d, i) => (
         <path
           key={`s${i}`}

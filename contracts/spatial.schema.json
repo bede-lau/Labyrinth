@@ -3,7 +3,7 @@
   "$id": "https://labyrinth.local/contracts/spatial.schema.json",
   "title": "Inspect spatial parallelism: GENE-X on separate Dommaschk geometry (replay)",
   "type": "object",
-  "required": ["schemaVersion", "geometry", "code", "nPlanes", "ranks", "exchanges", "fieldSolve", "runs", "timing", "independenceNote", "provenance"],
+  "required": ["schemaVersion", "geometry", "code", "nPlanes", "ranks", "exchanges", "fieldSolve", "runs", "timing", "independenceNote", "fixtures", "provenance"],
   "additionalProperties": false,
   "properties": {
     "schemaVersion": { "const": 1 },
@@ -56,6 +56,11 @@
       }
     },
     "independenceNote": { "type": "string" },
+    "fixtures": {
+      "description": "PRD numbers this artifact reports (D-023): the speedup is an arithmetic re-check of PRD-reported means; the controlled-run tally and the means themselves cannot be recomputed here (matches null).",
+      "type": "array",
+      "items": { "$ref": "common.schema.json#/$defs/fixtureCheck" }
+    },
     "provenance": { "$ref": "common.schema.json#/$defs/provenance" }
   }
 }

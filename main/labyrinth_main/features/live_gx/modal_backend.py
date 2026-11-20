@@ -18,7 +18,8 @@ succeeded (in this call, or earlier for a spawn that arrived late). There is no 
                                                                                    else TERMINATE FAILED, retried
   still in flight                      put; cancel queued for the late call        TERMINATION PENDING until it settles
   failed client-side (fast or late)    put only: there is no call to cancel        TERMINATE FAILED, always
-  never sent (lookup / guard refusal)  nothing: launch() raised a plain error      not a launched worker
+  never sent (lookup / guard refusal   nothing: launch() raised a plain error      not a launched worker
+    / a stop requested before it)
 
 The run-level kill switch is raised FIRST on every terminate, whatever the state of the call, and its result is
 kept on the handle (`abort_error`): a failed put is named in the pending / failed reason and is retried by
@@ -210,6 +211,12 @@ class ModalBackend:
         self.hard_timeout_s = int(hard_timeout_s)
         self.kind = kind
         self.function_name = FUNCTION_NAMES[kind]
+        self._stop_requested = False
+
+    def request_stop(self) -> None:
+        """The orchestrator's stop request (a plain flag: it may be set from a signal handler). A launch that
+        has not sent its spawn yet then sends none."""
+        self._stop_requested = True
 
     def launch(self, tube: str, gpu_index: int, checkpoint: Checkpoint | None) -> ModalHandle:
         planned = guard.planned_call_s(self.kind)
@@ -223,6 +230,8 @@ class ModalBackend:
         input_toml = build_inputs(restart_from={tube: RESUME_FILE} if checkpoint else None)[tube]
         h = ModalHandle(key=f"{self.run_id}/{tube}")
         fn = bounded(lambda: modal.Function.from_name(APP_NAME, self.function_name), "Function.from_name")
+        if self._stop_requested:  # the stop arrived during the lookup: nothing has been sent, so send nothing
+            raise RuntimeError("stop requested before Function.spawn was sent; nothing was launched")
         kwargs = {"tube": tube, "gpu_index": gpu_index, "progress_key": h.key, "input_toml": input_toml,
                   "checkpoint_ref": checkpoint.ref if checkpoint else None,
                   "hard_timeout_s": guard.modal_timeout_s(self.kind)}  # the worker's execution budget

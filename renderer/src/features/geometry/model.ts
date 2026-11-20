@@ -391,15 +391,15 @@ export function insetLayout(
 // ---------------------------------------------------------------------------------------------
 
 /**
- * The float64 comparison against stella's out.nc is only recorded in the provenance prose
- * ("vs stella's float64 out.nc bmag: max |error| 2.9e-13 over 25 samples"). Read it if present.
+ * The tracer's rho 0.7 check against stella passes only when both comparisons of that run pass: the
+ * saved .geometry text at its printed precision, and the float64 out.nc within its tolerance (D-023).
  */
-export function float64Match(details: string): { maxAbsError: number; samples: number } | null {
-  const m = /float64[^:]*:\s*max \|error\|\s*([0-9.]+(?:e[-+]?\d+)?)\s*over\s*(\d+)\s*samples/i.exec(details);
-  if (!m) return null;
-  const v = Number(m[1]);
-  return Number.isFinite(v) ? { maxAbsError: v, samples: Number(m[2]) } : null;
+export function tracerPassed(v: GeometryArtifact['validation']): boolean {
+  return v.stellaReference.allWithinPrintedPrecision && v.float64Reference.allWithinTolerance;
 }
+
+/** Only absolute http(s) addresses become links; a repository path or anything else is named as text. */
+export const isWebUrl = (url: string) => /^https?:\/\/\S/i.test(url);
 
 /** Split a blocked-verification sentence into its reason and the "Unblock: …" step. */
 export function splitUnblock(details: string): { reason: string; unblock: string | null } {
