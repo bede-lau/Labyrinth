@@ -42,12 +42,15 @@ class TransientBackendError(Exception):
 
 
 class LaunchInFlight(Exception):
-    """backend.launch did not complete in time but MAY still start a worker. `handle` must be terminated
-    like any launched worker; the backend cancels the late call the moment it returns."""
+    """backend.launch did not complete normally but MAY have started a worker: the call is still in flight
+    (the backend cancels the late call the moment it returns) or it failed client-side after it was sent.
+    `handle` must be terminated like any launched worker; `status` is the worker error shown to the operator
+    (`{}` in the template is replaced by the message)."""
 
-    def __init__(self, message: str, handle: Any):
+    def __init__(self, message: str, handle: Any, status: str = "launch did not complete in time ({}); its cancel is queued"):
         super().__init__(message)
         self.handle = handle
+        self.status = status.format(message)
 
 
 class TerminationPending(Exception):
@@ -233,7 +236,7 @@ class Orchestrator:
         self.ended_at: float | None = None
         self._lock = threading.RLock()
         self._term_lock = threading.Lock()
-        self._stop = threading.Event()
+        self._stop_requested = False  # plain flag, no lock: request_stop() may run inside a signal handler
         self._confirmed = threading.Event()
         self._confirmed.set()  # nothing launched yet
 
@@ -259,7 +262,7 @@ class Orchestrator:
             self.started_at = self.clock()
             self._t0 = self.monotonic()
         for rec in self.workers:
-            if self.mode == "fallback" or self._stop.is_set():
+            if self.mode == "fallback" or self._stop_requested:
                 break
             try:
                 handle = self.backend.launch(rec.tube, rec.gpu_index, rec.resume_from)
@@ -267,7 +270,7 @@ class Orchestrator:
                 with self._lock:
                     rec.handle, rec.launched = e.handle, True
                     self._confirmed.clear()
-                self._fail(rec, f"launch did not complete in time ({e}); its cancel is queued")
+                self._fail(rec, e.status)
                 break
             except Exception as e:  # noqa: BLE001 - any other launch failure is a worker failure
                 self._fail(rec, f"launch failed: {type(e).__name__}: {e}")
@@ -303,7 +306,9 @@ class Orchestrator:
                 self.mode, self._reason = "live", f"Both workers launched; streaming GX output ({self.kind})."
 
     def request_stop(self) -> None:
-        self._stop.set()
+        """Cooperative stop: no further spawn, and run() ends (terminating every launched worker) at its next
+        check. Only stores a flag — no lock — so it is safe to call from a signal handler (`rehearse` does)."""
+        self._stop_requested = True
 
     def run(self, poll_interval_s: float = 2.0, on_snapshot: Callable[[], None] | None = None) -> None:
         """Launch, poll until both workers are done / one fails / stop / hard timeout; always terminate."""
@@ -313,7 +318,7 @@ class Orchestrator:
             if on_snapshot:
                 on_snapshot()
             while self.mode in ("launching", "live"):
-                if self._stop.is_set():
+                if self._stop_requested:
                     end = ("terminated", "Stopped on request; workers terminated.")
                     break
                 if self.monotonic() - self._t0 >= self.hard_timeout_s:

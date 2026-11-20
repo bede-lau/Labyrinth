@@ -9,12 +9,16 @@ continue from the checkpoint (not from 0). The result is written to <state>/qual
 the full run (converted samples, devices, intervals) to <state>/runs/<savedRunId>.json.
 Run with no arguments to print the estimate without launching anything.
 
-Exit path (same as the server's): SIGTERM is treated like Ctrl-C; while workers are being terminated
-both signals are ignored; every started phase is terminated and the process waits up to
-CONFIRM_WAIT_S for each termination to be CONFIRMED (including a late spawn's queued cancel). Each
-phase prints "workers terminated" or "NOT confirmed terminated — check Modal dashboard" with its
-reason, and the exit code is 2 whenever anything is unsettled. A spawn RPC that never returns
-therefore ends in exit 2: the operator must check the Modal dashboard and stop the app there.
+Exit path. SIGINT (Ctrl-C), SIGTERM and SIGHUP request a COOPERATIVE stop: the handler only sets flags and
+never raises. (The phases run on the main thread; an exception raised there while a spawn RPC is in flight
+would drop that spawn's handle and exit with a GPU call nobody can cancel.) The backend call in flight ends
+within its own bound, nothing further is reserved or spawned, and every started phase is terminated. While
+workers are being terminated the signals are ignored, and the process waits up to CONFIRM_WAIT_S for each
+termination to be CONFIRMED (including a late spawn's queued cancel). Each phase prints "workers terminated"
+or "NOT confirmed terminated — check Modal dashboard" with its reason, and the exit code is 2 whenever the
+rehearsal did not pass or anything is unsettled. A spawn RPC that never returns therefore ends in exit 2: the
+operator must check the Modal dashboard and stop the app there. A signal that was ignored when the process
+started (nohup, a shell's background job) stays ignored.
 """
 from __future__ import annotations
 
@@ -22,6 +26,7 @@ import argparse
 import json
 import signal
 import sys
+import traceback
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -32,6 +37,21 @@ from .orchestrator import Orchestrator, WorkerBackend
 from .service import WORST_CASE_STOP_S, LedgerLocked, LedgerStore, atomic_write, cost_matches, default_state_dir
 
 CONFIRM_WAIT_S = WORST_CASE_STOP_S + 10.0
+STOP_SIGNALS = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "SIGHUP") if hasattr(signal, name))
+
+
+class StopRequest:
+    """A stop flag that a signal handler may set: a plain attribute store, no lock. (threading.Event.set()
+    takes a non-reentrant lock, so a second signal arriving inside the handler could deadlock the process.)"""
+
+    def __init__(self) -> None:
+        self.requested = False
+
+    def set(self) -> None:
+        self.requested = True
+
+    def is_set(self) -> bool:
+        return self.requested
 
 
 def _overlap(p: Orchestrator) -> bool:
@@ -45,11 +65,23 @@ def _overlap(p: Orchestrator) -> bool:
 
 def run_rehearsal(backend_factory: Callable[[str, int], WorkerBackend], *, state_dir: Path, confirm_cost_usd,
                   poll_interval_s: float = 2.0, phase_timeout_s: float | None = None,
-                  started: list[Orchestrator] | None = None) -> tuple[bool, dict]:
+                  started: list[Orchestrator] | None = None, stop: StopRequest | None = None) -> tuple[bool, dict]:
     """`phase_timeout_s` may only SHORTEN the guard's per-phase hard timeout (tests run on a scaled clock).
     Every phase orchestrator is appended to `started` BEFORE it runs, so the caller can terminate it
-    (and wait for confirmation) even if this function is interrupted."""
+    (and wait for confirmation) whatever happens in here.
+    `stop` is the caller's cooperative stop request (the CLI's signal handlers set it and call
+    `request_stop()` on everything in `started`): once it is set nothing is reserved, no phase is started,
+    and a phase registered after the request is stopped before its first spawn."""
     started = [] if started is None else started
+    stop = StopRequest() if stop is None else stop
+
+    def run_phase(p: Orchestrator) -> Orchestrator:
+        started.append(p)
+        if stop.is_set():  # the request arrived before this phase was registered: the handler could not see it
+            p.request_stop()
+        p.run(poll_interval_s)
+        return p
+
     store = LedgerStore(state_dir / "ledger.json")
     try:
         with store.locked():
@@ -59,6 +91,8 @@ def run_rehearsal(backend_factory: Callable[[str, int], WorkerBackend], *, state
                 return False, {"reason": decision.reason}
             if not cost_matches(confirm_cost_usd, decision.slot_estimate_usd):
                 return False, {"reason": f"--confirm-cost-usd must equal the rehearsal estimate ${decision.slot_estimate_usd:.2f}."}
+            if stop.is_set():
+                return False, {"reason": "Stopped before launch: nothing reserved, nothing launched."}
             store.save(ledger.reserve(decision.slot_estimate_usd))
     except LedgerLocked as e:
         return False, {"reason": str(e)}
@@ -68,20 +102,16 @@ def run_rehearsal(backend_factory: Callable[[str, int], WorkerBackend], *, state
         phase_timeout = min(phase_timeout, phase_timeout_s)
 
     phases = []
-    p1 = Orchestrator(backend_factory(f"{run_id}-init", phase_timeout), hard_timeout_s=phase_timeout, kind="rehearsal")
-    started.append(p1)
-    p1.run(poll_interval_s)
+    p1 = run_phase(Orchestrator(backend_factory(f"{run_id}-init", phase_timeout), hard_timeout_s=phase_timeout, kind="rehearsal"))
     phases.append(p1)
     ckpts = p1.latest_checkpoints()
     init_ok = p1.mode == "terminated" and all(w.state == "done" for w in p1.workers) and set(ckpts) == {"bean", "triangular"}
     cont_ok = False
     if init_ok and not p1.termination_confirmed:  # never start phase 2 while phase-1 GPUs may still be billing
         init_ok = p1.wait_terminated(CONFIRM_WAIT_S)
-    if init_ok:
-        p2 = Orchestrator(backend_factory(f"{run_id}-cont", phase_timeout), hard_timeout_s=phase_timeout, kind="rehearsal",
-                          checkpoints=ckpts)
-        started.append(p2)
-        p2.run(poll_interval_s)
+    if init_ok and not stop.is_set():  # a stop request between the phases: the continuation is never launched
+        p2 = run_phase(Orchestrator(backend_factory(f"{run_id}-cont", phase_timeout), hard_timeout_s=phase_timeout,
+                                    kind="rehearsal", checkpoints=ckpts))
         phases.append(p2)
         cont_ok = (p2.mode == "terminated" and all(w.state == "done" for w in p2.workers)
                    and all(w.sim_time_raw is not None and w.sim_time_raw > ckpts[w.tube].sim_time_raw for w in p2.workers)
@@ -111,8 +141,12 @@ def run_rehearsal(backend_factory: Callable[[str, int], WorkerBackend], *, state
     return ok, record
 
 
-def _interrupt(signum, frame):  # SIGTERM -> same clean path as Ctrl-C
-    raise KeyboardInterrupt(f"signal {signum}")
+def _say(line: str, *, to_stderr: bool = False) -> None:
+    """Print, but never let a dead terminal (hangup, closed pipe) break the exit path."""
+    try:
+        print(line, file=sys.stderr if to_stderr else sys.stdout, flush=True)
+    except (OSError, ValueError):
+        pass
 
 
 def terminate_phases(started: list[Orchestrator], confirm_wait_s: float) -> bool:
@@ -125,14 +159,14 @@ def terminate_phases(started: list[Orchestrator], confirm_wait_s: float) -> bool
         confirmed_all &= ok
         verdict = "workers terminated" if ok else "NOT confirmed terminated — check Modal dashboard"
         line = f"phase {i}: {verdict}. {p.reason}"
-        print(line, flush=True)
+        _say(line)
         if not ok:
-            print(line, flush=True, file=sys.stderr)
+            _say(line, to_stderr=True)
     return confirmed_all
 
 
 def main(argv: list[str] | None = None, *, availability_check: Callable[[], tuple[bool, str]] | None = None,
-         backend_factory: Callable[[str, int], WorkerBackend] | None = None) -> int:
+         backend_factory: Callable[[str, int], WorkerBackend] | None = None, poll_interval_s: float = 2.0) -> int:
     """The keyword hooks are for tests only; the command line cannot set them."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--confirm-cost-usd", type=float, default=None)
@@ -153,28 +187,42 @@ def main(argv: list[str] | None = None, *, availability_check: Callable[[], tupl
         return 2
     factory = backend_factory or (lambda rid, t: ModalBackend(run_id=rid, hard_timeout_s=t, kind="rehearsal"))
     started: list[Orchestrator] = []
-    passed, record, interrupted = False, None, False
-    previous_term = signal.signal(signal.SIGTERM, _interrupt)
+    stop = StopRequest()
+
+    def on_signal(signum, frame):  # flags only: lock-free, idempotent, never raises (see the module docstring)
+        stop.set()
+        for p in list(started):
+            p.request_stop()
+
+    passed, record, crash = False, None, None
+    previous = {s: signal.getsignal(s) for s in STOP_SIGNALS}
+    for s, old in previous.items():
+        if old is not signal.SIG_IGN:  # ignored at start-up (nohup, background job): stays ignored
+            signal.signal(s, on_signal)
     try:
-        passed, record = run_rehearsal(factory, state_dir=state_dir, confirm_cost_usd=args.confirm_cost_usd, started=started)
-    except KeyboardInterrupt:
-        interrupted = True
-    finally:
-        previous_int = signal.signal(signal.SIGINT, signal.SIG_IGN)  # nothing may interrupt the termination
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         try:
-            confirmed = terminate_phases(started, CONFIRM_WAIT_S)
+            passed, record = run_rehearsal(factory, state_dir=state_dir, confirm_cost_usd=args.confirm_cost_usd,
+                                           poll_interval_s=poll_interval_s, started=started, stop=stop)
+        except Exception:  # noqa: BLE001 - reported below, after the workers have been terminated
+            crash = traceback.format_exc()
         finally:
-            signal.signal(signal.SIGINT, previous_int)
-            signal.signal(signal.SIGTERM, previous_term)
-    if record is not None:
-        print(json.dumps({k: v for k, v in record.items() if k != "phases"}, indent=2), flush=True)
-    if interrupted:
-        print("Rehearsal interrupted; nothing qualified.", flush=True)
-    print("Rehearsal " + ("PASSED" if passed and confirmed and not interrupted else "did NOT pass")
-          + ("; workers terminated." if confirmed else "; workers NOT confirmed terminated — check Modal dashboard."),
-          flush=True)
-    return 0 if passed and confirmed and not interrupted else 2
+            for s in previous:
+                signal.signal(s, signal.SIG_IGN)  # nothing may interrupt the termination
+            confirmed = terminate_phases(started, CONFIRM_WAIT_S)
+        if crash is not None:
+            _say(f"Rehearsal crashed:\n{crash}", to_stderr=True)
+        if record is not None:
+            _say(json.dumps({k: v for k, v in record.items() if k != "phases"}, indent=2))
+        if stop.is_set() and not passed:
+            _say("Rehearsal interrupted; nothing qualified.")
+        qualified = passed and confirmed and crash is None
+        _say("Rehearsal " + ("PASSED" if qualified else "did NOT pass")
+             + ("; workers terminated." if confirmed else "; workers NOT confirmed terminated — check Modal dashboard."))
+        return 0 if qualified else 2
+    finally:
+        for s, old in previous.items():
+            if old is not None:
+                signal.signal(s, old)
 
 
 if __name__ == "__main__":

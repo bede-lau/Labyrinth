@@ -27,6 +27,11 @@ FUNCTION_NAMES = {"live": "gx_worker_live", "rehearsal": "gx_worker_rehearsal"}
 PROGRESS_DICT = "labyrinth-gx-progress"
 CHECKPOINT_VOLUME = "labyrinth-gx-checkpoints"
 CALL_TIMEOUT_S = 20.0
+# Modal client calls per backend operation, each bounded by CALL_TIMEOUT_S on this side
+# (service.WORST_CASE_STOP_S is derived from these; a test counts the real calls).
+LAUNCH_CALLS = 2     # Function.from_name, Function.spawn
+POLL_CALLS = 2       # FunctionCall.get, Dict.get
+TERMINATE_CALLS = 2  # Dict put (run kill switch), FunctionCall.cancel
 CANCEL_RETRIES = 4
 
 
@@ -195,7 +200,11 @@ class ModalBackend:
         if not h.spawn_done.wait(CALL_TIMEOUT_S):
             raise LaunchInFlight(f"Function.spawn did not return within {CALL_TIMEOUT_S:.0f} s", h)
         if h.spawn_error is not None:
-            raise h.spawn_error
+            # The RPC may have reached Modal before it failed client-side. Hand the handle to the orchestrator so
+            # that terminate() raises the run's kill switch for it (and reports loudly if even that fails).
+            e = h.spawn_error
+            raise LaunchInFlight(f"{type(e).__name__}: {e}", h, status="launch failed client-side ({}) and a worker may have "
+                                 "started; there is no call to cancel, so the run's kill switch is raised")
         return h
 
     def poll(self, h: ModalHandle) -> dict:

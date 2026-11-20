@@ -21,7 +21,7 @@ from labyrinth_main.common.paths import CONTRACTS, REPO_ROOT
 from labyrinth_main.features.live_gx import budget_guard as guard
 from labyrinth_main.features.live_gx import rehearse, service
 from labyrinth_main.features.live_gx.fake_backend import FakeBackend
-from labyrinth_main.features.live_gx.orchestrator import NO_REHEARSAL_LABEL
+from labyrinth_main.features.live_gx.orchestrator import NO_REHEARSAL_LABEL, LaunchInFlight, TerminationPending
 from labyrinth_main.server import __main__ as server_main
 from labyrinth_main.server.app import DEFAULT_HOST, DEFAULT_PORT, make_server
 
@@ -299,6 +299,7 @@ def test_H5_terminate_failure_is_reported_not_ok(armed_server):
         assert time.time() < deadline
         time.sleep(0.01)
     svc._run.terminate_backoff_s, svc._run.retry_sleep = (0.0,), (lambda s: None)
+    svc.confirm_wait_s = 0.05  # nothing is queued here; do not spend the default 5 s waiting for a confirmation
     status, _, data = request(port, "POST", "/api/live/terminate")
     body = json.loads(data)
     assert status == 502 and body["ok"] is False and body["reason"].startswith("TERMINATE FAILED")
@@ -312,6 +313,44 @@ def test_H5_terminate_failure_is_reported_not_ok(armed_server):
     status, _, data = request(port, "POST", "/api/live/terminate")
     assert status == 200 and json.loads(data)["ok"] is True
     assert [w.terminate_calls for w in backends[-1].workers] == [1, 1]
+
+
+def test_H5_terminate_while_a_spawn_rpc_hangs_answers_502_termination_pending(armed_server):
+    """The operator note in service.py: a spawn RPC that Modal never answers is never reported as terminated."""
+    port, svc, backends, state = armed_server
+    listeners = []
+
+    class HungSpawn:  # TEST-ONLY backend: bean's spawn never returns, so its cancel can only be queued
+        def launch(self, tube, gpu_index, checkpoint):
+            raise LaunchInFlight("Function.spawn did not return within 20 s", tube)
+
+        def poll(self, handle):
+            raise AssertionError("nothing was launched")
+
+        def terminate(self, handle):
+            raise TerminationPending("spawn still in flight; it is cancelled the moment it returns", listeners.append)
+
+    svc.backend_factory = lambda rid, t: HungSpawn()
+    svc.confirm_wait_s, svc.join_timeout_s = 0.05, 0.1  # scaled: the real waits are WORST_CASE_STOP_S + 10 s
+    est = guard.slot_estimate_usd()
+    assert request(port, "POST", "/api/live/launch", {"confirmCostUsd": est})[0] == 202
+    deadline = time.time() + 5
+    while (st := get_json(port, "/api/live/status")[2])["mode"] != "fallback":
+        assert time.time() < deadline
+        time.sleep(0.01)
+    assert st["reason"].startswith("TERMINATION PENDING") and "launch did not complete in time" in st["workers"][0]["error"]
+    status, _, data = request(port, "POST", "/api/live/terminate")
+    body = json.loads(data)
+    assert status == 502 and body["ok"] is False and body["reason"].startswith("TERMINATION PENDING")
+    assert body["status"]["mode"] == "fallback" and body["status"]["reason"].startswith("TERMINATION PENDING")
+    service.LedgerStore(state / "ledger.json").save(guard.Ledger(20.0, 0.0, True))  # even with a reconciled ledger
+    status, _, data = request(port, "POST", "/api/live/launch", {"confirmCostUsd": est})
+    assert status == 409 and "unconfirmed" in json.loads(data)["reason"]
+    assert svc.shutdown() is False  # what makes the server process exit with code 2
+    assert len(listeners) == 1
+    listeners[0](True, None)  # the late call arrived and was cancelled: only now is it confirmed
+    status, _, data = request(port, "POST", "/api/live/terminate")
+    assert status == 200 and json.loads(data)["ok"] is True
 
 
 def test_H5_saved_run_route_and_fallback_wording(armed_server, tmp_path, no_modal_env, validator):
@@ -396,8 +435,11 @@ def test_H6_artifacts_dir_is_repo_artifacts():
 
 # ---------------------------------------------------------------- H1 (process exit never leaves GPUs running)
 SIGNAL_HARNESS = r"""
-import sys
+import signal, sys
 from pathlib import Path
+signal.signal(signal.SIGINT, signal.default_int_handler)  # start like a foreground terminal session, whatever
+signal.signal(signal.SIGTERM, signal.SIG_DFL)             # dispositions the test runner happened to inherit
+signal.signal(signal.SIGHUP, signal.SIG_DFL)
 from labyrinth_main.features.live_gx import service
 from labyrinth_main.features.live_gx.fake_backend import FakeBackend
 from labyrinth_main.server import __main__ as server_main
@@ -416,8 +458,11 @@ sys.exit(server_main.main(["--port", "0"], service=svc))
 """
 
 
-@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM], ids=["SIGINT", "SIGTERM"])
-def test_H1_signal_terminates_running_workers_before_exit(sig, tmp_path):
+@pytest.mark.parametrize("signals", [[signal.SIGINT], [signal.SIGTERM], [signal.SIGHUP], [signal.SIGINT, signal.SIGTERM]],
+                         ids=["SIGINT", "SIGTERM", "SIGHUP", "SIGINT+SIGTERM"])
+def test_H1_signal_terminates_running_workers_before_exit(signals, tmp_path):
+    """Also a hangup (closed terminal / dropped SSH), and two signals back to back: the second one must not
+    raise into the shutdown that the first one started."""
     state = tmp_path / "state"
     state.mkdir()
     qualify(state)
@@ -437,7 +482,8 @@ def test_H1_signal_terminates_running_workers_before_exit(sig, tmp_path):
             assert time.time() < deadline
             time.sleep(0.02)
         assert not log.exists()
-        proc.send_signal(sig)
+        for sig in signals:
+            proc.send_signal(sig)
         out, err = proc.communicate(timeout=30)
     finally:
         if proc.poll() is None:
