@@ -1,3 +1,4 @@
+// @vitest-environment node
 // Contract test: every committed artifact validates against the shared JSON
 // Schemas in ../contracts — the same schemas main/ validates against.
 import Ajv2020 from 'ajv/dist/2020';

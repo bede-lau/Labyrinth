@@ -1,8 +1,18 @@
-"""budget.json: live-demo ledger, published/full-grid stella cost, GX benchmark context (B1–B4)."""
+"""budget.json: live-demo ledger, published/full-grid stella cost, GX benchmark context (B1–B4), and the live
+budget guard's plan (D-015, D-023).
+
+Every recomputed budget fixture is ``basis: "arithmetic"``: its inputs (prices, hours, step counts) are all
+PRD-reported, so the check re-does the PRD's arithmetic and nothing more. The GX benchmark items are not
+recomputable (``computed: null``) and carry no basis.
+"""
 from __future__ import annotations
 
+from dataclasses import replace
+
+from labyrinth_main.common import provenance as prov
 from labyrinth_main.common.provenance import fixture, provenance, source
 
+from ..live_gx import budget_guard as guard
 from . import model, pricing
 
 ARTIFACT_ID = "budget"
@@ -34,20 +44,16 @@ def _pricing_source() -> dict:
 
 def range_fixture(fid: str, label: str, rng: tuple[float, float], computed: float, decimals: int,
                   unit: str) -> dict:
-    """The PRD prints a range [lo, hi], never a single value.
-
-    ``claimed`` must be a number in the contract, so it holds the midpoint of the PRD range — a
-    value the PRD never printed — and the label and note say so. ``matches`` compares by range
-    (lo <= computed <= hi), not by rounding to ``printedDecimals``.
-    """
+    """The PRD prints a range [lo, hi], never a single value (D-023): ``claimed`` is null, the range is in
+    ``claimedRange`` and ``matches`` is lo <= computed <= hi, not rounding to ``printedDecimals``."""
     lo, hi = rng
-    rng_txt = f"[{lo:,.{decimals}f}, {hi:,.{decimals}f}] {unit}"
-    return {"id": fid, "label": f"{label} — PRD range {rng_txt}",
-            "claimed": (lo + hi) / 2, "computed": computed, "printedDecimals": decimals,
-            "matches": bool(lo <= computed <= hi),
-            "note": (f"claimed = midpoint of PRD range {rng_txt} (the PRD prints only the range, not this value); "
-                     f"compare by range, not rounding: computed {computed:,.4g} is "
-                     f"{'inside' if lo <= computed <= hi else 'OUTSIDE'} the range.")}
+    inside = lo <= computed <= hi
+    return prov.range_fixture(
+        fid, label, rng, computed, decimals,
+        (f"The PRD prints only the range {lo:,.{decimals}f}–{hi:,.{decimals}f} {unit}; compared by range, not "
+         f"rounding: computed {computed:,.4g} {unit} is {'inside' if inside else 'OUTSIDE'} it. "
+         "Inputs are PRD-reported (startup-step timing, Modal price)."),
+        basis="arithmetic")
 
 
 def fixtures() -> list[dict]:
@@ -55,17 +61,19 @@ def fixtures() -> list[dict]:
     fg, hv = model.full_grid(), model.full_grid(0.5)
     return [
         fixture("live-slot-usd", "Live slot, 15 min at $6.10/h", PRD_SLOT_USD, float(led.slot), 2,
-                f"Exact {led.slot_exact} → ${led.slot} (half-up; binary-float round() would give {round(float(led.slot_exact), 2)})."),
+                f"Exact {led.slot_exact} → ${led.slot} (half-up; binary-float round() would give {round(float(led.slot_exact), 2)}).",
+                basis="arithmetic"),
         fixture("rehearsals-plus-slot-usd", "Two 1-h rehearsals + one live slot", PRD_PLAN_USD, float(led.plan), 2,
-                f"{led.rehearsals} + {led.slot} = {led.plan}; unrounded {led.plan_exact}. {ROUNDING_NOTE}"),
+                f"{led.rehearsals} + {led.slot} = {led.plan}; unrounded {led.plan_exact}. {ROUNDING_NOTE}", basis="arithmetic"),
         fixture("planned-usd", "Planned incl. $8.10 posted", PRD_PLANNED_USD, float(led.planned), 2,
                 f"{led.plan} + {led.posted} = {led.planned}; unrounded {led.planned_exact} "
-                f"(binary-float round() would give {round(float(led.planned_exact), 2)}). {ROUNDING_NOTE}"),
+                f"(binary-float round() would give {round(float(led.planned_exact), 2)}). {ROUNDING_NOTE}", basis="arithmetic"),
         fixture("remaining-usd", "Remaining of the $40 ceiling after the plan", TASK_REMAINING_USD,
                 float(led.remaining), 2, f"{led.ceiling} − {led.planned}; value from tasks/04-budget/TASK.md "
-                "(the PRD implies it but does not print it)."),
+                "(the PRD implies it but does not print it).", basis="arithmetic"),
         fixture("stella-published-cpu-h", "Published stella bean: 161 h × 288 processors", PRD_STELLA_CPU_H,
-                float(model.stella_published_cpu_hours()), 0, "Arithmetic recomputed; inputs are PRD-reported."),
+                float(model.stella_published_cpu_hours()), 0, "Arithmetic recomputed; inputs are PRD-reported.",
+                basis="arithmetic"),
         range_fixture("full-grid-days", "Full-grid stella wall time", PRD_FULL_DAYS, fg.days, 0, "days"),
         range_fixture("full-grid-usd", "Full-grid stella cost", PRD_FULL_USD, fg.usd, 0, "USD"),
         range_fixture("halved-dt-days", "Full-grid wall time, halved timestep", PRD_HALVED_DAYS, hv.days, 0, "days"),
@@ -164,6 +172,47 @@ def scenarios(fx: list[dict]) -> list[dict]:
     ]
 
 
+def guard_plan() -> dict:
+    """The live budget guard's plan (D-015), priced by ``live_gx/budget_guard.py`` itself (single source, D-023).
+
+    The guard is asked exactly what the rehearsal CLI and the live service ask it, in plan order: two rehearsal
+    allocations, then one live slot. Each is evaluated against a reconciled ledger (the PRD requires reconciling
+    before every allocation) holding the posted amount plus every earlier allocation reserved at its estimate.
+    Nothing here re-derives the guard's formula."""
+    ledger = guard.Ledger(billed=0.0, pending=float(model.live_ledger().posted), reconciled=True)
+    steps = [(f"rehearsal {i}", {"slot_min": pricing.REHEARSAL_H * 60.0, "setups": guard.REHEARSAL_SETUPS})
+             for i in range(1, pricing.N_REHEARSALS + 1)] + [("live slot", {})]
+    decided = []
+    for name, ask in steps:
+        d = guard.evaluate(ledger, **ask)
+        decided.append((name, d))
+        ledger = replace(ledger.reserve(d.slot_estimate_usd), reconciled=True)
+    rehearsals = [d for name, d in decided if name.startswith("rehearsal")]
+    slot = decided[-1][1]
+    total = round(ledger.billed + ledger.pending, 2)
+    refused = [name for name, d in decided if not d.approved]
+    ceiling = slot.ceiling_usd
+    verdict = (f"The guard approves every step against the ${ceiling:.2f} ceiling: the plan fits." if not refused else
+               f"The guard refuses {', '.join(refused)}: the plan does NOT fit the ${ceiling:.2f} ceiling.")
+    assumptions = (
+        f"Priced by the live budget guard (D-015): rate ${pricing.LIVE_RATE_USD_PER_H:.2f}/h × (allocation + "
+        f"{guard.SETUP_MIN:g} min setup per launch + {guard.IDLE_MARGIN_MIN:g} min idle margin) + "
+        f"${guard.STORAGE_EGRESS_USD:.2f} storage/egress, rounded up to the cent. A rehearsal is "
+        f"{pricing.REHEARSAL_H:g} h with {guard.REHEARSAL_SETUPS} launches (initialization + checkpoint continuation); "
+        f"the live slot is {pricing.LIVE_SLOT_MIN} min with 1 launch. The setup, idle and storage/egress allowances are "
+        "Labyrinth's assumptions, not PRD numbers, and are unmeasured until a rehearsal replaces them; rate and lengths "
+        f"are PRD. Plan: ${model.live_ledger().posted} posted + {pricing.N_REHEARSALS} rehearsals + 1 live slot, each "
+        f"evaluated on a reconciled ledger with every earlier allocation reserved at its estimate. {verdict}")
+    return {
+        "slotEstimateUsd": slot.slot_estimate_usd,
+        "rehearsalEstimateUsd": max(d.slot_estimate_usd for d in rehearsals),
+        "slotHardTimeoutS": int(slot.hard_timeout_s),
+        "rehearsalHardTimeoutS": int(min(d.hard_timeout_s for d in rehearsals)),
+        "plannedTotalUsd": total,
+        "assumptions": assumptions,
+    }
+
+
 def build() -> dict:
     led = model.live_ledger()
     fx = fixtures()
@@ -175,4 +224,5 @@ def build() -> dict:
         "remainingAfterPlanUsd": float(led.remaining),
         "scenarios": scenarios(fx),
         "fixtures": fx,
+        "guardPlan": guard_plan(),
     }

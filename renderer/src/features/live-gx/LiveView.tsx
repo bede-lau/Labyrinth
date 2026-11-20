@@ -3,8 +3,9 @@
 // other state plays saved evidence and says so. Launch needs a fresh idle snapshot + budget.slotFits +
 // an explicit confirmation of the exact slot cost, and locks after one POST. Terminate stays available
 // whenever a session may still be billing, and every unconfirmed termination is a loud alert.
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import {
+  Alert,
   Callout,
   Icon,
   Panel,
@@ -19,10 +20,12 @@ import { useArtifact, type ArtifactState } from '../../lib/artifacts';
 import {
   fetchSavedRun,
   isLive,
+  launchMayBeRunning,
   liveDanger,
   liveStatusStore,
   postLiveLaunch,
   postLiveTerminate,
+  stopUnconfirmed,
   terminationProblem,
   useLiveStatus,
   type LiveState,
@@ -40,6 +43,7 @@ import {
   launchBlockedReason,
   modeView,
   overlapClaim,
+  provenanceIsLive,
   savedRunQualified,
   savedRunSeries,
   savedRunToFetch,
@@ -98,6 +102,16 @@ interface LaunchAttempt {
   text: string;
 }
 
+/** One "GPUs may still be billing" alert of the panel (DESIGN.md §5: the design system's Alert, never ad-hoc markup). */
+interface DangerAlert {
+  kind: string;
+  title: string;
+  reason: string;
+  body: ReactNode;
+}
+
+const DASHBOARD = 'check the Modal dashboard until both workers are confirmed stopped.';
+
 export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
   const live = useLiveStatus(pollMs);
   const transport = useArtifact<TransportArtifact>('transport');
@@ -131,9 +145,39 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
   const mv = modeView(live, localProblem);
   const isLiveNow = isLive(live);
 
-  const launchUnconfirmed = live.launchLocked === true && launch?.outcome !== 'refused' && !clearedSinceLaunch;
+  // The launch lock lives in the shared store (FA-4): a launch that may have started a session keeps Terminate available.
+  const launchUnconfirmed = launchMayBeRunning(live) && !clearedSinceLaunch;
   const launchEnabled = canLaunch(live, Date.now()) && launch?.outcome !== 'pending';
   const terminateEnabled = canTerminate(live, { terminateFailed: termFailed, launchUnconfirmed });
+
+  // Every "GPUs may still be billing" state, worst first. The first alert carries the Terminate control.
+  const alerts: DangerAlert[] = [];
+  if (problem) {
+    alerts.push({
+      kind: problem.marker === 'TERMINATE FAILED' ? 'terminate-failed' : 'termination-pending',
+      title: problem.title,
+      reason: problem.reason,
+      body: `Send Terminate again, and ${DASHBOARD}`,
+    });
+  } else if (danger?.kind === 'stop-unconfirmed') {
+    alerts.push({
+      kind: danger.kind,
+      title: danger.title,
+      reason: danger.detail,
+      body: `A stop was requested and the backend has not confirmed it. Terminate stays available; ${DASHBOARD}`,
+    });
+  }
+  if (danger?.kind === 'connection-lost') {
+    alerts.push({ kind: danger.kind, title: danger.title, reason: danger.detail, body: `Terminate stays available; also ${DASHBOARD}` });
+  } else if (live.launchPhase === 'unknown' && launch?.outcome === 'unknown') {
+    alerts.push({
+      kind: 'launch-unknown',
+      title: 'LAUNCH NOT CONFIRMED — a session may have started',
+      reason: launch.text,
+      body: `The request left this page but its outcome is unknown, so GPUs may be billing until a current status shows the mode. Use Terminate if in doubt, and ${DASHBOARD}`,
+    });
+  }
+  const retry = termFailed || problem?.marker === 'TERMINATE FAILED';
 
   const closeDialog = (why: string | null) => {
     setDialog(null);
@@ -168,14 +212,17 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
       return;
     }
     posting.current = true;
-    liveStatusStore.lockLaunch(); // before the request leaves: no second POST until the mode changes
+    liveStatusStore.lockLaunch(); // before the request leaves: no second POST while it is in flight
     setDialog(null);
     setDialogClosed(null);
     setClearedSinceLaunch(false);
     setLaunch({ outcome: 'pending', text: '' });
     try {
       const r = await postLiveLaunch(cost);
+      // FA-4 (maintainer, 2026-11-20): 202 -> locked until the mode changes; 409 -> nothing was launched,
+      // so the next snapshot decides; no answer (or any other answer) -> unknown, the next snapshot decides.
       const outcome = r.ok ? 'accepted' : r.httpStatus === 409 ? 'refused' : 'unknown';
+      liveStatusStore.launchAnswered(outcome);
       setLaunch({ outcome, text: r.reason });
       // Show what the backend says now, not the idle snapshot from before the POST.
       if (!r.status || !liveStatusStore.apply(r.status)) void liveStatusStore.refresh();
@@ -189,13 +236,22 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
     setTerminating((n) => n + 1);
     try {
       const r = await postLiveTerminate();
-      setTerminate({ ok: r.ok, reason: r.httpStatus === null ? `${r.reason}; termination is unconfirmed.` : r.reason });
-      if (r.ok) setClearedSinceLaunch(true);
+      // FA-2: a stop is confirmed only by a 2xx ok:true whose words do not say otherwise (a kill-switch-only or
+      // requested stop is never "terminated", modal_backend.py:28-33, orchestrator.py:60-62).
+      const confirmed = r.ok && terminationProblem(r.reason) === null && !stopUnconfirmed(r.reason);
+      setTerminate({ ok: confirmed, reason: r.httpStatus === null ? `${r.reason}; termination is unconfirmed.` : r.reason });
+      if (confirmed) setClearedSinceLaunch(true);
       if (!r.status || !liveStatusStore.apply(r.status)) void liveStatusStore.refresh();
     } finally {
       setTerminating((n) => n - 1);
     }
   };
+
+  const terminateButton = (
+    <button type="button" className="lg-btn lg-btn--danger" disabled={!terminateEnabled} aria-busy={terminating > 0} onClick={doTerminate}>
+      {terminating > 0 ? 'Terminating… (send again)' : retry ? 'Retry terminate' : 'Terminate'}
+    </button>
+  );
 
   const provenance = data?.provenance;
 
@@ -212,43 +268,19 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
                 {p.text}
               </StatusPill>
             ))}
-            {provenance && <ProvenanceBadge provenance={provenance} subject="live GX status" />}
+            {provenance && (
+              <ProvenanceBadge provenance={provenance} subject="live GX status" live={provenanceIsLive(live, Date.now())} />
+            )}
           </div>
         }
       >
-        {problem && (
-          <div className="lg-danger" role="alert" data-testid="terminate-failed">
-            <Icon name="alert" size={20} />
-            <div>
-              <p className="lg-danger__title">{problem.title}</p>
-              <p className="lg-danger__body">
-                {problem.reason} Retry Terminate, and check the Modal dashboard until both workers are confirmed stopped.
-              </p>
-            </div>
-          </div>
-        )}
-        {danger?.kind === 'connection-lost' && (
-          <div className="lg-danger" role="alert" data-testid="connection-lost">
-            <Icon name="alert" size={20} />
-            <div>
-              <p className="lg-danger__title">{danger.title}</p>
-              <p className="lg-danger__body">
-                {danger.detail} Terminate stays available below; also check the Modal dashboard until both workers are
-                confirmed stopped.
-              </p>
-            </div>
-          </div>
-        )}
-        {launchUnconfirmed && launch?.outcome === 'unknown' && (
-          <div className="lg-danger" role="alert" data-testid="launch-unknown">
-            <Icon name="alert" size={20} />
-            <div>
-              <p className="lg-danger__title">Launch not confirmed — a session may have started</p>
-              <p className="lg-danger__body">
-                {launch.text}. The request left this page but its outcome is unknown, so a session may have started and
-                GPUs may be billing. Use Terminate, and check the Modal dashboard.
-              </p>
-            </div>
+        {alerts.length > 0 && (
+          <div className="lg-alerts">
+            {alerts.map((a, i) => (
+              <Alert key={a.kind} className="lg-alert" title={a.title} reason={a.reason} action={i === 0 ? terminateButton : undefined}>
+                {a.body}
+              </Alert>
+            ))}
           </div>
         )}
 
@@ -258,7 +290,7 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
             <p className="lg-banner__title">{mv.title}</p>
             <p className="lg-banner__body">
               {live.status === 'ready'
-                ? statusProblem
+                ? statusProblem || danger?.kind === 'stop-unconfirmed'
                   ? 'The API reason is quoted in the alert above. This label stays until the API reports the termination as confirmed.'
                   : live.data.reason
                 : live.status === 'connecting'
@@ -284,9 +316,7 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
           >
             {launch?.outcome === 'pending' ? 'Launching…' : 'Launch live slot…'}
           </button>
-          <button type="button" className="lg-btn lg-btn--danger" disabled={!terminateEnabled} aria-busy={terminating > 0} onClick={doTerminate}>
-            {terminating > 0 ? 'Terminating… (send again)' : termFailed || statusProblem ? 'Retry terminate' : 'Terminate'}
-          </button>
+          {alerts.length === 0 && terminateButton}
           {!launchEnabled && launch?.outcome !== 'pending' && (
             <span id="lg-launch-why" className="lg-why">
               Launch disabled: {launchBlockedReason(live, Date.now())}
@@ -304,6 +334,11 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
             {launch.text.replace(/^launch refused:\s*/i, '')}
           </p>
         )}
+        {launch?.outcome === 'unknown' && live.launchPhase !== 'unknown' && live.status === 'ready' && (
+          <p className="lg-msg" role="status" data-ok="false">
+            Launch outcome unknown ({launch.text}); the status received since reports mode "{live.data.mode}".
+          </p>
+        )}
         {terminate?.ok && (
           <p className="lg-msg" role="status" data-ok="true">
             Terminate confirmed: {terminate.reason}
@@ -317,7 +352,7 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
       {isLiveNow && data ? (
         <LiveChart workers={data.workers} />
       ) : (
-        <ReplayPanel live={live} saved={saved} transport={transport} autoPlay={autoPlay} />
+        <ReplayPanel live={live} saved={saved} transport={transport} autoPlay={autoPlay} billing={alerts.length > 0} />
       )}
     </div>
   );
@@ -516,11 +551,14 @@ function ReplayPanel({
   saved,
   transport,
   autoPlay,
+  billing,
 }: {
   live: LiveState;
   saved: SavedRunState;
   transport: ArtifactState<TransportArtifact>;
   autoPlay?: boolean;
+  /** GPUs may still be billing: the replay costs nothing, but "$0" is not shown beside a billing risk (DESIGN.md §5). */
+  billing: boolean;
 }) {
   const archiveSeries: PlaySeries[] = useMemo(() => {
     if (transport.status !== 'ready') return [];
@@ -552,8 +590,12 @@ function ReplayPanel({
     <Panel
       eyebrow="Advance plasma"
       title="Replay: archived stella and GENE bean traces"
-      subtitle="Saved evidence played back at $0. No GX run is shown because none is live and no qualified rehearsal is recorded."
-      status={<StatusPill status="replay">Replay · $0</StatusPill>}
+      subtitle={
+        billing
+          ? 'Saved evidence played back. No GX run is shown because none is live and no qualified rehearsal is recorded.'
+          : 'Saved evidence played back at $0. No GX run is shown because none is live and no qualified rehearsal is recorded.'
+      }
+      status={<StatusPill status="replay">{billing ? 'Replay' : 'Replay · $0'}</StatusPill>}
       headingLevel={3}
     >
       {saved.status === 'error' && (

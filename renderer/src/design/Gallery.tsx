@@ -2,6 +2,7 @@
 // themes. All chart and scene data here is SYNTHETIC SPECIMEN data, labelled as such on the page.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { simulateHex } from './color';
+import { Alert } from './components/Alert';
 import { Callout } from './components/Callout';
 import { FixtureCheck } from './components/FixtureCheck';
 import { Panel } from './components/Panel';
@@ -16,7 +17,7 @@ import {
   plotLayout,
   seriesStyle,
   uncertaintyBand,
-  unsampledShape,
+  unsampledShapes,
   windowShape,
   SERIES_LABEL,
 } from './plotTheme';
@@ -63,6 +64,15 @@ const recordedRunProvenance: Provenance = {
   verification: { outcome: 'not-applicable', details: 'Specimen record for the gallery.' },
   sources: [],
 };
+
+/** Specimen reasons in the backend's words (orchestrator.py: TERMINATE_FAILED, KILL_SWITCH_ONLY). */
+const SPECIMEN_TERMINATE_FAILED =
+  'TERMINATE FAILED — check Modal dashboard; GPUs may still be billing: GPU 0 (bean) kill switch raised, stop not confirmed: ' +
+  'the spawn failed client-side (TimeoutError: rpc) after it may have reached Modal, there is no call to cancel and a worker ' +
+  'that started stops only when it reads the switch. Both workers launched; streaming GX output (rehearsal).';
+const SPECIMEN_CONNECTION_LOST =
+  'The live API stopped answering (/api/live/status: no answer within 1500 ms). The last status, received at 14:02:11, ' +
+  'reported mode "live": Both workers launched; streaming GX output (rehearsal). GPUs may still be billing.';
 
 const LONG_NOTE =
   'Computed with the stated method and the time-weighted, edge-interpolated window mean (D-013), forecasts held at the ' +
@@ -125,8 +135,9 @@ function SpecimenChart({ theme }: { theme: ThemeName }) {
           xaxis: { title: { text: axisTitle('Time t', 'a/v_{th,i}') }, range: [0, 420] },
           yaxis: { title: { text: axisTitle('Ion heat flux Q_i', 'Q_gB') }, range: [0, 3.6] },
           shapes: [
-            // Unsampled first: the window edges that cross it are then drawn on top of the gray.
-            unsampledShape([340, 420], theme),
+            // Unsampled first: the window edges that cross it are then drawn on top of the gray. Its
+            // label is a second shape, drawn above the grid so no grid line cuts the word.
+            ...unsampledShapes([340, 420], theme),
             windowShape([200, 300], theme, '200–300'),
             windowShape([300, 400], theme, '300–400'),
             meanSegment([300, 400], 2.55, 'stella', theme),
@@ -349,12 +360,24 @@ export default function Gallery() {
           />
           <FixtureCheck
             unit="CPU-h"
-            basis="arithmetic"
-            fixture={{ id: 'a', label: 'Published stella bean: 161 h × 288 processors', claimed: 46368, computed: 46368, printedDecimals: 0, matches: true, note: 'Arithmetic recomputed; inputs are PRD-reported.' }}
+            fixture={{ id: 'a', label: 'Published stella bean: 161 h × 288 processors', claimed: 46368, computed: 46368, printedDecimals: 0, matches: true, basis: 'arithmetic', note: 'Arithmetic recomputed; inputs are PRD-reported.' }}
           />
           <FixtureCheck
             unit="Q_gB"
             fixture={{ id: 'm', label: 'stella MAE, persistence forecast', claimed: 0.0444, computed: 0.04396792, printedDecimals: 4, matches: false, note: LONG_NOTE }}
+          />
+          {/* D-023: the PRD prints a range. `claimed` is null; no midpoint is shown or spoken. */}
+          <FixtureCheck
+            unit="days"
+            fixture={{ id: 'r1', label: 'Full-grid stella wall time', claimed: null, claimedRange: [14, 15], computed: 14.44792, printedDecimals: 0, matches: true }}
+          />
+          <FixtureCheck
+            unit="USD"
+            fixture={{ id: 'r2', label: 'Full-grid stella cost', claimed: null, claimedRange: [3100, 3200], computed: 3172.763, printedDecimals: 0, matches: true, basis: 'arithmetic', note: 'Arithmetic on PRD-reported rates.' }}
+          />
+          <FixtureCheck
+            unit="USD"
+            fixture={{ id: 'r3', label: 'Halved-timestep cost (specimen)', claimed: null, claimedRange: [6200, 6400], computed: 6512.3, printedDecimals: 0, matches: false }}
           />
           <div className="gal-stack">
             <Callout tone="blocked" title="129 saved stella samples are not in the repository" action={<a href="#d-007">What would unblock this</a>}>
@@ -406,6 +429,45 @@ export default function Gallery() {
               </li>
             ))}
           </ul>
+        </Panel>
+
+        <Panel
+          eyebrow="Live session"
+          title="GPUs may still be billing"
+          subtitle="The billing-risk pill leads the header while a stop is unconfirmed or the session state is unknown; the Alert carries the backend's reason word for word and the control that acts on it."
+        >
+          <div className="gal-pills">
+            <StatusPill status="billing-risk" size="md">
+              TERMINATE FAILED
+            </StatusPill>
+            <StatusPill status="billing-risk" size="md">
+              TERMINATION PENDING
+            </StatusPill>
+            <StatusPill status="billing-risk" size="md">
+              Stop not confirmed
+            </StatusPill>
+            <StatusPill status="billing-risk" size="md">
+              Connection lost
+            </StatusPill>
+          </div>
+          <div className="gal-stack">
+            <Alert
+              title="TERMINATE FAILED — GPUs may still be billing"
+              reason={SPECIMEN_TERMINATE_FAILED}
+              action={
+                <button type="button" className="gal-btn">
+                  Retry terminate
+                </button>
+              }
+            >
+              Check the Modal dashboard until both workers are confirmed stopped.
+            </Alert>
+            <Alert
+              title="CONNECTION LOST — session state unknown"
+              reason={SPECIMEN_CONNECTION_LOST}
+              action={<a href="#/advance">Open Advance plasma to send Terminate</a>}
+            />
+          </div>
         </Panel>
 
         <Panel

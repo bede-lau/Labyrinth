@@ -1,4 +1,6 @@
 // plotTheme / sceneTheme / format / theme resolution behaviour.
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { hexToRgb, withAlpha } from './color';
 import { formatNumber, formatSigned, formatWindow, parseUnit, plotlyUnit, spokenUnit } from './format';
 import {
@@ -7,7 +9,7 @@ import {
   plotLayout,
   seriesStyle,
   uncertaintyBand,
-  unsampledShape,
+  unsampledShapes,
   windowShape,
   NARROW_CHART_QUERY,
   SERIES_LABEL,
@@ -35,6 +37,18 @@ describe('format', () => {
     ]);
     expect(plotlyUnit('a/v_{th,i}')).toBe('a/v<sub>th,i</sub>');
     expect(spokenUnit('Q_gB')).toBe('Q gB');
+  });
+  // DL-3: the artifacts write their units as prose ("Q_i/Q_gB,i vs t v_th,i/a"). A comma between two
+  // word characters belongs to the subscript (Q_{gB,i}); a comma followed by a space ends it.
+  test('units: a comma-joined subscript stays one subscript, a list comma does not', () => {
+    expect(parseUnit('Q_gB,i')).toEqual([
+      { text: 'Q', sub: false },
+      { text: 'gB,i', sub: true },
+    ]);
+    expect(plotlyUnit('Q_i/Q_gB,i vs t v_th,i/a')).toBe('Q<sub>i</sub>/Q<sub>gB,i</sub> vs t v<sub>th,i</sub>/a');
+    expect(plotlyUnit('Q_i, Q_e')).toBe('Q<sub>i</sub>, Q<sub>e</sub>');
+    expect(plotlyUnit('B_ref = 2.60431 T, a = Aminor_p')).toBe('B<sub>ref</sub> = 2.60431 T, a = Aminor<sub>p</sub>');
+    expect(spokenUnit('Q_gB,i')).toBe('Q gB,i');
   });
 });
 
@@ -159,18 +173,49 @@ describe('plotTheme', () => {
   test('unsampled range: gray token at the token alpha, labelled inside the block along its left edge (F8)', () => {
     for (const theme of THEMES) {
       const t = themes[theme];
-      const s = unsampledShape([340, 420], theme);
-      expect(s).toMatchObject({ type: 'rect', x0: 340, x1: 420, yref: 'paper', y0: 0, y1: 1, layer: 'below', name: 'unsampled' });
-      expect(s.fillcolor).toBe(withAlpha(t.plot.unsampled, t.plot.unsampledAlpha));
+      const [block, label] = unsampledShapes([340, 420], theme);
+      expect(block).toMatchObject({ type: 'rect', x0: 340, x1: 420, yref: 'paper', y0: 0, y1: 1, layer: 'below', name: 'unsampled' });
+      expect(block?.fillcolor).toBe(withAlpha(t.plot.unsampled, t.plot.unsampledAlpha));
       // A horizontal, centred label is cut by the plot edge when the block is narrower than the word
       // (46 px at 390). Vertical text needs one line height of width.
-      expect(s.label).toMatchObject({ text: 'unsampled', textangle: -90, textposition: 'bottom left' });
+      expect(label?.label).toMatchObject({ text: 'unsampled', textangle: -90, textposition: 'bottom left' });
       // Plotly rotates the text about its start point, so the glyphs lie on the far side of the
       // baseline: the padding must be at least the font size for them to land inside the block.
       const size = typeScale['2xs'][0];
-      expect(s.label?.font?.size).toBe(size);
-      expect(s.label?.padding).toBeGreaterThanOrEqual(size);
+      expect(label?.label?.font?.size).toBe(size);
+      expect(label?.label?.padding).toBeGreaterThanOrEqual(size);
     }
+  });
+
+  // DL-4: a grid line was drawn through the word "unsampled". Plotly draws every shape that is not
+  // layer "above" and refers to the paper UNDER the grid, label included; so the label rides on its own
+  // transparent "above" shape over the same range, while the gray stays under the grid and the data.
+  test('unsampled range: the gray block stays under the grid and the data; its label is drawn above the grid (DL-4)', () => {
+    for (const theme of THEMES) {
+      const shapes = unsampledShapes([340, 420], theme);
+      expect(shapes).toHaveLength(2);
+      const [block, label] = shapes;
+      expect(block?.label, 'the block carries no label: it would be drawn under the grid').toBeUndefined();
+      expect(block?.layer).toBe('below');
+      expect(label).toMatchObject({ type: 'rect', xref: 'x', yref: 'paper', x0: 340, x1: 420, y0: 0, y1: 1, layer: 'above', name: 'unsampled label' });
+      // Transparent and unstroked: above the data it must add the word and nothing else.
+      expect(label?.fillcolor).toBe(withAlpha(themes[theme].plot.unsampled, 0));
+      expect(label?.line?.width).toBe(0);
+      expect(label?.label?.font?.color).toBe(themes[theme].color.textMuted);
+    }
+  });
+  test('the installed Plotly layers shapes as DL-4 assumes (the control for the test above)', () => {
+    const bundle = readFileSync(resolve(import.meta.dirname, '../../node_modules/plotly.js-dist-min/plotly.min.js'), 'utf8');
+    // "above" shapes go to the upper layer; any other shape that refers to the paper goes to the lower one.
+    expect(bundle).toMatch(
+      /if\((\w)\.layer==="above"\)\w\(\w\._fullLayout\._shapeUpperLayer\);else if\(\1\.xref\.includes\("paper"\)\|\|\1\.yref\.includes\("paper"\)\)\w\(\w\._fullLayout\._shapeLowerLayer\)/,
+    );
+    // The lower layer is created before the cartesian layer (which holds the grid): it is painted under it.
+    expect(bundle).toMatch(/(\w)\._paper\.append\("g"\)\.classed\("layer-below",!0\);\1\._imageLowerLayer=\w\.append\("g"\)\.classed\("imagelayer",!0\),\1\._shapeLowerLayer=\w\.append\("g"\)\.classed\("shapelayer",!0\),\1\._cartesianlayer=/);
+    // The upper layer lives in the top SVG, over the data; that SVG takes no pointer events, so the
+    // transparent label shape cannot steal hover from the traces under it.
+    expect(bundle).toMatch(/=(\w)\._toppaper\.append\("g"\)\.classed\("layer-above",!0\);\1\._imageUpperLayer=\w\.append\("g"\)\.classed\("imagelayer",!0\),\1\._shapeUpperLayer=/);
+    expect(bundle).toContain('"X .main-svg":"position:absolute;top:0;left:0;pointer-events:none;"');
   });
 
   test('plotConfig keeps the modebar reachable (its focus ring is themed in tokens.css) and hides the logo', () => {

@@ -73,8 +73,8 @@ const matching =
   (v, p) =>
     typeof v === 'string' && re.test(v) ? null : `${p}: expected a string matching ${re.source}`;
 
-/** `additionalProperties: false` unless `open` is set. */
-function object(required: Record<string, Check>, optional: Record<string, Check> = {}, open = false): Check {
+/** An object with `additionalProperties: false` (every object in both contracts is closed). */
+function object(required: Record<string, Check>, optional: Record<string, Check> = {}): Check {
   return (v, p) => {
     if (!isRecord(v)) return `${p}: expected an object, got ${describe(v)}`;
     for (const key of Object.keys(required)) {
@@ -82,10 +82,7 @@ function object(required: Record<string, Check>, optional: Record<string, Check>
     }
     for (const key of Object.keys(v)) {
       const check = Object.hasOwn(required, key) ? required[key] : Object.hasOwn(optional, key) ? optional[key] : undefined;
-      if (!check) {
-        if (open) continue;
-        return `${p}: unexpected property "${key}"`;
-      }
+      if (!check) return `${p}: unexpected property "${key}"`;
       const problem = check(v[key], `${p}.${key}`);
       if (problem) return problem;
     }
@@ -146,18 +143,14 @@ const liveStatus = object(
   { qualified: bool, provenance },
 );
 
-/* ---- contracts/live-run.schema.json (top level is open: the schema sets no additionalProperties) */
-const savedRun = object(
-  {
-    savedRunId: matching(SAVED_RUN_ID),
-    initVerified: bool,
-    continuationVerified: bool,
-    checks: object({ init: bool, continuation: bool, distinctDevices: bool, overlap: bool }),
-    phases: array(liveStatus, { min: 1, max: 2 }),
-  },
-  {},
-  true,
-);
+/* ---- contracts/live-run.schema.json (closed at every level since D-023 item 6) -------------- */
+const savedRun = object({
+  savedRunId: matching(SAVED_RUN_ID),
+  initVerified: bool,
+  continuationVerified: bool,
+  checks: object({ init: bool, continuation: bool, distinctDevices: bool, overlap: bool }),
+  phases: array(liveStatus, { min: 1, max: 2 }),
+});
 
 /** `null` when `body` is a valid live-status snapshot, otherwise the first problem ("$.fallback: missing …"). */
 export function validateLiveStatus(body: unknown): string | null {

@@ -14,6 +14,11 @@ stored in that "file"; a resumed worker starts from that time, whatever the chec
 real worker avoids by reading the time from the restart netCDF itself).
 `startup_s` models container cold start (state stays `initializing`); `run_for_s` models the worker's own
 execution deadline counted from ITS start (GX stopped, last restart kept, state `done`), like modal_app.
+
+The pair runs concurrently by construction, as two GPU containers do: a worker that reaches its last step does
+not finish before its sibling has started (at most SIBLING_WAIT_S), and every report carries the worker's own
+execution interval. So the rehearsal's overlap check never depends on how a loaded test machine schedules a
+few short threads; a test that wants workers that do NOT overlap reports their intervals explicitly.
 """
 from __future__ import annotations
 
@@ -22,7 +27,9 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from .orchestrator import Checkpoint
+from .orchestrator import TUBES, Checkpoint
+
+SIBLING_WAIT_S = 2.0  # a worker launched alone (its sibling's launch failed or was stopped) finishes after this
 
 
 @dataclass
@@ -71,6 +78,8 @@ class FakeBackend:
         self.startup_s, self.run_for_s = startup_s, run_for_s
         self.workers: list[FakeWorker] = []
         self.launch_calls: list[tuple[str, int, Checkpoint | None]] = []
+        self._running = threading.Condition()  # counts workers that started executing; notified on start and stop
+        self._started = 0
 
     def launch(self, tube: str, gpu_index: int, checkpoint: Checkpoint | None) -> FakeWorker:
         self.launch_calls.append((tube, gpu_index, checkpoint))
@@ -89,12 +98,15 @@ class FakeBackend:
     def _work(self, w: FakeWorker) -> None:
         if self.startup_s and w.stop.wait(self.startup_s):
             return
-        w.thread_start = time.time()
+        w.thread_start = time.monotonic()  # the fake's own clock: this machine's wall clock can step back (seen: 0.56 s)
         with w.lock:
             w.state = "running"
+        with self._running:
+            self._started += 1
+            self._running.notify_all()
         restart_t = None
         for step in range(1, w.steps + 1):
-            if self.run_for_s is not None and time.time() - w.thread_start >= self.run_for_s:
+            if self.run_for_s is not None and time.monotonic() - w.thread_start >= self.run_for_s:
                 break  # the worker's own deadline: stop and keep the last complete restart
             if w.stop.wait(w.step_wall_s):
                 break
@@ -106,6 +118,9 @@ class FakeBackend:
                 w.samples_raw.append([w.sim_time_raw, fake_q_raw(w.tube, w.sim_time_raw)])
                 if self.ckpt_every and step % self.ckpt_every == 0:
                     restart_t = w.sim_time_raw
+        if w.state == "running":  # about to finish: not before the sibling has started (the pair overlaps)
+            with self._running:
+                self._running.wait_for(lambda: self._started >= len(TUBES) or w.stop.is_set(), timeout=SIBLING_WAIT_S)
         with w.lock:
             if w.state == "running" and not w.stop.is_set():
                 if restart_t is not None:
@@ -114,20 +129,27 @@ class FakeBackend:
                     reported = w.sim_time_raw if self.misreport_checkpoint_time else restart_t
                     w.ckpt = {"ref": ref, "sim_time_raw": reported}
                 w.state = "done"
-        w.thread_end = time.time()
+            w.thread_end = time.monotonic()  # under the lock: a report that says "done" always carries its end
 
     def poll(self, w: FakeWorker) -> dict:
+        """Like modal_app's worker, the report carries the worker's own execution interval (wall_start, and
+        wall_end once it is done — on the fake's monotonic clock, consistent between the two workers): overlap
+        is then judged on the workers' clock, not on when the orchestrator happened to poll (which a loaded
+        machine can delay past a short fake run) nor on a wall clock that can step back."""
         self.events.append(("poll", w.tube))
         with w.lock:
             new = [list(p) for p in w.samples_raw[w.cursor:]]
             w.cursor = len(w.samples_raw)
             return {"device_id": w.device_id, "state": w.state, "sim_time_raw": w.sim_time_raw,
                     "new_samples_raw": new, "error": w.error, "checkpoint": w.ckpt if w.state == "done" else None,
+                    "wall_start": w.thread_start, "wall_end": w.thread_end if w.state == "done" else None,
                     "solver_revision": "FAKE (test simulation, not GX)"}
 
     def terminate(self, w: FakeWorker) -> None:
         self.events.append(("terminate", w.tube))
         w.terminate_calls += 1
         w.stop.set()
+        with self._running:
+            self._running.notify_all()
         if w.thread is not None:
             w.thread.join(timeout=5)

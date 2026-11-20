@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import type { Plugin, PluginOption } from 'vite';
-import config, { copyArtifacts, resolveArtifactRequest, serveArtifacts } from '../../vite.config';
+import config, { DEFAULT_MAX_TEST_WORKERS, copyArtifacts, resolveArtifactRequest, serveArtifacts, testMaxWorkers } from '../../vite.config';
 
 const ARTIFACTS = resolve(__dirname, '../../../artifacts');
 
@@ -121,6 +121,32 @@ test('FE-10 path containment is by whole path segments, not by string prefix: a 
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test('F13 FA-5 test workers: VITEST_MAX_WORKERS wins, otherwise at most 4 and one core left free; files keep their own VM context', () => {
+  expect(testMaxWorkers({ VITEST_MAX_WORKERS: '2' }, 16)).toBe(2);
+  expect(testMaxWorkers({ VITEST_MAX_WORKERS: '12' }, 16)).toBe(12); // an explicit request is honoured
+  // Unset or unusable: the cap, never one worker per core.
+  for (const value of [undefined, '', '0', '-3', 'four', '2.5', '50%']) {
+    expect(testMaxWorkers({ VITEST_MAX_WORKERS: value }, 16), String(value)).toBe(DEFAULT_MAX_TEST_WORKERS);
+  }
+  expect(DEFAULT_MAX_TEST_WORKERS).toBe(4);
+  expect(testMaxWorkers({}, 3)).toBe(2);
+  expect(testMaxWorkers({}, 1)).toBe(1);
+  // The real config: a VM-context pool (per-file isolation, one jsdom per worker), capped, with a memory limit.
+  const test = (config as { test?: { pool?: string; maxWorkers?: number; vmMemoryLimit?: string; isolate?: boolean } }).test;
+  expect(test?.pool).toBe('vmThreads');
+  expect(test?.isolate).not.toBe(false);
+  expect(test?.maxWorkers).toBe(testMaxWorkers());
+  expect(test?.vmMemoryLimit).toBe('1024MB');
+});
+
+test('F13 FA-5 per-file isolation holds under the pool: a global left by another test file is not visible here', () => {
+  // galleryMode.test.ts runs the same probe. Whichever file runs second in a worker would see the first one's
+  // global if files shared a context (with one worker — the mutation check — they always share one).
+  const g = globalThis as Record<string, unknown>;
+  expect(g.__labyrinthIsolationProbe).toBeUndefined();
+  g.__labyrinthIsolationProbe = 'build.test.ts';
 });
 
 test('FE-10 a read error after the checks is handed to next(err) instead of crashing the dev server', async () => {

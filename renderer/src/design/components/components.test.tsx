@@ -4,7 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { CALLOUT_META, STATUS_META, VERIFICATION_STATUS, provenanceStatus } from '../status';
 import type { FixtureCheckData, Provenance } from '../types';
-import { CALLOUT_TONES, STATUS_KINDS, type StatusKind } from '../tokens';
+import { CALLOUT_TONES, STATUS_KINDS, THEMES, themes, type StatusKind } from '../tokens';
+import { Alert } from './Alert';
 import { Callout } from './Callout';
 import { FixtureCheck, fixtureOutcome } from './FixtureCheck';
 import { Icon, type IconName } from './Icon';
@@ -127,6 +128,7 @@ describe('StatusPill', () => {
 describe('status semantics: every kind is told apart without colour (F2)', () => {
   const PINNED: Record<StatusKind, { label: string; icon: IconName }> = {
     live: { label: 'Live', icon: 'live' },
+    'billing-risk': { label: 'Billing risk', icon: 'danger' },
     replay: { label: 'Replay', icon: 'replay' },
     rehearsal: { label: 'Rehearsal', icon: 'rehearsal' },
     archive: { label: 'Archive', icon: 'archive' },
@@ -150,7 +152,7 @@ describe('status semantics: every kind is told apart without colour (F2)', () =>
   test.each(STATUS_KINDS)('%s keeps its pinned label and icon', (k) => {
     expect({ label: STATUS_META[k].label, icon: STATUS_META[k].icon }).toEqual(PINNED[k]);
   });
-  test('rendered pills: twelve different texts and twelve different glyph drawings', () => {
+  test('rendered pills: as many different texts and glyph drawings as there are kinds', () => {
     const seen = STATUS_KINDS.map((k) => {
       const { container, unmount } = render(<StatusPill status={k} />);
       const pill = container.querySelector('.lab-pill') as HTMLElement;
@@ -171,7 +173,7 @@ describe('status semantics: every kind is told apart without colour (F2)', () =>
     }
   });
   test('every icon name draws a different shape (a renamed copy of another icon would not count)', () => {
-    const names = [...new Set([...STATUS_KINDS.map((k) => STATUS_META[k].icon), ...CALLOUT_TONES.map((t) => CALLOUT_META[t].icon), 'equals', 'chevron', 'external'])] as IconName[];
+    const names = [...new Set([...STATUS_KINDS.map((k) => STATUS_META[k].icon), ...CALLOUT_TONES.map((t) => CALLOUT_META[t].icon), 'danger', 'equals', 'chevron', 'external'])] as IconName[];
     const drawings = names.map((n) => {
       const { container, unmount } = render(<Icon name={n} />);
       const d = drawn(container.querySelector('svg'));
@@ -187,6 +189,104 @@ describe('status semantics: every kind is told apart without colour (F2)', () =>
   });
   test('verification outcomes map to their own status', () => {
     expect(VERIFICATION_STATUS).toEqual({ passed: 'passed', failed: 'failed', blocked: 'blocked', 'not-applicable': 'not-applicable' });
+  });
+});
+
+// DL-1: "GPUs may still be billing" has its own treatment in the system, so the shell and the live
+// panel stop improvising one from `failed`. The reason strings below are the backend's own words
+// (main/labyrinth_main/features/live_gx/orchestrator.py: TERMINATE_FAILED, TERMINATE_PENDING,
+// KILL_SWITCH_ONLY, STOPPING; lib/liveStatus.ts builds the connection-lost text).
+const TERMINATE_FAILED = 'TERMINATE FAILED — check Modal dashboard; GPUs may still be billing';
+const TERMINATE_PENDING = 'TERMINATION PENDING — cancel queued, not yet confirmed; GPUs may still be billing';
+const KILL_SWITCH_ONLY = 'kill switch raised, stop not confirmed';
+const STOPPING = 'Stop requested; terminating workers — not confirmed yet';
+const LIVE_BASE = 'Both workers launched; streaming GX output (rehearsal).';
+const DANGER_STATES = [
+  ['TERMINATE FAILED', 'TERMINATE FAILED — GPUs may still be billing', `${TERMINATE_FAILED}: GPU 0 (bean) cancel failed: ConnectionError: timed out. ${LIVE_BASE}`],
+  [
+    'TERMINATION PENDING',
+    'TERMINATION PENDING — GPUs may still be billing',
+    `${TERMINATE_PENDING}: GPU 1 (triangular) cancel queued; the run kill switch is raised. Launching GX workers (rehearsal); hard timeout 900 s.`,
+  ],
+  [
+    'kill switch only',
+    'TERMINATE FAILED — GPUs may still be billing',
+    `${TERMINATE_FAILED}: GPU 0 (bean) ${KILL_SWITCH_ONLY}: the spawn failed client-side (TimeoutError: rpc) after it may have reached Modal, there is no call to cancel and a worker that started stops only when it reads the switch. ${LIVE_BASE}`,
+  ],
+  ['stop requested', 'STOP NOT CONFIRMED — GPUs may still be billing', `${STOPPING}. ${LIVE_BASE}`],
+  [
+    'connection lost',
+    'CONNECTION LOST — session state unknown',
+    `The live API stopped answering (/api/live/status: no answer within 1500 ms). The last status, received at 14:02:11, reported mode "live": ${LIVE_BASE} GPUs may still be billing.`,
+  ],
+] as const;
+
+describe('billing risk: the danger pill (DL-1)', () => {
+  test('its own label, icon and description; never the live dot', () => {
+    const { container } = render(<StatusPill status="billing-risk">TERMINATE FAILED</StatusPill>);
+    const pill = container.querySelector('.lab-pill') as HTMLElement;
+    expect(pill.dataset.status).toBe('billing-risk');
+    expect(pill).toHaveTextContent('TERMINATE FAILED');
+    expect(pill.querySelector('svg')?.getAttribute('data-icon')).toBe('danger');
+    expect(pill.querySelector('.lab-pill__dot')).toBeNull();
+    expect(pill.getAttribute('title')).toMatch(/GPUs may still be billing/);
+    render(<StatusPill status="billing-risk" />);
+    expect(screen.getByText('Billing risk')).toBeInTheDocument();
+  });
+  test('its glyph is a solid stop sign with a knocked-out "!", not the outlined circle of Failed (read alike at 12px)', () => {
+    const glyph = (name: IconName) => {
+      const { container, unmount } = render(<Icon name={name} />);
+      const svg = container.querySelector('svg') as SVGElement;
+      const out = {
+        filled: Array.from(svg.querySelectorAll('path[fill="currentColor"]')).map((p) => p.getAttribute('fill-rule')),
+        stroked: svg.querySelectorAll('[stroke="currentColor"]').length,
+      };
+      unmount();
+      return out;
+    };
+    expect(glyph('danger')).toEqual({ filled: ['evenodd'], stroked: 0 });
+    expect(glyph('alert').stroked).toBeGreaterThan(0);
+  });
+  test('the only outlined kind, and its outline is its text colour in both themes', () => {
+    expect(STATUS_KINDS.filter((k) => STATUS_META[k].outlined)).toEqual(['billing-risk']);
+    expect(STATUS_META['billing-risk'].dashed).toBeFalsy();
+    for (const t of THEMES) expect(themes[t].status['billing-risk'].border, t).toBe(themes[t].status['billing-risk'].fg);
+  });
+});
+
+describe('Alert (DL-1)', () => {
+  test.each(DANGER_STATES)('%s: role="alert", a spoken title, the backend reason verbatim and the action', async (_k, title, reason) => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    render(
+      <Alert title={title} reason={reason} action={<button type="button" onClick={onRetry}>Retry terminate</button>}>
+        Check the Modal dashboard until both workers are confirmed stopped.
+      </Alert>,
+    );
+    const alert = screen.getByRole('alert', { name: `Danger: ${title}` });
+    expect(alert).toHaveAttribute('data-status', 'billing-risk');
+    expect(alert.querySelector('.lab-alert__reason')?.textContent).toBe(reason);
+    expect(alert).toHaveTextContent('Check the Modal dashboard until both workers are confirmed stopped.');
+    // Never colour alone: its own glyph, and the tone is spoken.
+    expect(alert.querySelector('svg[aria-hidden="true"]')?.getAttribute('data-icon')).toBe('danger');
+    await user.click(within(alert).getByRole('button', { name: 'Retry terminate' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+  test('the reason comes after the title and before the action, in the DOM', () => {
+    render(<Alert title="TERMINATE FAILED" reason={TERMINATE_FAILED} action={<a href="#/advance">Open Advance plasma</a>} />);
+    const alert = screen.getByRole('alert');
+    const title = within(alert).getByText('TERMINATE FAILED');
+    const reason = within(alert).getByText(TERMINATE_FAILED);
+    const action = within(alert).getByRole('link', { name: 'Open Advance plasma' });
+    expect(title.compareDocumentPosition(reason) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(reason.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+  test('without a reason, body or action it renders only the title (no empty slots)', () => {
+    const { container } = render(<Alert title="CONNECTION LOST — session state unknown" />);
+    expect(screen.getByRole('alert', { name: 'Danger: CONNECTION LOST — session state unknown' })).toBeInTheDocument();
+    expect(container.querySelector('.lab-alert__reason')).toBeNull();
+    expect(container.querySelector('.lab-alert__body')).toBeNull();
+    expect(container.querySelector('.lab-alert__action')).toBeNull();
   });
 });
 
@@ -233,6 +333,40 @@ describe('ProvenanceBadge', () => {
       />,
     );
     expect(screen.getByRole('button', { name: /PRD-reported, Blocked/ })).toBeInTheDocument();
+  });
+  // DL-2: a relative source ("PRD.md") resolved against the app and opened the app shell in a new tab.
+  test('only http(s) sources are links; any other source is text, with its reference shown', () => {
+    const sources = [
+      { label: 'Public trace archive', url: 'https://example.org/trace.h5', sha256: 'a'.repeat(64) },
+      { label: 'Mirror', url: 'HTTP://example.org/mirror.h5', sha256: 'b'.repeat(64) },
+      { label: 'Accuracy fixtures', url: 'PRD.md', sha256: 'n/a' },
+      { label: 'Script', url: 'javascript:alert(1)', sha256: 'n/a' },
+      { label: 'Budget task', url: 'tasks/04-budget/TASK.md', sha256: 'n/a', path: 'tasks/04-budget/TASK.md' },
+    ];
+    render(<ProvenanceBadge provenance={{ ...provenance, kind: 'prd-reported', sources }} defaultOpen />);
+    const detail = screen.getByRole('region', { name: /details/ });
+    const links = within(detail).getAllByRole('link');
+    expect(links.map((a) => a.getAttribute('href'))).toEqual(['https://example.org/trace.h5', 'HTTP://example.org/mirror.h5']);
+    expect(detail.querySelectorAll('a')).toHaveLength(2);
+    const items = Array.from(detail.querySelectorAll('.lab-prov__sources li'));
+    expect(items).toHaveLength(5);
+    expect(items[2]).toHaveTextContent('Accuracy fixtures');
+    expect(items[2]?.querySelector('.lab-prov__ref')).toHaveTextContent('PRD.md');
+    expect(items[3]?.querySelector('a')).toBeNull();
+    expect(items[3]?.querySelector('.lab-prov__ref')).toHaveTextContent('javascript:alert(1)');
+    // The text form keeps the hash and the path, like a link does.
+    expect(items[2]).toHaveTextContent('sha256 n/a');
+    expect(items[4]?.querySelector('.lab-prov__path')).toHaveTextContent('tasks/04-budget/TASK.md');
+    expect(items[4]?.querySelector('.lab-prov__ref')).toBeNull(); // the same reference is not printed twice
+  });
+  // DL-3: the "Units" line printed raw Q_gB.
+  test('units are typeset: subscripts, no underscores (a/v_th,i keeps th,i together)', () => {
+    render(<ProvenanceBadge provenance={{ ...provenance, units: 'Q_i/Q_gB,i vs t v_th,i/a' }} defaultOpen />);
+    const detail = screen.getByRole('region', { name: /details/ });
+    const units = within(detail).getByText('Units').nextElementSibling as HTMLElement;
+    expect(units.tagName).toBe('DD');
+    expect(units.textContent).toBe('Qi/QgB,i vs t vth,i/a');
+    expect(Array.from(units.querySelectorAll('sub')).map((s) => s.textContent)).toEqual(['i', 'gB,i', 'th,i']);
   });
   test('a click outside closes the card and leaves focus where the user clicked (F12, F10)', async () => {
     const user = userEvent.setup();
@@ -479,6 +613,172 @@ describe('FixtureCheck reading order and notes (DS-7)', () => {
     expect(within(g).getByTestId('claimed')).toHaveTextContent('2.68');
     expect(within(g).getByTestId('computed')).toHaveTextContent('2.67');
     expect(g.querySelector('.lab-fixture__delta')).toHaveTextContent('−0.01');
+  });
+});
+
+// DL-5 / D-023: `claimedRange` + `claimed: null` when the PRD prints a range, and `basis` on the fixture.
+describe('FixtureCheck renders D-023 fixtures: ranges, missing claims and the basis from the data', () => {
+  type Combo = { matches: boolean | null; claimedIsNumber: boolean; hasRange: boolean; basis: 'data' | 'arithmetic' };
+  const COMBOS: Combo[] = [true, false, null].flatMap((matches) =>
+    [true, false].flatMap((claimedIsNumber) =>
+      [true, false].flatMap((hasRange) => (['data', 'arithmetic'] as const).map((basis) => ({ matches, claimedIsNumber, hasRange, basis }))),
+    ),
+  );
+  // 3172.763 is inside [3100, 3200] and prints as 3173 at the PRD's 0 decimals. 3150 is the midpoint
+  // an old artifact put in `claimed`: with a range present it must never be shown or spoken.
+  const fixtureFor = (c: Combo): FixtureCheckData => ({
+    id: 'full-grid-usd',
+    label: 'Full-grid cost',
+    claimed: c.claimedIsNumber ? (c.hasRange ? 3150 : 3173) : null,
+    ...(c.hasRange ? { claimedRange: [3100, 3200] as const } : {}),
+    computed: 3172.763,
+    printedDecimals: 0,
+    matches: c.matches,
+    basis: c.basis,
+  });
+  const expected = (c: Combo) => {
+    if (c.hasRange) {
+      if (c.matches === null) return { outcome: 'unknown', text: 'Not recomputable', icon: 'dash', claim: 'range', inconsistent: false };
+      if (c.matches)
+        return c.basis === 'data'
+          ? { outcome: 'match', text: 'Inside PRD range', icon: 'check', claim: 'range', inconsistent: false }
+          : { outcome: 'match', text: 'Arithmetic in PRD range', icon: 'equals', claim: 'range', inconsistent: false };
+      return { outcome: 'mismatch', text: 'Mismatch', icon: 'cross', claim: 'range', inconsistent: true };
+    }
+    if (!c.claimedIsNumber) return { outcome: 'unknown', text: 'No PRD value', icon: 'dash', claim: 'none', inconsistent: false };
+    if (c.matches === null) return { outcome: 'unknown', text: 'Not recomputable', icon: 'dash', claim: 'value', inconsistent: false };
+    if (c.matches)
+      return c.basis === 'data'
+        ? { outcome: 'match', text: 'Match', icon: 'check', claim: 'value', inconsistent: false }
+        : { outcome: 'match', text: 'Arithmetic consistent', icon: 'equals', claim: 'value', inconsistent: false };
+    return { outcome: 'mismatch', text: 'Mismatch', icon: 'cross', claim: 'value', inconsistent: true };
+  };
+
+  test('the matrix has every combination once', () => {
+    expect(COMBOS).toHaveLength(24);
+    expect(new Set(COMBOS.map((c) => JSON.stringify(c))).size).toBe(24);
+  });
+
+  test.each(COMBOS.map((c) => [JSON.stringify(c), c] as const))('%s', (_name, c) => {
+    const e = expected(c);
+    const { container } = render(<FixtureCheck fixture={fixtureFor(c)} unit="USD" />);
+    const g = screen.getByRole('group', { name: new RegExp(`^Full-grid cost: ${e.text}\\.`) });
+    expect(g).toHaveAttribute('data-outcome', e.outcome);
+    expect(g).toHaveAttribute('data-basis', c.basis);
+    expect(g).toHaveAttribute('data-claim', e.claim);
+    expect(g.querySelector('.lab-fixture__outcome-text')?.textContent).toBe(e.text);
+    expect(g.querySelector('.lab-fixture__glyph [data-icon]')?.getAttribute('data-icon')).toBe(e.icon);
+    const claimed = within(g).getByTestId('claimed');
+    const key = claimed.previousElementSibling?.textContent;
+    if (c.hasRange) {
+      expect(key).toBe('PRD range');
+      expect(claimed.textContent).toBe('3100–3200USD');
+      // Never the midpoint, on screen or in the spoken name.
+      expect(container.textContent).not.toContain('3150');
+      expect(g.getAttribute('aria-label')).not.toContain('3150');
+      expect(g.getAttribute('aria-label')).toContain('PRD range 3100 to 3200 USD');
+    } else {
+      expect(key).toBe('Claimed (PRD)');
+      expect(claimed.textContent).toBe(c.claimedIsNumber ? '3173' : '—');
+    }
+    expect(Boolean(within(g).queryByText(/flag disagrees/)), 'inconsistency note').toBe(e.inconsistent);
+  });
+
+  test('outside the range: "Outside PRD range", ✗, and the signed distance to the nearer bound — no midpoint anywhere', () => {
+    const f: FixtureCheckData = { id: 'x', label: 'Full-grid cost', claimed: null, claimedRange: [3100, 3200], computed: 3260.4, printedDecimals: 0, matches: false };
+    render(<FixtureCheck fixture={f} unit="USD" />);
+    const g = screen.getByRole('group', {
+      name: 'Full-grid cost: Outside PRD range. PRD range 3100 to 3200 USD, computed 3260.40 USD, distance to the range plus 60.40',
+    });
+    expect(g).toHaveAttribute('data-outcome', 'mismatch');
+    expect(g.querySelector('[data-icon="cross"]')).not.toBeNull();
+    expect(within(g).getByTestId('computed').textContent).toBe('3260.40USD');
+    expect(g.querySelector('.lab-fixture__delta')?.textContent).toBe('+60.40');
+    expect(g.querySelector('.lab-fixture__delta')?.previousElementSibling?.textContent).toBe('Δ to range');
+    expect(within(g).queryByText(/flag disagrees/)).toBeNull();
+    expect(g.textContent).not.toContain('3150');
+  });
+  test('below the range the distance is negative; inside it is zero', () => {
+    const below: FixtureCheckData = { id: 'b', label: 'Wall time', claimed: null, claimedRange: [14, 15], computed: 13.2, printedDecimals: 0, matches: false };
+    const inside: FixtureCheckData = { ...below, id: 'i', label: 'Wall time inside', computed: 14.44792, matches: true };
+    render(
+      <>
+        <FixtureCheck fixture={below} unit="days" />
+        <FixtureCheck fixture={inside} unit="days" />
+      </>,
+    );
+    const b = screen.getByRole('group', { name: /^Wall time: Outside PRD range\./ });
+    expect(b.querySelector('.lab-fixture__delta')?.textContent).toBe('−0.80');
+    const i = screen.getByRole('group', { name: /^Wall time inside: Inside PRD range\./ });
+    expect(within(i).getByTestId('claimed').textContent).toBe('14–15days');
+    // The two bounds and the dash are one element (CSS keeps it on one line); the unit is outside it.
+    expect(within(i).getByTestId('claimed').querySelector('.lab-fixture__range')?.textContent).toBe('14–15');
+    // ...and the unit keeps a break opportunity before it, or it runs into the next column at 390 px.
+    expect(within(i).getByTestId('claimed').querySelector('.lab-fixture__range')?.nextSibling?.nodeName).toBe('WBR');
+    expect(within(i).getByTestId('computed').textContent).toBe('14.45days');
+    expect(i.querySelector('.lab-fixture__delta')?.textContent).toBe('0.00');
+  });
+  test('a flag that says "inside" for a value outside the range is shown as outside, with the disagreement named', () => {
+    const f: FixtureCheckData = { id: 'x', label: 'Cost', claimed: null, claimedRange: [3100, 3200], computed: 3260.4, printedDecimals: 0, matches: true };
+    render(<FixtureCheck fixture={f} unit="USD" />);
+    const g = screen.getByRole('group', { name: /^Cost: Outside PRD range\..*The match flag disagrees with the range test\.$/ });
+    expect(g).toHaveAttribute('data-outcome', 'mismatch');
+    expect(within(g).getByText('Match flag disagrees with the range test — treated as a mismatch.')).toBeVisible();
+  });
+  test('the computed value is never rounded onto the other side of a bound', () => {
+    const at = (computed: number, matches: boolean) =>
+      ({ id: `c${computed}`, label: `t ${computed}`, claimed: null, claimedRange: [14, 15], computed, printedDecimals: 0, matches }) as FixtureCheckData;
+    render(
+      <>
+        <FixtureCheck fixture={at(15.000004, false)} />
+        <FixtureCheck fixture={at(13.9999, false)} />
+        <FixtureCheck fixture={at(14.999999, true)} />
+      </>,
+    );
+    const shown = (name: string) => within(screen.getByRole('group', { name: new RegExp(`^${name}: `) })).getByTestId('computed').textContent;
+    expect(shown('t 15.000004')).toBe('15.000004'); // "15.00" would read as on the bound, i.e. inside
+    expect(shown('t 13.9999')).toBe('13.9999');
+    expect(shown('t 14.999999')).toBe('15.00'); // inside, and "15.00" is inside too: two extra decimals are enough
+  });
+  test('a range that cannot be recomputed: em dashes, no unit after them, no distance', () => {
+    const f: FixtureCheckData = { id: 'x', label: 'Cost', claimed: null, claimedRange: [3100, 3200], computed: null, printedDecimals: 0, matches: null };
+    render(<FixtureCheck fixture={f} unit="USD" />);
+    const g = screen.getByRole('group', { name: 'Cost: Not recomputable. PRD range 3100 to 3200 USD, computed value not available' });
+    expect(within(g).getByTestId('computed').textContent).toBe('—');
+    expect(g.querySelector('.lab-fixture__delta')?.textContent).toBe('—');
+  });
+  test('a claimed value of null without a range is a bare em dash, spoken as not available', () => {
+    render(<FixtureCheck fixture={fx({ claimed: null, matches: true })} unit="Q_gB" />);
+    const g = screen.getByRole('group', { name: 'GENE mean, 300–400: No PRD value. Claimed value not available, computed 2.67 Q gB' });
+    expect(within(g).getByTestId('claimed').textContent).toBe('—');
+    expect(g.querySelector('.lab-fixture__delta')?.textContent).toBe('—');
+  });
+  test('the basis comes from the fixture; the prop overrides it; absent means data', () => {
+    const match = fx({ computed: 2.68, matches: true });
+    render(
+      <>
+        <FixtureCheck fixture={{ ...match, id: 'a', label: 'from data', basis: 'arithmetic' }} />
+        <FixtureCheck fixture={{ ...match, id: 'b', label: 'overridden', basis: 'arithmetic' }} basis="data" />
+        <FixtureCheck fixture={{ ...match, id: 'c', label: 'absent' }} />
+      </>,
+    );
+    expect(screen.getByRole('group', { name: /^from data: Arithmetic consistent\./ })).toHaveAttribute('data-basis', 'arithmetic');
+    expect(screen.getByRole('group', { name: /^overridden: Match\./ })).toHaveAttribute('data-basis', 'data');
+    expect(screen.getByRole('group', { name: /^absent: Match\./ })).toHaveAttribute('data-basis', 'data');
+  });
+  test('an explicit claimedLabel still wins over "PRD range"', () => {
+    const f: FixtureCheckData = { id: 'x', label: 'Cost', claimed: null, claimedRange: [3100, 3200], computed: 3150.5, printedDecimals: 0, matches: true };
+    render(<FixtureCheck fixture={f} unit="USD" claimedLabel="Range (TASK.md)" />);
+    expect(within(screen.getByRole('group')).getByTestId('claimed').previousElementSibling?.textContent).toBe('Range (TASK.md)');
+  });
+  test('fixtureOutcome() applies the range rule to the unrounded value', () => {
+    const r = (computed: number | null, matches: boolean | null): FixtureCheckData => ({ id: 'r', label: 'r', claimed: null, claimedRange: [14, 15], computed, printedDecimals: 0, matches });
+    expect(fixtureOutcome(r(15, true))).toEqual({ outcome: 'match', inconsistent: false });
+    expect(fixtureOutcome(r(15.0001, true))).toEqual({ outcome: 'mismatch', inconsistent: true });
+    expect(fixtureOutcome(r(14.5, false))).toEqual({ outcome: 'mismatch', inconsistent: true });
+    expect(fixtureOutcome(r(16, false))).toEqual({ outcome: 'mismatch', inconsistent: false });
+    expect(fixtureOutcome(r(null, true))).toEqual({ outcome: 'unknown', inconsistent: false });
+    expect(fixtureOutcome({ ...r(14.5, true), claimedRange: undefined })).toEqual({ outcome: 'unknown', inconsistent: false });
   });
 });
 

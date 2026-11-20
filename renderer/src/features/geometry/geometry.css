@@ -83,6 +83,9 @@
 .geo-check__text, .geo-check__source, .geo-check__note { font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-muted); }
 .geo-check__stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--lab-space-3); }
 .geo-check__hash { color: var(--lab-color-text-subtle); }
+/* The float64 comparison of the same run: its own block under the printed-precision one. */
+.geo-check__f64 { display: flex; flex-direction: column; gap: var(--lab-space-1); padding: var(--lab-space-2) var(--lab-space-3); border-left: 2px solid var(--lab-color-border-strong); background: var(--lab-color-surface-sunken); border-radius: var(--lab-radius-xs); }
+.geo-check__f64[data-within='false'] { border-left-color: var(--lab-status-failed-border); }
 .geo-check__note { padding-top: var(--lab-space-2); border-top: 1px solid var(--lab-color-border); }
 
 @media (max-width: 1100px) {

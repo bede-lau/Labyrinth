@@ -13,15 +13,18 @@ Exit path. SIGINT (Ctrl-C), SIGTERM and SIGHUP request a COOPERATIVE stop: the h
 never raises. (The phases run on the main thread; an exception raised there while a spawn RPC is in flight
 would drop that spawn's handle and exit with a GPU call nobody can cancel.) The backend call in flight ends
 within its own bound, nothing further is reserved or spawned, and every started phase is terminated. While
-workers are being terminated the signals are ignored. A phase whose termination is not confirmed is announced
-at once ("termination not confirmed yet — check the Modal dashboard now"), BEFORE anything is waited for, and
-the process then waits only while a cancel is queued (a late spawn), at most CONFIRM_WAIT_S; a cancel that
-failed hard is not slept on. Each phase finally prints "workers terminated" or "NOT confirmed terminated —
-check Modal dashboard" with its reason, and the exit code is 2 whenever the rehearsal did not pass or anything
-is unsettled. "Terminated" means a cancel of the spawned call succeeded (modal_backend): a spawn that failed
-client-side reads "kill switch raised, stop not confirmed" and ends in exit 2, like a spawn RPC that never
-returns — the operator must check the Modal dashboard and stop the app there. A signal that was ignored when
-the process started (nohup, a shell's background job) stays ignored.
+workers are being terminated — and, for the command line, until the process has exited — a further signal
+has no effect beyond that stop request: the handler stays installed, so a late signal can neither cut the
+termination short nor turn the exit code into "killed by a signal". A phase whose termination is not confirmed
+is announced at once ("termination not confirmed yet — check the Modal dashboard now"), BEFORE anything is
+waited for, and the process then waits only while a cancel is queued (a late spawn), at most CONFIRM_WAIT_S;
+a cancel that failed hard is not slept on. Each phase finally prints "workers terminated" (or "nothing was
+launched") or "NOT confirmed terminated — check Modal dashboard" with its reason, and the exit code is 2
+whenever the rehearsal did not pass or anything is unsettled. "Terminated" means a cancel of the spawned call
+succeeded (modal_backend): a spawn that failed client-side reads "kill switch raised, stop not confirmed" and
+ends in exit 2, like a spawn RPC that never returns — the operator must check the Modal dashboard and stop the
+app there. A signal that was ignored when the process started (nohup, a shell's background job) stays ignored.
+Output never breaks the exit path: a closed pipe or a dead terminal is silenced, not raised.
 """
 from __future__ import annotations
 
@@ -37,7 +40,7 @@ from pathlib import Path
 from ..budget.pricing import REHEARSAL_H
 from . import budget_guard as guard
 from .orchestrator import Orchestrator, WorkerBackend
-from .service import WORST_CASE_STOP_S, LedgerLocked, LedgerStore, atomic_write, cost_matches, default_state_dir
+from .service import WORST_CASE_STOP_S, LedgerLocked, LedgerStore, atomic_write, cost_matches, default_state_dir, say
 
 CONFIRM_WAIT_S = WORST_CASE_STOP_S + 10.0
 STOP_SIGNALS = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "SIGHUP") if hasattr(signal, name))
@@ -151,11 +154,8 @@ def run_rehearsal(backend_factory: Callable[[str, int], WorkerBackend], *, state
 
 
 def _say(line: str, *, to_stderr: bool = False) -> None:
-    """Print, but never let a dead terminal (hangup, closed pipe) break the exit path."""
-    try:
-        print(line, file=sys.stderr if to_stderr else sys.stdout, flush=True)
-    except (OSError, ValueError):
-        pass
+    """Print, but never let a dead terminal (hangup, closed pipe) break the exit path (service.say)."""
+    say(line, to_stderr=to_stderr)
 
 
 def terminate_phases(started: list[Orchestrator], confirm_wait_s: float) -> bool:
@@ -178,7 +178,8 @@ def terminate_phases(started: list[Orchestrator], confirm_wait_s: float) -> bool
             if not p.termination_pending:
                 ok = p.stop_and_terminate()
         confirmed_all &= ok
-        verdict = "workers terminated" if ok else "NOT confirmed terminated — check Modal dashboard"
+        verdict = ("workers terminated" if p.launched_any else "nothing was launched") if ok else \
+            "NOT confirmed terminated — check Modal dashboard"
         line = f"phase {i}: {verdict}. {p.reason}"
         _say(line)
         if not ok:
@@ -187,24 +188,27 @@ def terminate_phases(started: list[Orchestrator], confirm_wait_s: float) -> bool
 
 
 def main(argv: list[str] | None = None, *, availability_check: Callable[[], tuple[bool, str]] | None = None,
-         backend_factory: Callable[[str, int], WorkerBackend] | None = None, poll_interval_s: float = 2.0) -> int:
-    """The keyword hooks are for tests only; the command line cannot set them."""
+         backend_factory: Callable[[str, int], WorkerBackend] | None = None, poll_interval_s: float = 2.0,
+         restore_signals: bool = True) -> int:
+    """The keyword hooks are for tests only; the command line cannot set them. The command line passes
+    `restore_signals=False`: its stop handlers then stay installed until the process has exited, so that a
+    signal arriving after the last line was printed cannot replace exit code 0 / 2 by "killed by a signal".
+    A caller that goes on running (a test) gets its previous handlers back."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--confirm-cost-usd", type=float, default=None)
     args = ap.parse_args(argv)
     state_dir = default_state_dir()
     decision = guard.evaluate(LedgerStore(state_dir / "ledger.json").load(), slot_min=REHEARSAL_H * 60.0,
                               setups=guard.REHEARSAL_SETUPS)
-    print(f"Rehearsal estimate ${decision.slot_estimate_usd:.2f}, hard timeout {decision.hard_timeout_s} s. {decision.reason}",
-          flush=True)
+    _say(f"Rehearsal estimate ${decision.slot_estimate_usd:.2f}, hard timeout {decision.hard_timeout_s} s. {decision.reason}")
     if args.confirm_cost_usd is None:
-        print("Nothing launched. Re-run with --confirm-cost-usd to launch.")
+        _say("Nothing launched. Re-run with --confirm-cost-usd to launch.")
         return 0
     from .modal_backend import ModalBackend, availability
 
     ok, why = (availability_check or availability)()
     if not ok:
-        print(why, file=sys.stderr)
+        _say(why, to_stderr=True)
         return 2
     factory = backend_factory or (lambda rid, t: ModalBackend(run_id=rid, hard_timeout_s=t, kind="rehearsal"))
     started: list[Orchestrator] = []
@@ -220,6 +224,8 @@ def main(argv: list[str] | None = None, *, availability_check: Callable[[], tupl
     for s, old in previous.items():
         if old is not signal.SIG_IGN:  # ignored at start-up (nohup, background job): stays ignored
             signal.signal(s, on_signal)
+    # The handler stays installed while the workers are terminated: it only sets flags, so a further signal can
+    # neither interrupt the termination nor (unlike switching to SIG_IGN here) race with a signal already pending.
     try:
         try:
             passed, record = run_rehearsal(factory, state_dir=state_dir, confirm_cost_usd=args.confirm_cost_usd,
@@ -227,8 +233,6 @@ def main(argv: list[str] | None = None, *, availability_check: Callable[[], tupl
         except Exception:  # noqa: BLE001 - reported below, after the workers have been terminated
             crash = traceback.format_exc()
         finally:
-            for s in previous:
-                signal.signal(s, signal.SIG_IGN)  # nothing may interrupt the termination
             confirmed = terminate_phases(started, CONFIRM_WAIT_S)
         if crash is not None:
             _say(f"Rehearsal crashed:\n{crash}", to_stderr=True)
@@ -237,14 +241,16 @@ def main(argv: list[str] | None = None, *, availability_check: Callable[[], tupl
         if stop.is_set() and not passed:
             _say("Rehearsal interrupted; nothing qualified.")
         qualified = passed and confirmed and crash is None
+        stopped = "workers terminated." if any(p.launched_any for p in started) else "nothing was launched."
         _say("Rehearsal " + ("PASSED" if qualified else "did NOT pass")
-             + ("; workers terminated." if confirmed else "; workers NOT confirmed terminated — check Modal dashboard."))
+             + (f"; {stopped}" if confirmed else "; workers NOT confirmed terminated — check Modal dashboard."))
         return 0 if qualified else 2
     finally:
-        for s, old in previous.items():
-            if old is not None:
-                signal.signal(s, old)
+        if restore_signals:
+            for s, old in previous.items():
+                if old is not None:
+                    signal.signal(s, old)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(restore_signals=False))

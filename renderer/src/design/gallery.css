@@ -37,6 +37,20 @@
 .gal-scene { width: 100%; min-height: 180px; border-radius: var(--lab-radius-sm); overflow: hidden; }
 .gal-scene canvas { display: block; }
 .gal-stack { display: flex; flex-direction: column; gap: var(--lab-space-2); margin-top: var(--lab-space-4); }
+.gal-pills { display: flex; flex-wrap: wrap; gap: var(--lab-space-2); }
+/* Specimen action inside an Alert (the app's own buttons live in their feature stylesheets). */
+.gal-btn {
+  min-height: 32px;
+  padding: var(--lab-space-1) var(--lab-space-4);
+  border: 1px solid var(--lab-status-billing-risk-border);
+  border-radius: var(--lab-radius-md);
+  background: var(--lab-color-surface);
+  color: var(--lab-status-billing-risk-fg);
+  font-size: var(--lab-font-size-sm);
+  font-weight: var(--lab-font-weight-semibold);
+  cursor: pointer;
+}
+.gal-btn:hover { background: var(--lab-color-surface-hover); }
 .gal-row { margin-bottom: var(--lab-space-3); }
 .gal-colorbar { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: var(--lab-space-3); margin-top: var(--lab-space-3); font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); }
 .gal-colorbar__bar { height: 10px; border-radius: var(--lab-radius-xs); }

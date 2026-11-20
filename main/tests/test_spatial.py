@@ -46,3 +46,35 @@ def test_S3_provenance_prd_reported_and_verification_blocked(art):
 def test_S4_independence_note_live_w7x_tubes_do_not_exchange(art):
     note = art["independenceNote"]
     assert "independent" in note and "W7-X" in note and "no exchange" in note
+
+
+def _fx(art, fid):
+    return next(f for f in art["fixtures"] if f["id"] == fid)
+
+
+def test_S5_fixtures_speedup_is_arithmetic_and_runs_not_recomputable(art):
+    """D-023 §2: the PRD numbers this artifact reports are fixtures, so the view needs no hard-coded pills."""
+    ids = [f["id"] for f in art["fixtures"]]
+    assert ids == ["speedup", "controlled-runs-passed", "cpu-mean-s", "gpu-mean-s"]
+    sp = _fx(art, "speedup")
+    assert sp["claimed"] == 1.27 and sp["printedDecimals"] == 2
+    assert sp["computed"] == pytest.approx(184.69 / 145.44) and sp["computed"] == art["timing"]["speedupRecomputed"]
+    assert sp["matches"] is True and sp["basis"] == "arithmetic"
+    assert "184.69" in sp["note"] and "145.44" in sp["note"]
+    runs = _fx(art, "controlled-runs-passed")
+    assert runs["claimed"] == 4 and runs["computed"] is None and runs["matches"] is None
+    assert "basis" not in runs and "4 of 4" in runs["label"] and "not in this repo" in runs["note"]
+    for fid, claimed in (("cpu-mean-s", 184.69), ("gpu-mean-s", 145.44)):
+        f = _fx(art, fid)
+        assert (f["claimed"], f["computed"], f["matches"], f["printedDecimals"]) == (claimed, None, None, 2)
+        assert "basis" not in f
+    for f in art["fixtures"]:
+        assert "claimedRange" not in f
+
+
+def test_S5_speedup_fixture_is_recomputed_not_copied(monkeypatch):
+    """The speedup fixture follows the timing inputs (a PRD 1.27 with other means would be flagged)."""
+    monkeypatch.setattr(artifact, "PRD_GPU_MEAN_S", 120.0)
+    sp = _fx(artifact.build(), "speedup")
+    assert sp["computed"] == pytest.approx(184.69 / 120.0) and sp["matches"] is False
+    assert sp["claimed"] == 1.27

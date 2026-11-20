@@ -266,12 +266,15 @@ test.each(DANGER_CASES)(
     serveStatus(status(mode, { reason: TERM_REASONS[marker] }));
     render(<App pollMs={60_000} />);
     const alert = await within(banner()).findByRole('alert');
-    expect(alert).toHaveTextContent(`${marker} — GPUs may still be billing`);
-    expect(alert).toHaveTextContent(TERM_REASONS[marker]); // the backend's own words, in full
+    // FA-1: the design system's danger primitive, spoken as a danger, quoting the backend's own words in full.
+    expect(alert).toHaveAccessibleName(`Danger: ${marker} — GPUs may still be billing`);
+    expect(alert).toHaveClass('lab-alert');
+    expect(alert).toHaveAttribute('data-status', 'billing-risk');
+    expect(alert.querySelector('.lab-alert__reason')?.textContent).toBe(TERM_REASONS[marker]);
     expect(screen.getByText(`view:${route}`)).toBeInTheDocument();
-    // The indicator leads with a failed pill naming the marker; "Replay · $0" would be a false comfort.
+    // The indicator leads with the billing-risk pill naming the marker; "Replay · $0" would be a false comfort.
     const pills = headerPills();
-    expect(pills[0]).toBe(`failed:${marker}`);
+    expect(pills[0]).toBe(`billing-risk:${marker}`);
     expect(pills.some((p) => p.startsWith('replay:'))).toBe(false);
     expect(`${modeBox().textContent} ${alert.textContent}`).not.toMatch(/\$0|Replay/);
     expect(pills.filter((p) => p.startsWith('live:'))).toHaveLength(mode === 'live' ? 1 : 0);
@@ -291,12 +294,55 @@ test('A2 danger: the marker is found anywhere in the reason, in any letter case'
   );
   const a = render(<App pollMs={60_000} />);
   expect(await within(banner()).findByRole('alert')).toHaveTextContent('TERMINATE FAILED — GPUs may still be billing');
-  expect(headerPills()[0]).toBe('failed:TERMINATE FAILED');
+  expect(headerPills()[0]).toBe('billing-risk:TERMINATE FAILED');
   a.unmount();
 
   serveStatus(status('terminated', { reason: 'Stopped; termination pending for GPU 1 (cancel queued).' }));
   render(<App pollMs={60_000} />);
   expect(await within(banner()).findByRole('alert')).toHaveTextContent('TERMINATION PENDING — GPUs may still be billing');
+});
+
+// FA-1 / FA-2: the round-6 stop states, in the backend's words (orchestrator.py:61-62, :320-333; modal_backend.py:183),
+// on every route: never terminated, never "Replay · $0".
+const ROUND6_STATES = [
+  [
+    'a kill-switch-only stop',
+    'fallback',
+    "TERMINATE FAILED — check Modal dashboard; GPUs may still be billing: GPU 0 (bean) kill switch raised, stop not confirmed: the spawn failed client-side (ConnectionError: reset) after it may have reached Modal, there is no call to cancel and a worker that started stops only when it reads the switch. GPU 0 (bean) worker failed: launch failed client-side (ConnectionError: reset) and a worker may have started; there is no call to cancel, only the run's kill switch can stop it.",
+    'TERMINATE FAILED — GPUs may still be billing',
+    ['billing-risk:TERMINATE FAILED', 'failed:Worker failed'],
+  ],
+  [
+    'a requested stop while live',
+    'live',
+    'Stop requested; terminating workers — not confirmed yet. Both workers launched; streaming GX output (live).',
+    'STOP NOT CONFIRMED — GPUs may still be billing',
+    ['billing-risk:Stop not confirmed', 'live:LIVE · GPU 0 / GPU 1'],
+  ],
+  [
+    'a requested stop while launching',
+    'launching',
+    'Stop requested; terminating workers — not confirmed yet. Launching GX workers (live); hard timeout 1500 s.',
+    'STOP NOT CONFIRMED — GPUs may still be billing',
+    ['billing-risk:Stop not confirmed', 'rehearsal:Launching…'],
+  ],
+] as const;
+const ROUND6_CASES = ROUND6_STATES.flatMap(([name, mode, reason, title, pills]) =>
+  ROUTES.map((r) => [name, r.id, mode, reason, title, pills] as const),
+);
+
+test.each(ROUND6_CASES)('A2 FA-1 %s is the billing-risk alert on #/%s', async (_name, route, mode, reason, title, pills) => {
+  history.replaceState(null, '', `#/${route}`);
+  serveStatus(status(mode, { reason }));
+  render(<App pollMs={60_000} />);
+  const alert = await within(banner()).findByRole('alert', { name: `Danger: ${title}` });
+  expect(alert).toHaveAttribute('data-status', 'billing-risk');
+  expect(alert.querySelector('.lab-alert__reason')?.textContent).toBe(reason);
+  expect(headerPills()).toEqual([...pills]);
+  expect(`${modeBox().textContent} ${alert.textContent}`).not.toMatch(/\$0|Replay|terminated\./);
+  expect(modeBox()).toHaveAttribute('data-danger', mode === 'fallback' ? 'terminate-failed' : 'stop-unconfirmed');
+  const link = within(alert).queryByRole('link', { name: 'Open Advance plasma to send Terminate' });
+  expect(link?.getAttribute('href') ?? null).toBe(route === 'advance' ? null : '#/advance');
 });
 
 test('A2 LIVE is not sticky: when a live session stops answering, the header says the session state is unknown', async () => {
@@ -315,7 +361,8 @@ test('A2 LIVE is not sticky: when a live session stops answering, the header say
   expect(alert).toHaveTextContent(/mode "live"/);
   expect(alert).toHaveTextContent('GPUs may still be billing');
   expect(document.querySelector('[data-status="live"]')).toBeNull();
-  expect(headerPills()).toEqual(['failed:Connection lost']);
+  expect(headerPills()).toEqual(['billing-risk:Connection lost']);
+  expect(alert).toHaveAccessibleName('Danger: CONNECTION LOST — session state unknown');
   expect(`${modeBox().textContent} ${alert.textContent}`).not.toMatch(/\$0|Replay/);
   // The backend answers again with a clean idle status: the alert goes away.
   answer = status('idle');

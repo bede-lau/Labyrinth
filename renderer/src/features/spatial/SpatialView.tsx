@@ -1,4 +1,6 @@
 // Inspect spatial parallelism (replay): GENE-X on the separate Dommaschk geometry, PRD-reported.
+// The PRD figures (speedup, run tally, the two means) and what backs them come from the artifact's
+// `fixtures` (D-023); the tally marks from `runs`.
 import { useEffect, useId, useState } from 'react';
 import {
   Callout,
@@ -9,12 +11,11 @@ import {
   Stat,
   StatusPill,
   VERIFICATION_STATUS,
-  formatNumber,
-  provenanceStatus,
   type FixtureCheckData,
 } from '../../design';
 import { useArtifact } from '../../lib/artifacts';
 import { ArtifactGate } from '../../shell/ArtifactGate';
+import { SPATIAL_FIXTURE, fixtureById, fixtureUnit, otherFixtures, spatialBacking } from './model';
 import { planeRange, ringLayout } from './ring';
 import { checkSpatial, type SpatialArtifact } from './types';
 import './spatial.css';
@@ -31,27 +32,9 @@ export function SpatialView() {
   );
 }
 
-/**
- * The PRD's 1.27× next to the ratio recomputed from the two means, at printed precision. The value
- * shown as computed is the artifact's `timing.speedupRecomputed` (interface.md §2 item 8); the note
- * does the division itself, and an artifact ratio that is not that quotient can never read as a match.
- */
-export function speedupFixture(a: SpatialArtifact): FixtureCheckData {
-  const t = a.timing;
-  const quotient = t.cpuMeanS / t.gpuMeanS;
-  const consistent = formatNumber(quotient, 4) === formatNumber(t.speedupRecomputed, 4);
-  const division = `Recomputed: ${formatNumber(t.cpuMeanS, 2)} s ÷ ${formatNumber(t.gpuMeanS, 2)} s = ${formatNumber(quotient, 4)}`;
-  return {
-    id: 'spatial-speedup',
-    label: 'Speedup (CPU ÷ GPU)',
-    claimed: t.speedup,
-    computed: t.speedupRecomputed,
-    printedDecimals: 2,
-    matches: consistent && formatNumber(t.speedup, 2) === formatNumber(t.speedupRecomputed, 2),
-    note: consistent
-      ? division
-      : `${division}. The artifact records ${formatNumber(t.speedupRecomputed, 4)} as the recomputed ratio, which is not this quotient.`,
-  };
+/** A PRD figure checked against this repo, exactly as the artifact records it (range, basis and all). */
+function Check({ f }: { f: FixtureCheckData }) {
+  return <FixtureCheck fixture={f} unit={fixtureUnit(f)} />;
 }
 
 /** True while the media query matches (false where matchMedia is unavailable, e.g. jsdom). */
@@ -82,13 +65,16 @@ export function SpatialContent({ a }: { a: SpatialArtifact }) {
   const t = a.timing;
   const maxS = Math.max(t.cpuMeanS, t.gpuMeanS);
   const prov = a.provenance;
-  // Every label below is read from the artifact's provenance, so the panels cannot keep saying
-  // "PRD-reported" / "Blocked" (or stop saying it) independently of the badge above them.
-  // provenanceStatus() without the live flag: an artifact is replayed evidence, so even a "live" kind is
-  // drawn as a recorded run and can never earn the LIVE pill here.
-  const reported = prov.kind === 'prd-reported';
-  const kind = provenanceStatus(prov.kind);
-  const kindPill = <StatusPill status={kind.status}>{kind.label}</StatusPill>;
+  // Each side panel's pill, wording and dashed outlines say what backs its own PRD figures, read from
+  // their fixtures (D-023): a panel cannot keep saying "PRD-reported" once the artifact recomputes its
+  // numbers, or stop saying it while it does not. The provenance record keeps its own badge above.
+  const backed = spatialBacking(a);
+  const speedup = fixtureById(a, SPATIAL_FIXTURE.speedup);
+  const runsCheck = fixtureById(a, SPATIAL_FIXTURE.runs);
+  const means = [fixtureById(a, SPATIAL_FIXTURE.cpuMean), fixtureById(a, SPATIAL_FIXTURE.gpuMean)].filter(
+    (f): f is FixtureCheckData => f !== null,
+  );
+  const others = otherFixtures(a);
   const outcome = prov.verification.outcome;
   const failedRuns = a.runs.controlled - a.runs.passedReference;
 
@@ -204,11 +190,11 @@ export function SpatialContent({ a }: { a: SpatialArtifact }) {
         <Panel
           eyebrow={GEOMETRY_LABEL}
           title="CPU vs GPU runtime"
-          subtitle={`Mean wall-clock time per controlled run${reported ? ', as stated in the PRD' : ''}.`}
-          status={kindPill}
+          subtitle={`Mean wall-clock time per controlled run${backed.timing.reported ? ', as stated in the PRD' : ''}.`}
+          status={<StatusPill status={backed.timing.status} />}
           density="compact"
         >
-          <div className="sp-timing" data-testid="timing" data-kind={prov.kind}>
+          <div className="sp-timing" data-testid="timing" data-kind={backed.timing.status}>
             <div className="sp-timing__row">
               <Stat label="CPU mean" value={t.cpuMeanS} unit="s" decimals={2} />
               <span className="sp-timing__bar" aria-hidden="true">
@@ -222,26 +208,27 @@ export function SpatialContent({ a }: { a: SpatialArtifact }) {
               </span>
             </div>
           </div>
-          {/* Own container: the fixture row reflows by the width of this side card, not the viewport. */}
-          <div className="sp-fixture">
-            {/* While the two means are PRD-reported, the ratio only redoes the arithmetic (DS-13). */}
-            <FixtureCheck fixture={speedupFixture(a)} unit="dimensionless" claimedLabel="PRD (×)" basis={reported ? 'arithmetic' : 'data'} />
+          {/* Own container: the fixture rows reflow by the width of this side card, not the viewport.
+              Basis, range and outcome are the artifact's: an arithmetic-only speedup reads as such. */}
+          <div className="sp-fixture" data-testid="timing-checks">
+            {speedup ? <Check f={speedup} /> : <p className="sp-small">The artifact carries no check of the speedup.</p>}
+            {means.map((f) => (
+              <Check key={f.id} f={f} />
+            ))}
           </div>
-          <p className="sp-small">
-            {reported
-              ? 'Only the ratio is recomputed. Both means are PRD-reported (dashed outlines): no timing logs are in this repo.'
-              : `The ratio is recomputed from the two means; the means are labelled ${kind.label} in the artifact (see the provenance record).`}
-          </p>
+          {backed.timing.reported && (
+            <p className="sp-small">Dashed outlines: PRD-reported means that this repo cannot recompute.</p>
+          )}
         </Panel>
 
         <Panel
           eyebrow={GEOMETRY_LABEL}
           title="Controlled runs"
-          subtitle={`Runs compared against the ${a.code} reference${reported ? ', as stated in the PRD' : ''}.`}
-          status={kindPill}
+          subtitle={`Runs compared against the ${a.code} reference${backed.runs.reported ? ', as stated in the PRD' : ''}.`}
+          status={<StatusPill status={backed.runs.status} />}
           density="compact"
         >
-          <div className="sp-tally" data-testid="tally" data-kind={prov.kind}>
+          <div className="sp-tally" data-testid="tally" data-kind={backed.runs.status}>
             <Stat
               label="Passed the reference"
               value={a.runs.passedReference}
@@ -261,6 +248,9 @@ export function SpatialContent({ a }: { a: SpatialArtifact }) {
                 {failedRuns} of {a.runs.controlled} runs did not pass the reference.
               </p>
             )}
+          </div>
+          <div className="sp-fixture" data-testid="runs-check">
+            {runsCheck ? <Check f={runsCheck} /> : <p className="sp-small">The artifact carries no check of the run tally.</p>}
           </div>
         </Panel>
 
@@ -298,6 +288,16 @@ export function SpatialContent({ a }: { a: SpatialArtifact }) {
             </Callout>
           )}
         </Panel>
+
+        {others.length > 0 && (
+          <Panel eyebrow={GEOMETRY_LABEL} title="Other PRD checks" density="compact">
+            <div className="sp-fixture" data-testid="other-checks">
+              {others.map((f) => (
+                <Check key={f.id} f={f} />
+              ))}
+            </div>
+          </Panel>
+        )}
       </div>
     </div>
   );

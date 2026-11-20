@@ -13,6 +13,7 @@ export const THEMES: readonly ThemeName[] = ['light', 'dark'];
 /** Every status the UI can show. Colour is never the only channel: each also has an icon and text. */
 export const STATUS_KINDS = [
   'live',
+  'billing-risk',
   'replay',
   'rehearsal',
   'archive',
@@ -41,7 +42,8 @@ export interface StatusColors {
   /**
    * Outline of the pill. A hairline for most kinds (the icon and text carry the meaning). For the
    * kinds drawn DASHED (prd-reported, unverified) the dash itself means "not backed by data in
-   * this repo", so those two are ≥ 3:1 against every surface and against their own tint.
+   * this repo", so those two are ≥ 3:1 against every surface and against their own tint. The one
+   * OUTLINED kind (billing-risk) draws it in its text colour, held to the same 3:1.
    */
   border: string;
 }
@@ -152,6 +154,7 @@ const light: ThemeTokens = {
   },
   status: {
     live: { fg: '#ffffff', bg: '#c4122f', border: '#c4122f' },
+    'billing-risk': { fg: '#9b1145', bg: '#fce9f0', border: '#9b1145' },
     replay: { fg: '#42565e', bg: '#eef2f4', border: '#c9d3d8' },
     rehearsal: { fg: '#3a4796', bg: '#eceefa', border: '#c3c9ec' },
     archive: { fg: '#2c5674', bg: '#e8f0f6', border: '#bcd0e0' },
@@ -228,6 +231,7 @@ const dark: ThemeTokens = {
   },
   status: {
     live: { fg: '#ffffff', bg: '#da2a48', border: '#da2a48' },
+    'billing-risk': { fg: '#ff8fb4', bg: '#36101f', border: '#ff8fb4' },
     replay: { fg: '#b4c2c8', bg: '#18252b', border: '#34464e' },
     rehearsal: { fg: '#aab4f2', bg: '#181d36', border: '#3a4584' },
     archive: { fg: '#97bfe2', bg: '#12212d', border: '#2e4d66' },

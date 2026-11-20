@@ -181,6 +181,32 @@ accepted verdicts that predated later fix rounds, and its "partial verification"
 **Consequences.** Any change to a task's owned files after its verified commit reopens the task until a verifier runs again: a passing task that a later fix round
 touches is no longer DONE-able (01, 03, 05 after wave 2). Every TASK.md needs backticked owned paths under `## Owner`. Verifiers follow the format in `.claude/agents/verifier.md`.
 
+## D-023 · Contract tightenings: ranges, check basis, spatial fixtures, blocked acceptance, float64 check, guard plan
+**Context.** `interface.md` §10 listed known contract gaps, and the wave-2 frontend engineers had to work around them with constants and
+prose parsing: budget range fixtures overloaded `claimed` with a midpoint the PRD never printed (a renderer could show it as a PRD figure);
+spatial had no `fixtures` array, so its pills and "4/4" tally were hard-coded; the geometry schema *permitted* `acceptance129: passed`;
+the float64 stella comparison existed only as prose (the UI regex-scraped it); the live guard's plan (D-015: $2.65 / $7.73 / $26.21) was
+duplicated as renderer constants; which fixtures are arithmetic-only re-checks of PRD-reported inputs was hard-coded at call sites; and
+`live-run.schema.json` had no top-level `additionalProperties: false`.
+**Decision.** One coordinated contract change (both sides and the artifacts in the same commit; `schemaVersion` stays `1` because no
+deployed consumer exists and the renderer and artifacts always ship together):
+1. `common.fixtureCheck` gains optional `claimedRange: [lo, hi]` (the `window` shape) and optional `basis: "data" | "arithmetic"`.
+   `claimed` becomes `number | null`; **when `claimedRange` is present `claimed` must be `null`** (schema `if/then`), and `matches` means
+   `lo ≤ computed ≤ hi`. `basis: "arithmetic"` marks a check that only re-does arithmetic on PRD-reported inputs (no data in the repo);
+   absent means `"data"`. The renderer renders the range when present and takes the basis from the artifact, never from a call-site list.
+2. `spatial` gains a required `fixtures` array (`common.fixtureCheck`): at least the 1.27× speedup (basis arithmetic) and the 4-of-4
+   controlled runs (`matches: null`: not recomputable here). Pills and tallies in the spatial view come from these and from `runs`.
+3. `geometry.validation.acceptance129.outcome` is `const "blocked"` until the 129 stella samples exist (D-007). Unblocking it is a
+   schema change with its own decision entry.
+4. `geometry.validation` gains a required `float64Reference` object: `samplesCompared`, `tolerance`, `maxAbsError`, `maxRelError`,
+   `allWithinTolerance`, `source` — the float64 `EXPECTED_OUTPUT…out.nc` comparison that the backend already performs.
+5. `budget` gains a required `guardPlan` object produced by the backend from the live budget guard (single source, D-015):
+   `slotEstimateUsd`, `rehearsalEstimateUsd`, `slotHardTimeoutS`, `rehearsalHardTimeoutS`, `plannedTotalUsd`, `assumptions` (string).
+   The renderer drops its D-015 constants and still compares against the live snapshot's estimate when a backend is reachable.
+6. `live-run.schema.json` gets top-level `additionalProperties: false`.
+**Consequences.** `interface.md` §10's list becomes empty except the known PRD-side mismatches. Every producer and consumer test changes
+with the contract (interface.md §9). The 129-sample acceptance can no longer be marked passed by an artifact alone.
+
 ## D-014 · (not adopted) "Wave mode" for the orchestrator's Stop hook
 **Context.** With parallel agents editing one working tree, the Stop hook (`verify.sh all` on the shared tree)
 repeatedly blocked the orchestrator on files it must not touch. A proposal to verify committed HEAD in a clean

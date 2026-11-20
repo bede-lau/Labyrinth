@@ -134,6 +134,49 @@ describe('DS-7 / DS-13: notes and the arithmetic basis', () => {
   });
 });
 
+describe('DL-1: the billing-risk pill and the Alert', () => {
+  test('the billing-risk pill takes its own three tokens and a solid outline (it is backed by the API: not dashed)', () => {
+    const rule = rulesFor(components, ".lab-pill[data-status='billing-risk']", null);
+    expect(rule).toHaveLength(1);
+    const d = (rule[0] as CssRule).decl;
+    expect([d['--pill-fg'], d['--pill-bg'], d['--pill-border']]).toEqual([
+      'var(--lab-status-billing-risk-fg)',
+      'var(--lab-status-billing-risk-bg)',
+      'var(--lab-status-billing-risk-border)',
+    ]);
+    expect(d['border-style']).toBeUndefined();
+    // The pill keeps its size: the outline is the same 1px as every pill, the weight carries the rest.
+    expect(d['font-weight']).toBe('var(--lab-font-weight-bold)');
+  });
+  test('the alert is drawn from the billing-risk tokens, outline in the text colour', () => {
+    expect(declared(components, '.lab-alert', 'background')).toBe('var(--lab-status-billing-risk-bg)');
+    expect(declared(components, '.lab-alert', 'border')).toBe('1px solid var(--lab-status-billing-risk-border)');
+    expect(declared(components, '.lab-alert__title', 'color')).toBe('var(--lab-status-billing-risk-fg)');
+    expect(declared(components, '.lab-alert__icon', 'color')).toBe('var(--lab-status-billing-risk-fg)');
+  });
+  test('the backend reason is shown as written: never re-cased, clamped or hidden, and long words wrap', () => {
+    const rules = components.filter((r) => r.selectors.some((s) => s.includes('.lab-alert')));
+    expect(rules.length).toBeGreaterThan(0);
+    for (const r of rules.filter((x) => x.selectors.some((s) => /\.lab-alert__reason/.test(s)))) {
+      expect(r.decl['text-transform'], r.selectors.join()).toBeUndefined();
+      expect(r.decl['-webkit-line-clamp']).toBeUndefined();
+      expect(r.decl.overflow).toBeUndefined();
+      expect(r.decl.display).not.toBe('none');
+    }
+    expect(declared(components, '.lab-alert__reason', 'white-space')).toBe('pre-wrap');
+    expect(declared(components, '.lab-alert__reason', 'overflow-wrap')).toBe('anywhere');
+    expect(declared(components, '.lab-alert__reason', 'max-width')).toBe('100ch');
+  });
+});
+
+describe('DL-5: a PRD range is one unbreakable token', () => {
+  // Seen at 390 px: "3100–3200 USD" broke after the dash ("3100–" / "3200 USD"). Only the unit may wrap.
+  test('.lab-fixture__range never wraps; the unit outside it still can', () => {
+    expect(declared(components, '.lab-fixture__range', 'white-space')).toBe('nowrap');
+    expect(declared(components, '.lab-fixture__v', 'white-space')).toBeUndefined();
+  });
+});
+
 describe('DS-17: long prose keeps a readable measure', () => {
   test.each(['.lab-callout__body', '.lab-fixture__note'])('%s is at most 100ch wide', (sel) => {
     expect(declared(components, sel, 'max-width')).toBe('100ch');

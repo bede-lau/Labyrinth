@@ -131,6 +131,18 @@ test('validateLiveStatus agrees with contracts/live-status.schema.json on valid 
   expect(corpus.length - rejected).toBeGreaterThan(20);
 });
 
+test('A2 a required nullable field that is undefined is missing, not null: the schema and the validator both reject it', () => {
+  const a = ajv();
+  const docs = [
+    { ...live, workers: [{ ...live.workers[0]!, simTime: undefined }, live.workers[1]!] },
+    { ...idle, fallback: { ...idle.fallback, savedRunId: undefined } },
+  ];
+  for (const doc of docs) {
+    expect(a.validate('live-status.schema.json', doc)).toBe(false);
+    expect(validateLiveStatus(doc)).toMatch(/simTime|savedRunId/);
+  }
+});
+
 test('validateLiveStatus names what is wrong, starting with the bodies that used to blank the page', () => {
   expect(validateLiveStatus({ schemaVersion: 1, mode: 'fallback' })).toBe('$: missing required property "reason"');
   expect(validateLiveStatus({ ...idle, fallback: undefined })).toMatch(/^\$\.fallback: expected an object/);
@@ -152,9 +164,9 @@ test('validateSavedRun agrees with contracts/live-run.schema.json (phases are fu
   const oracle = (doc: unknown) => a.validate('live-run.schema.json', doc) as boolean;
   expect(oracle(savedRun), JSON.stringify(a.errors)).toBe(true);
   expect(validateSavedRun(savedRun)).toBeNull();
-  // The schema leaves the top level open; the validator follows it.
-  expect(oracle({ ...savedRun, note: 'x' })).toBe(true);
-  expect(validateSavedRun({ ...savedRun, note: 'x' })).toBeNull();
+  // D-023 item 6: the top level is closed (additionalProperties: false); the validator follows it.
+  expect(oracle({ ...savedRun, note: 'x' })).toBe(false);
+  expect(validateSavedRun({ ...savedRun, note: 'x' })).toBe('$: unexpected property "note"');
 
   const corpus = corruptions({ ...savedRun, phases: [live] });
   const disagreements: string[] = [];

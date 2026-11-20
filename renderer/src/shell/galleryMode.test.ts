@@ -41,6 +41,13 @@ test('the gallery watcher reloads when the hash enters or leaves #gallery, and o
   gallery.stop();
 });
 
+test('F13 FA-5 per-file isolation holds under the pool: a global left by another test file is not visible here', () => {
+  // The partner probe is in build.test.ts (see there).
+  const g = globalThis as Record<string, unknown>;
+  expect(g.__labyrinthIsolationProbe).toBeUndefined();
+  g.__labyrinthIsolationProbe = 'galleryMode.test.ts';
+});
+
 test('nav scroll geometry: the active tab is centred, clamped to the ends, and hidden edges are named', () => {
   // 390 px window over 732 px of tabs, 122 px each.
   expect(centeredScrollLeft(390, 732, 0, 122)).toBe(0); // first tab: cannot scroll before the start

@@ -72,6 +72,9 @@
   --lab-status-live-fg: #ffffff;
   --lab-status-live-bg: #c4122f;
   --lab-status-live-border: #c4122f;
+  --lab-status-billing-risk-fg: #9b1145;
+  --lab-status-billing-risk-bg: #fce9f0;
+  --lab-status-billing-risk-border: #9b1145;
   --lab-status-replay-fg: #42565e;
   --lab-status-replay-bg: #eef2f4;
   --lab-status-replay-border: #c9d3d8;
@@ -171,6 +174,9 @@
     --lab-status-live-fg: #ffffff;
     --lab-status-live-bg: #da2a48;
     --lab-status-live-border: #da2a48;
+    --lab-status-billing-risk-fg: #ff8fb4;
+    --lab-status-billing-risk-bg: #36101f;
+    --lab-status-billing-risk-border: #ff8fb4;
     --lab-status-replay-fg: #b4c2c8;
     --lab-status-replay-bg: #18252b;
     --lab-status-replay-border: #34464e;
@@ -270,6 +276,9 @@
   --lab-status-live-fg: #ffffff;
   --lab-status-live-bg: #da2a48;
   --lab-status-live-border: #da2a48;
+  --lab-status-billing-risk-fg: #ff8fb4;
+  --lab-status-billing-risk-bg: #36101f;
+  --lab-status-billing-risk-border: #ff8fb4;
   --lab-status-replay-fg: #b4c2c8;
   --lab-status-replay-bg: #18252b;
   --lab-status-replay-border: #34464e;

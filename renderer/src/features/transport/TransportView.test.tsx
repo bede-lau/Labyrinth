@@ -378,6 +378,22 @@ test('T10 a fixture the artifact marks as not matching is shown as a mismatch, a
   expect(within(card).getByTestId('delta-stella')).toHaveTextContent('+2.79');
 });
 
+test('FB-3 what a fixture match is backed by comes from the fixture basis (D-023), data when absent', async () => {
+  // The committed transport fixtures are recomputed from the pinned archives: no basis, so data.
+  expect(ARTIFACT.fixtures.every((f) => f.basis === undefined)).toBe(true);
+  const a = clone();
+  a.fixtures.find((x) => x.id === 'gene-bean-300-400')!.basis = 'arithmetic';
+  a.fixtures.find((x) => x.id === 'stella-bean-1500-1900')!.basis = 'data';
+  serve(null, a);
+  render(<TransportView livePollMs={60_000} />);
+  const fixtures = await screen.findByRole('region', { name: /PRD fixtures: claimed vs recomputed/ });
+  const gene = within(fixtures).getByRole('group', { name: /^GENE archive mean, 300–400: Arithmetic consistent\. Claimed 2\.68/ });
+  expect(gene).toHaveAttribute('data-basis', 'arithmetic');
+  expect(within(gene).queryByText('Match')).toBeNull();
+  expect(within(fixtures).getByRole('group', { name: /^stella bean mean, 1500–1900: Match\./ })).toHaveAttribute('data-basis', 'data');
+  expect(within(fixtures).getAllByText('Match').length).toBe(3);
+});
+
 test('T10 the label on the 5.79 figure is the provenance kind in the artifact, and an artifact can never make it LIVE', async () => {
   const a = clone();
   a.reducedModalRun.provenance = { ...a.reducedModalRun.provenance, kind: 'live' };
@@ -441,8 +457,9 @@ test('T11 triangular card is separate from the bean plot: published mean 2.22, P
   expect(card).toHaveTextContent(/Source: PRD\.md · Accuracy fixtures/);
   expect(within(card).queryByRole('link')).toBeNull();
   expect(card.querySelector('a')).toBeNull();
-  // (The provenance popover of the design system still links its sources itself; that component is not this view's.)
-  expect([...document.querySelectorAll('a[href="PRD.md"]')].filter((el) => !el.closest('.lab-prov'))).toEqual([]);
+  // Nowhere on the page, the provenance popovers included (DL-2: the badge names a non-http source as text).
+  expect(document.querySelectorAll('a[href="PRD.md"]')).toHaveLength(0);
+  expect([...document.querySelectorAll('.lab-prov__source-text')].map((e) => e.textContent)).toContain('PRD.md · Accuracy fixtures');
 });
 
 test('T11 a triangular trace present in the artifact is still never drawn or badged on the bean plot', async () => {

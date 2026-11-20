@@ -5,10 +5,14 @@ repo, so verification is ``blocked``. The plane ownership (planes 1–3 on rank 
 and the exchange boundaries (3↔4 and the periodic 6↔1) are taken from the PRD and
 tasks/05-spatial/TASK.md; ``exchanges()`` only lists them in both directions from that ownership
 and checks nothing. The one recomputed number is the speedup ratio CPU mean / GPU mean.
+
+``fixtures`` (D-023) holds the PRD numbers this artifact reports: the speedup is ``basis: "arithmetic"`` (it only
+re-divides the PRD-reported means); the 4-of-4 controlled runs and the two means cannot be recomputed without the
+checkpoints and timing logs, so they are ``computed: null`` / ``matches: null`` with no basis.
 """
 from __future__ import annotations
 
-from labyrinth_main.common.provenance import provenance, source
+from labyrinth_main.common.provenance import fixture, provenance, source
 
 ARTIFACT_ID = "spatial"
 SCHEMA = "spatial.schema.json"
@@ -54,6 +58,22 @@ def speedup_recomputed() -> float:
     return PRD_CPU_MEAN_S / PRD_GPU_MEAN_S
 
 
+NOT_IN_REPO = "the saved GENE-X checkpoints and timing logs are not in this repo, so it cannot be recomputed here."
+
+
+def fixtures() -> list[dict]:
+    sp = speedup_recomputed()
+    return [
+        fixture("speedup", "GPU speedup over CPU (CPU mean / GPU mean)", PRD_SPEEDUP, sp, 2,
+                f"{PRD_CPU_MEAN_S} s / {PRD_GPU_MEAN_S} s = {sp:.5f}; only the division is redone, both means are "
+                "PRD-reported.", basis="arithmetic"),
+        fixture("controlled-runs-passed", f"Controlled runs that passed the reference ({PRD_PASSED_RUNS} of "
+                f"{PRD_CONTROLLED_RUNS})", PRD_PASSED_RUNS, None, 0, f"PRD-reported tally; {NOT_IN_REPO}"),
+        fixture("cpu-mean-s", "CPU mean wall-clock per run", PRD_CPU_MEAN_S, None, 2, f"PRD-reported; {NOT_IN_REPO}"),
+        fixture("gpu-mean-s", "GPU mean wall-clock per run", PRD_GPU_MEAN_S, None, 2, f"PRD-reported; {NOT_IN_REPO}"),
+    ]
+
+
 def build() -> dict:
     return {
         "schemaVersion": 1,
@@ -67,6 +87,7 @@ def build() -> dict:
         "timing": {"cpuMeanS": PRD_CPU_MEAN_S, "gpuMeanS": PRD_GPU_MEAN_S, "speedup": PRD_SPEEDUP,
                    "speedupRecomputed": speedup_recomputed()},
         "independenceNote": INDEPENDENCE_NOTE,
+        "fixtures": fixtures(),
         "provenance": provenance(
             "prd-reported",
             solver_revision="GENE-X revision unknown (not stated in PRD; checkpoints not in repo)",

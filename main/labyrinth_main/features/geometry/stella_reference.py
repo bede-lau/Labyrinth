@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from decimal import ROUND_CEILING, Decimal
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +23,7 @@ from .vmec import VmecEquilibrium
 STELLA_DEFAULTS = {"alpha0": 0.0, "zeta_center": 0.0}  # namelist_geometry.f90 defaults
 _NAMELIST = re.compile(r"^\s*&(\w+)\s*$(.*?)^\s*/\s*$", re.M | re.S)
 PRINTED_SIG_FIGS = 4
+FLOAT64_TOLERANCE = 1e-10  # absolute, on bmag = |B|/B_ref, vs stella's float64 out.nc
 _NUM = re.compile(r"^-?\d\.(\d+)E([+-]\d+)$")
 
 GEOMETRY_COLUMNS = ["alpha", "zed", "zeta", "bmag", "bdot_grad_z", "gds2", "gds21", "gds22", "gds23",
@@ -75,8 +77,21 @@ def trace_run(eq: VmecEquilibrium, params: dict):
     return surf, trace(surf, params["alpha0"], zeta)
 
 
+def ceil_sig(x: float, sig: int) -> float:
+    """``x >= 0`` rounded UP to ``sig`` significant figures (a conservative bound for an error to publish)."""
+    if x < 0 or not np.isfinite(x):
+        raise ValueError(f"expected a finite non-negative error, got {x}")
+    if x == 0:
+        return 0.0
+    d = Decimal(repr(float(x)))
+    return float(d.quantize(Decimal(1).scaleb(d.adjusted() - sig + 1), rounding=ROUND_CEILING))
+
+
 def compare_out_nc(eq: VmecEquilibrium, input_path: Path, out_nc_path: Path) -> dict:
-    """Max |bmag error| against stella's float64 ``bmag(zed, alpha)`` from the same run's out.nc."""
+    """Max |bmag error| against stella's float64 ``bmag(zed, alpha)`` from the same run's out.nc.
+
+    ``allWithinTolerance``: every sample's bmag within FLOAT64_TOLERANCE (absolute, bmag = |B|/B_ref) on a zed
+    grid that agrees with stella's to the same tolerance."""
     import netCDF4
 
     params = run_parameters(input_path)
@@ -86,8 +101,12 @@ def compare_out_nc(eq: VmecEquilibrium, input_path: Path, out_nc_path: Path) -> 
         bmag_ref = np.array(d.variables["bmag"][...], dtype=float)[:, 0]
     zed_ours = fl.zeta * eq.nfp / params["nfield_periods"]  # stella: zed = zeta*nfp/nfield_periods
     bmag = fl.B / eq.b_ref
-    return {"samplesCompared": len(zed), "maxAbsErrorBmag": float(np.max(np.abs(bmag - bmag_ref))),
-            "maxAbsErrorZed": float(np.max(np.abs(zed_ours - zed)))}
+    err = np.abs(bmag - bmag_ref)
+    err_zed = float(np.max(np.abs(zed_ours - zed)))
+    return {"samplesCompared": len(zed), "tolerance": FLOAT64_TOLERANCE,
+            "maxAbsErrorBmag": float(np.max(err)), "maxRelErrorBmag": float(np.max(err / np.abs(bmag_ref))),
+            "maxAbsErrorZed": err_zed,
+            "allWithinTolerance": bool(np.all(err <= FLOAT64_TOLERANCE) and err_zed <= FLOAT64_TOLERANCE)}
 
 
 def read_geometry_file(path: Path) -> dict:

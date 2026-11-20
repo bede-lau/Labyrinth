@@ -1,6 +1,7 @@
-// Budget (task 04, B6–B7): PRD ledger to the $40 ceiling, the live guard's own estimate when the
-// API answers (distinct from the PRD's GPU-only figures), and scenario cards with headline,
-// derivation and interpretation. Range fixtures show the PRD range, never a midpoint.
+// Budget (task 04, B6–B7): PRD ledger to the $40 ceiling, the guard's own plan from the artifact and
+// its live estimate when the API answers (both distinct from the PRD's GPU-only figures), and scenario
+// cards with headline, derivation and interpretation. Every fixture row, PRD ranges included, is the
+// design system's FixtureCheck fed straight from the artifact (D-023): never a midpoint.
 import {
   Callout,
   FixtureCheck,
@@ -14,17 +15,15 @@ import {
 import { useArtifact } from '../../lib/artifacts';
 import { useLiveStatus } from '../../lib/liveStatus';
 import {
-  GUARD_PLAN_D015,
+  checkBudget,
+  claimUsd,
   claimedLabelFor,
-  fixtureBasis,
   fixtureUnit,
   fixturesFor,
   guardPlanStale,
   guardView,
-  isRangeFixture,
   ledgerSegments,
   planChecks,
-  rangeFixture,
   unassignedFixtures,
   usd,
   type BudgetArtifact,
@@ -33,6 +32,9 @@ import {
   type PlanCheck,
 } from './model';
 import './budget.css';
+
+/** Where the guard's planned figures come from when the live guard does not supply them. */
+export const GUARD_PLAN_SOURCE = 'guard plan · budget.json';
 
 export interface BudgetViewProps {
   livePollMs?: number;
@@ -48,11 +50,13 @@ export function BudgetView({ livePollMs = 5000 }: BudgetViewProps = {}) {
       </Panel>
     );
   }
-  if (state.status === 'error') {
+  const problem = state.status === 'ready' ? checkBudget(state.data) : null;
+  if (state.status === 'error' || problem) {
+    const file = state.status === 'error' ? state.file : 'artifacts/budget.json';
     return (
       <Panel eyebrow="Budget" title="Budget figures could not be loaded">
-        <Callout tone="warn" title={`${state.file} failed to load`}>
-          {state.message}
+        <Callout tone="warn" title={`${file} failed to load`}>
+          {state.status === 'error' ? state.message : `${file}: ${problem}`}
         </Callout>
       </Panel>
     );
@@ -71,7 +75,7 @@ export function BudgetView({ livePollMs = 5000 }: BudgetViewProps = {}) {
         <Panel eyebrow="Budget" title="Other fixtures" headingLevel={3}>
           <div className="bg-fixtures">
             {unassignedFixtures(state.data).map((f) => (
-              <FixtureRow key={f.id} f={f} a={state.data} />
+              <FixtureRow key={f.id} f={f} />
             ))}
           </div>
         </Panel>
@@ -160,7 +164,7 @@ function PlansVsCeiling({ plans, ceilingUsd }: { plans: PlanCheck[]; ceilingUsd:
   const title =
     over.length === plans.length
       ? `${plans.length === 2 ? 'Both plans exceed' : 'Every plan exceeds'} the ${ceiling} ceiling`
-      : `The ${over.map((p) => p.label).join(' and the ')} exceeds the ${ceiling} ceiling`;
+      : `Over the ${ceiling} ceiling: ${over.map((p) => p.label).join(' and ')}`;
   return (
     <Callout tone="warn" title={title}>
       <span data-testid="plan-vs-ceiling" className="lab-num">
@@ -172,8 +176,8 @@ function PlansVsCeiling({ plans, ceilingUsd }: { plans: PlanCheck[]; ceilingUsd:
 }
 
 function GuardPanel({ a, guard, unreachable }: { a: BudgetArtifact; guard: GuardView | null; unreachable: string | null }) {
-  const g = GUARD_PLAN_D015;
-  const stale = guardPlanStale(guard);
+  const g = a.guardPlan;
+  const stale = guardPlanStale(guard, g);
   const staleNote = stale && <SourceTag stale>may be out of date</SourceTag>;
   return (
     <Panel
@@ -219,18 +223,18 @@ function GuardPanel({ a, guard, unreachable }: { a: BudgetArtifact; guard: Guard
         <div role="rowgroup">
           <div role="row" className="bg-compare__row">
             <span role="rowheader">15-min live slot</span>
-            <span role="cell" className="lab-num">{fixtureValue(a, 'live-slot-usd')}</span>
+            <span role="cell" className="lab-num" data-testid="prd-slot">{claimUsd(a.fixtures.find((x) => x.id === 'live-slot-usd'))}</span>
             <span role="cell" className="lab-num" data-testid="guard-slot">
-              {guard ? usd(guard.slotEstimateUsd) : usd(g.slotUsd)}
-              <SourceTag>{guard ? 'from /api/live/status' : g.source}</SourceTag>
+              {guard ? usd(guard.slotEstimateUsd) : usd(g.slotEstimateUsd)}
+              <SourceTag>{guard ? 'from /api/live/status' : GUARD_PLAN_SOURCE}</SourceTag>
             </span>
           </div>
           <div role="row" className="bg-compare__row">
             <span role="rowheader">One-hour rehearsal</span>
             <span role="cell" className="lab-num">{rehearsalGpuOnly(a)}</span>
             <span role="cell" className="lab-num" data-testid="guard-rehearsal">
-              {usd(g.rehearsalUsd)}
-              <SourceTag>{g.source}</SourceTag>
+              {usd(g.rehearsalEstimateUsd)}
+              <SourceTag>{GUARD_PLAN_SOURCE}</SourceTag>
               {staleNote}
             </span>
           </div>
@@ -238,25 +242,28 @@ function GuardPanel({ a, guard, unreachable }: { a: BudgetArtifact; guard: Guard
             <span role="rowheader">Planned total incl. {usd(a.postedUsd)} posted</span>
             <span role="cell" className="lab-num">{usd(a.plannedUsd)}</span>
             <span role="cell" className="lab-num" data-testid="guard-planned">
-              {usd(g.plannedUsd)}
-              <SourceTag>{g.source}</SourceTag>
+              {usd(g.plannedTotalUsd)}
+              <SourceTag>{GUARD_PLAN_SOURCE}</SourceTag>
               {staleNote}
             </span>
           </div>
         </div>
       </div>
       {stale && guard && (
-        <Callout tone="info" title="The live guard estimate differs from the D-015 planning figures">
-          The guard now estimates the next slot at <span className="lab-num">{usd(guard.slotEstimateUsd)}</span>; D-015
-          planned with <span className="lab-num">{usd(g.slotUsd)}</span>. The rehearsal price and the planned total
-          above are still the D-015 figures (no API field carries them), so they may be out of date.
+        <Callout tone="info" title="The live guard estimate differs from the guard plan in the artifact">
+          The guard now estimates the next slot at <span className="lab-num">{usd(guard.slotEstimateUsd)}</span>; the
+          plan in artifacts/budget.json was priced with <span className="lab-num">{usd(g.slotEstimateUsd)}</span>. The
+          rehearsal price and the planned total above are the plan's figures (no API field carries them), so they may
+          be out of date.
         </Callout>
       )}
-      <p className="bg-note">
-        Setup (5 min per launch), idle margin and the storage/egress allowance are planning assumptions recorded in
-        D-015, not PRD numbers; they are replaced by measured values after the first rehearsal.
+      <p className="bg-note" data-testid="guard-assumptions">
+        {g.assumptions}{' '}
+        <span className="lab-num">
+          Hard timeouts in the plan: live slot {g.slotHardTimeoutS} s, rehearsal {g.rehearsalHardTimeoutS} s.
+        </span>
       </p>
-      <PlansVsCeiling plans={planChecks(a, g.plannedUsd)} ceilingUsd={a.ceilingUsd} />
+      <PlansVsCeiling plans={planChecks(a)} ceilingUsd={a.ceilingUsd} />
     </Panel>
   );
 }
@@ -267,11 +274,6 @@ function rehearsalGpuOnly(a: BudgetArtifact): string {
   const rate = Number(inputs?.rateUsdPerH);
   const hours = Number(inputs?.rehearsalH);
   return Number.isFinite(rate) && Number.isFinite(hours) ? usd(rate * hours) : '—';
-}
-
-function fixtureValue(a: BudgetArtifact, id: string): string {
-  const f = a.fixtures.find((x) => x.id === id);
-  return f ? usd(f.claimed) : '—';
 }
 
 function ScenarioCard({ s, a }: { s: BudgetScenario; a: BudgetArtifact }) {
@@ -312,7 +314,7 @@ function ScenarioCard({ s, a }: { s: BudgetScenario; a: BudgetArtifact }) {
         {fixtures.length > 0 && (
           <div className="bg-fixtures">
             {fixtures.map((f) => (
-              <FixtureRow key={f.id} f={f} a={a} />
+              <FixtureRow key={f.id} f={f} />
             ))}
           </div>
         )}
@@ -321,48 +323,10 @@ function ScenarioCard({ s, a }: { s: BudgetScenario; a: BudgetArtifact }) {
   );
 }
 
-function FixtureRow({ f, a }: { f: FixtureCheckData; a: BudgetArtifact }) {
-  // The PRD prints only a range for these: `claimed` is a midpoint the PRD never stated, so the generic
-  // claimed-vs-computed row is never used for them, even when the range text itself is missing.
-  if (!isRangeFixture(f)) {
-    return <FixtureCheck fixture={f} unit={fixtureUnit(f)} claimedLabel={claimedLabelFor(f)} basis={fixtureBasis(a, f)} />;
-  }
-  const r = rangeFixture(f);
-  const outcome = !r.rangeAvailable || r.inside === null ? 'unknown' : r.inside ? 'inside' : 'outside';
-  const text = !r.rangeAvailable
-    ? 'PRD range unavailable'
-    : outcome === 'inside'
-      ? 'Inside PRD range'
-      : outcome === 'outside'
-        ? 'Outside PRD range'
-        : 'Not recomputable';
-  const computed = `${r.computedText} ${r.unit}`.trim();
-  const spoken = r.rangeAvailable
-    ? `${r.label}: ${text}. PRD range ${r.loText} to ${r.hiText} ${r.unit}, computed ${computed}${r.inconsistent ? '. The match flag disagrees with the range test.' : ''}`
-    : `${r.label}: ${text}. The artifact does not carry the PRD range, so no comparison is made. Computed ${computed}`;
-  return (
-    <div className="bg-range" role="group" aria-label={spoken} data-outcome={outcome} data-testid={`range-${r.id}`}>
-      <div className="bg-range__label">
-        <span className="bg-range__name">{r.label}</span>
-        <span className="bg-range__note">
-          {r.rangeAvailable
-            ? 'The PRD prints only a range; compared by range, not by rounding.'
-            : 'The PRD prints only a range, and it is unavailable in the artifact: no comparison is made.'}
-        </span>
-        {r.inconsistent && <span className="bg-range__note bg-range__note--warn">Match flag disagrees with the range test — treated as outside.</span>}
-      </div>
-      <div className="bg-range__cell">
-        <span className="bg-range__k">PRD range</span>
-        <span className="bg-range__v lab-num">{r.rangeAvailable ? `${r.loText}–${r.hiText} ${r.unit}` : 'unavailable'}</span>
-      </div>
-      <div className="bg-range__cell">
-        <span className="bg-range__k">Computed</span>
-        <span className="bg-range__v lab-num">{computed}</span>
-      </div>
-      <div className="bg-range__outcome">
-        <Icon name={outcome === 'inside' ? 'check' : outcome === 'outside' ? 'cross' : 'dash'} size={12} />
-        {text}
-      </div>
-    </div>
-  );
+/**
+ * One PRD figure against its recomputed value, straight from the artifact: FixtureCheck reads a PRD
+ * range from `claimedRange` (never a midpoint) and what a match is backed by from `basis` (D-023).
+ */
+function FixtureRow({ f }: { f: FixtureCheckData }) {
+  return <FixtureCheck fixture={f} unit={fixtureUnit(f)} claimedLabel={claimedLabelFor(f)} />;
 }

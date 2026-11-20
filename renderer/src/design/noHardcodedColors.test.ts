@@ -16,7 +16,7 @@ import {
   plotLayout,
   seriesStyle,
   uncertaintyBand,
-  unsampledShape,
+  unsampledShapes,
   windowShape,
 } from './plotTheme';
 import { sceneTheme } from './sceneTheme';
@@ -265,7 +265,7 @@ describe.each(THEMES)('emitted theme colours are tokens — %s', (theme) => {
     ...SERIES_IDS.map((s) => seriesStyle(s, theme)),
     ...SERIES_IDS.map((s) => uncertaintyBand([0, 1], [1, 2], 0.1, s, theme)),
     windowShape([300, 400], theme, '300–400'),
-    unsampledShape([0, 100], theme),
+    ...unsampledShapes([0, 100], theme),
     meanSegment([1200, 1500], 2.22, 'triangular', theme),
     sceneTheme(theme),
   ];

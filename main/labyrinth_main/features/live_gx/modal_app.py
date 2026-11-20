@@ -86,7 +86,11 @@ try:
     _function_params = inspect.signature(app.function).parameters
 except (TypeError, ValueError):
     _function_params = {}
-if modal.is_local() and "startup_timeout" not in _function_params:
+# Accepted means a parameter that a KEYWORD argument binds to: a positional-only parameter of that name (next to
+# **kwargs) would let `startup_timeout=` vanish into the catch-all, exactly like a signature without it.
+_startup_param = _function_params.get("startup_timeout")
+if modal.is_local() and (_startup_param is None or _startup_param.kind not in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                                                                              inspect.Parameter.KEYWORD_ONLY)):
     raise RuntimeError("this modal version's App.function does not (visibly) accept startup_timeout; refusing to "
                        "deploy without the priced startup bound. Pin a modal version that supports it.")
 

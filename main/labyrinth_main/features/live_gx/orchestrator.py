@@ -21,9 +21,18 @@ settled as confirmed. A worker is "launched" whenever `backend.launch` returned 
 starts with TERMINATE FAILED or TERMINATION PENDING, the mode never becomes `terminated`, the reason makes no
 "terminated" claim, and every later terminate round calls the backend again.
 
+What the reason says about termination is derived from the worker records at the moment it is read, never
+written ahead of the cancel: a fallback reads TERMINATION PENDING ("terminating workers, no cancel confirmed
+yet") from the instant its mode is set until every launched worker's cancel returned — the marker and the
+mode change under the same lock, so no snapshot shows a fallback without it while a launched worker is open —
+and only then "Other worker terminated." / "workers terminated." A worker that was never launched is never
+called terminated: such a reason says "nothing was launched" or names the GPU that "never launched".
+
 One terminate round per stop. A fallback (worker failure, hard timeout) terminates right where the failure is
 seen and nothing is launched after it, so `run()` does not repeat that round on its way out: the time a session
-needs to end after a stop request is the step in flight plus ONE round (service.WORST_CASE_STOP_S).
+needs to end after a stop request is the step in flight plus ONE round (service.WORST_CASE_STOP_S). Within a
+round every worker gets its first cancel before any worker is retried, so a cancel that keeps failing for one
+GPU never delays the first cancel of the other.
 
 It never imports `modal` and makes no network calls itself.
 """
@@ -46,6 +55,8 @@ UNITS = ("archive units: t in a/v_th,i (GX raw t x sqrt(2)), Q in Q_gB,i (GX raw
 NO_REHEARSAL_LABEL = "No qualified GX rehearsal recorded — showing archived stella/GENE evidence"
 TERMINATE_FAILED = "TERMINATE FAILED — check Modal dashboard; GPUs may still be billing"
 TERMINATE_PENDING = "TERMINATION PENDING — cancel queued, not yet confirmed; GPUs may still be billing"
+# A fallback whose terminate round has not returned a verdict yet (the cancels are being sent).
+TERMINATING = "TERMINATION PENDING — terminating workers, no cancel confirmed yet; GPUs may still be billing"
 # A stop whose only action was raising the run-level kill switch (there is no call to cancel). Never "terminated".
 KILL_SWITCH_ONLY = "kill switch raised, stop not confirmed"
 STOPPING = "Stop requested; terminating workers — not confirmed yet"
@@ -94,6 +105,10 @@ class Checkpoint:
 
 
 class WorkerBackend(Protocol):
+    """Optionally also `request_stop()`: a plain flag store (it may run inside a signal handler) that the
+    orchestrator forwards its own stop request to, so that a launch in progress can refuse to send its spawn;
+    such a launch raises a plain exception (nothing was sent)."""
+
     def launch(self, tube: str, gpu_index: int, checkpoint: Checkpoint | None) -> Any:
         """-> handle. Raise `LaunchInFlight(handle)` whenever a worker MAY exist although the launch did not
         complete normally; any other exception states that nothing was sent (nothing to terminate)."""
@@ -152,6 +167,10 @@ class WorkerRecord:
 
 def _iso(epoch: float | None) -> str | None:
     return None if epoch is None else datetime.fromtimestamp(epoch, UTC).isoformat(timespec="milliseconds")
+
+
+def _names(records: list[WorkerRecord]) -> str:
+    return ", ".join(f"GPU {r.gpu_index} ({r.tube})" for r in records)
 
 
 def _number(x: Any) -> float | None:
@@ -262,7 +281,8 @@ class Orchestrator:
         self.workers = [WorkerRecord(g, t, resume_from=checkpoints.get(t)) for g, t in TUBES]
         self.mode = "idle"
         self._reason = "Ready: nothing is launched until an explicit, budget-approved launch."
-        self._terminated_tail = ""  # the "... terminated" claim of a fallback reason: shown only while it is true
+        self._fallback_cause: str | None = None  # "worker" | "timeout" once in fallback: words the termination clause
+        self._fallback_what = ""                 # "Worker failed" | "Hard timeout reached" (the label's first words)
         self._terminate_failure: str | None = None
         self.fallback_label = ""
         self.started_at: float | None = None
@@ -277,18 +297,46 @@ class Orchestrator:
         """Launched workers whose termination is not confirmed (call with the lock held)."""
         return [r for r in self.workers if r.launched and not r.terminated]
 
+    def _stopped(self) -> str:
+        """What a confirmed termination stopped, worded from the records (lock held, nothing launched still open):
+        "terminated" only for launched workers — their cancel succeeded — and never for one that was not launched."""
+        launched = [r for r in self.workers if r.launched]
+        if not launched:
+            return "nothing was launched"
+        if len(launched) == len(self.workers):
+            return "workers terminated"
+        return f"{_names(launched)} terminated; {_names([r for r in self.workers if not r.launched])} never launched"
+
+    def _fallback_clause(self) -> str:
+        """The end of a fallback reason once every launched worker's termination is confirmed (lock held)."""
+        if self._fallback_cause == "timeout":
+            return f"; {self._stopped()}."
+        if all(r.launched for r in self.workers):
+            return ". Other worker terminated."
+        stopped = self._stopped()
+        return f". {stopped[0].upper()}{stopped[1:]}."
+
     @property
     def reason(self) -> str:
         with self._lock:
             open_ = self._open()
-            # a fallback reason claims "... terminated" only while every launched worker's termination is confirmed
-            base = self._reason + (self._terminated_tail if not open_ else "." if self._terminated_tail else "")
+            base = self._reason
+            if self.mode == "fallback":  # the termination clause is read off the records now, never written ahead
+                base += "." if open_ else self._fallback_clause()
             if self._terminate_failure:
                 pending_only = all(r.terminate_pending for r in open_ if r.terminate_error)
                 return f"{TERMINATE_PENDING if pending_only else TERMINATE_FAILED}: {self._terminate_failure}. {base}"
+            if open_ and self.mode == "fallback":  # the fallback's terminate round has not returned a verdict yet
+                return f"{TERMINATING}: {_names(open_)}. {base}"
             if self._stop_requested and open_ and self.mode in ("launching", "live"):
                 return f"{STOPPING}. {base}"
             return base
+
+    @property
+    def launched_any(self) -> bool:
+        """Whether any worker of this session was launched (a spawn was sent, or may have been)."""
+        with self._lock:
+            return any(r.launched for r in self.workers)
 
     @property
     def termination_confirmed(self) -> bool:
@@ -312,6 +360,9 @@ class Orchestrator:
         for rec in self.workers:
             if self.mode == "fallback" or self._stop_requested:
                 break
+            if rec is not self.workers[0] and self._timed_out():  # a slow first spawn can use up the whole allocation
+                self._fallback(self._timeout_reason(), cause="timeout")
+                break
             try:
                 handle = self.backend.launch(rec.tube, rec.gpu_index, rec.resume_from)
             except LaunchInFlight as e:  # the worker may exist: it must be terminated before anything is "confirmed"
@@ -320,6 +371,8 @@ class Orchestrator:
                 self._fail(rec, e.status)
                 break
             except Exception as e:  # noqa: BLE001 - any other launch failure: the backend sent nothing (see WorkerBackend)
+                if self._stop_requested:  # e.g. the backend saw the stop and did not send the spawn: a stop, not a failure
+                    break
                 self._fail(rec, f"launch failed: {type(e).__name__}: {e}")
                 break
             with self._lock:
@@ -353,29 +406,39 @@ class Orchestrator:
 
     def request_stop(self) -> None:
         """Cooperative stop: no further spawn, and run() ends (terminating every launched worker) at its next
-        check. Only stores a flag — no lock — so it is safe to call from a signal handler (`rehearse` does)."""
+        check. Only stores flags — no lock — so it is safe to call from a signal handler (`rehearse` does). The
+        backend's own `request_stop()`, if it has one, is told too (a launch in progress then sends no spawn)."""
         self._stop_requested = True
+        backend_stop = getattr(self.backend, "request_stop", None)
+        if callable(backend_stop):
+            backend_stop()
+
+    def _timed_out(self) -> bool:
+        return self.monotonic() - self._t0 >= self.hard_timeout_s
+
+    def _timeout_reason(self) -> str:
+        return f"Hard timeout reached: {self.hard_timeout_s:g} s elapsed before both workers finished"
 
     def run(self, poll_interval_s: float = 2.0, on_snapshot: Callable[[], None] | None = None) -> None:
-        """Launch, poll until both workers are done / one fails / stop / hard timeout; always terminate."""
-        end: tuple[str, str] | None = None
+        """Launch, poll until both workers are done / one fails / stop / hard timeout; always terminate.
+        The ending reason is worded once the terminations are confirmed (`_stopped()`), never before."""
+        end: str | None = None  # "stop" | "done"; None = the loop was left by an exception
         try:
             self.launch()
             if on_snapshot:
                 on_snapshot()
             while self.mode in ("launching", "live"):
                 if self._stop_requested:
-                    end = ("terminated", "Stopped on request; workers terminated.")
+                    end = "stop"
                     break
-                if self.monotonic() - self._t0 >= self.hard_timeout_s:
-                    self._fallback(f"Hard timeout reached: {self.hard_timeout_s:g} s elapsed before both workers finished",
-                                   "; workers terminated.", cause="timeout")
+                if self._timed_out():
+                    self._fallback(self._timeout_reason(), cause="timeout")
                     break
                 self.poll_once()
                 if on_snapshot:
                     on_snapshot()
                 if self.mode == "live" and all(r.state == "done" for r in self.workers):
-                    end = ("terminated", "Both workers finished; output retrieved and workers terminated.")
+                    end = "done"
                     break
                 if self.mode in ("launching", "live"):
                     self.sleep(poll_interval_s)
@@ -383,9 +446,16 @@ class Orchestrator:
             # ONE round per stop: workers that a fallback already tried to terminate are not tried again here
             # (the caller's next terminate retries them); every other launched worker gets its round now.
             if self.terminate_all(retry=False) and self.mode in ("launching", "live"):
-                self._end(*(end or ("terminated", "Session ended abnormally; workers terminated.")))
+                self._end("terminated", self._ending(end))
             if on_snapshot:
                 on_snapshot()
+
+    def _ending(self, end: str | None) -> str:
+        """The reason of a session that ended with every termination confirmed (worded from the records)."""
+        with self._lock:
+            if end == "done":  # both workers ran to completion, so both were launched, and both cancels succeeded
+                return "Both workers finished; output retrieved and workers terminated."
+            return f"{'Stopped on request' if end == 'stop' else 'Session ended abnormally'}; {self._stopped()}."
 
     def stop_and_terminate(self) -> bool:
         """Operator stop: one terminate round for everything unconfirmed; True only if every termination is
@@ -400,54 +470,66 @@ class Orchestrator:
         with self._lock:
             ok = not self._open()
             if ok and self.mode in ("launching", "live"):
-                self._end("terminated", "Stopped on request; workers terminated.")
+                self._end("terminated", self._ending("stop"))
             return ok
 
     def terminate_all(self, *, retry: bool = True) -> bool:
         """One terminate round: call backend.terminate for every launched worker whose termination is not
         confirmed (also one whose cancel is queued: the backend raises the kill switch again), retrying a
-        failed attempt with backoff. `retry=False` skips the workers an earlier round already tried.
-        Returns True when every launched worker's termination is confirmed."""
+        failed attempt with backoff. Every worker gets its first attempt before any worker is retried, and each
+        retry pass waits one backoff step for all the workers still failing. `retry=False` skips the workers an
+        earlier round already tried. Returns True when every launched worker's termination is confirmed."""
         with self._term_lock:
-            called = False
-            for rec in self.workers:
-                with self._lock:
-                    if not rec.launched or rec.terminated or (rec.terminate_attempted and not retry):
-                        continue
-                    was_pending = rec.terminate_pending
-                called, attempts = True, 1 + len(self.terminate_backoff_s)
-                last_err, pending, final = None, None, False
-                for delay in (0.0, *self.terminate_backoff_s):
-                    if delay:
-                        self.retry_sleep(delay)
-                    try:
-                        self.backend.terminate(rec.handle)
-                        last_err = None
-                        break
-                    except TerminationPending as e:
-                        pending = e
-                        break
-                    except TerminationUnconfirmed as e:  # nothing more can be done now: do not hammer the backend
-                        last_err, final = str(e) or "stop not confirmed", True
-                        break
-                    except Exception as e:  # noqa: BLE001
-                        last_err = f"{type(e).__name__}: {e}"
-                with self._lock:
-                    rec.terminate_attempted = True
-                if pending is not None:
-                    with self._lock:
-                        # a worker that was already pending keeps its first subscription: if that one settled while
-                        # the backend was being called, its verdict stands
-                        if not was_pending or rec.terminate_pending:
-                            rec.terminate_pending, rec.terminate_error = True, f"termination pending: {pending}"
-                    if not was_pending:
-                        pending.subscribe(lambda ok, err, rec=rec: self._settled(rec, ok, err))
-                    continue
-                self._settled(rec, last_err is None,
-                              last_err if final or last_err is None else f"terminate unconfirmed after {attempts} attempts: {last_err}")
-            if called:
+            with self._lock:
+                todo = [(r, r.terminate_pending) for r in self.workers
+                        if r.launched and not r.terminated and not (r.terminate_attempted and not retry)]
+            attempts, errors = 1 + len(self.terminate_backoff_s), {}
+            if todo:
                 self.terminate_rounds += 1
+            for delay in (0.0, *self.terminate_backoff_s):
+                if not todo:
+                    break
+                if delay:
+                    self.retry_sleep(delay)
+                failing = []
+                for rec, was_pending in todo:
+                    error = self._attempt(rec, was_pending)
+                    if error is not None:
+                        errors[rec.gpu_index] = error
+                        failing.append((rec, was_pending))
+                todo = failing
+            for rec, _ in todo:  # every attempt of this round failed
+                self._settled(rec, False, f"terminate unconfirmed after {attempts} attempts: {errors[rec.gpu_index]}")
             return self._refresh_confirmation()
+
+    def _attempt(self, rec: WorkerRecord, was_pending: bool) -> str | None:
+        """One backend.terminate call for `rec`. Settles (or, for a queued cancel, subscribes) the worker and
+        returns None — except for an attempt that failed in a way worth retrying: -> its error text."""
+        try:
+            self.backend.terminate(rec.handle)
+        except TerminationPending as pending:
+            with self._lock:
+                rec.terminate_attempted = True
+                # a worker that was already pending keeps its first subscription: if that one settled while the
+                # backend was being called, its verdict stands
+                if not was_pending or rec.terminate_pending:
+                    rec.terminate_pending, rec.terminate_error = True, f"termination pending: {pending}"
+            if not was_pending:
+                pending.subscribe(lambda ok, err, rec=rec: self._settled(rec, ok, err))
+            return None
+        except TerminationUnconfirmed as e:  # nothing more can be done now: do not hammer the backend
+            with self._lock:
+                rec.terminate_attempted = True
+            self._settled(rec, False, str(e) or "stop not confirmed")
+            return None
+        except Exception as e:  # noqa: BLE001 - retried with backoff
+            with self._lock:
+                rec.terminate_attempted = True
+            return f"{type(e).__name__}: {e}"
+        with self._lock:
+            rec.terminate_attempted = True
+        self._settled(rec, True, None)
+        return None
 
     def wait_terminated(self, timeout_s: float) -> bool:
         """Block while a queued cancel is pending, at most `timeout_s`, and return whether every launched
@@ -486,29 +568,33 @@ class Orchestrator:
         with self._lock:
             if self.mode == "fallback":
                 return
-            self.mode, self._reason, self._terminated_tail = mode, reason, ""
+            self.mode, self._reason = mode, reason
             self.ended_at = self.clock()
             self._t_end = self.monotonic()
 
-    def _fallback(self, reason: str, terminated_tail: str, cause: str = "worker") -> None:
-        """Switch to the labelled fallback (first cause wins) and terminate every worker right here.
-        `terminated_tail` completes the reason with its "... terminated" claim, shown only while it is true."""
+    def _fallback(self, reason: str, cause: str = "worker") -> None:
+        """Switch to the labelled fallback (first cause wins) and terminate every worker right here. `reason`
+        names the cause only: what was terminated is added by `reason` (the property) once it is true, and
+        until then the same snapshot carries the TERMINATION PENDING marker (set with the mode, under the lock)."""
         with self._lock:
             if self.mode != "fallback":
-                self.mode, self._reason, self._terminated_tail = "fallback", reason, terminated_tail
-                what = "Hard timeout reached" if cause == "timeout" else "Worker failed"
-                self.fallback_label = (f"{what} — playing saved GX run {self.saved_run_id}" if self.saved_run_id
-                                       else f"{what}. {NO_REHEARSAL_LABEL}")
+                self.mode, self._reason, self._fallback_cause = "fallback", reason, cause
+                self._fallback_what = "Hard timeout reached" if cause == "timeout" else "Worker failed"
+                self.fallback_label = self._label(self.saved_run_id)
                 self.ended_at = self.clock()
                 self._t_end = self.monotonic()
         self.terminate_all()
+
+    def _label(self, saved_run_id: str | None) -> str:
+        what = self._fallback_what
+        return f"{what} — playing saved GX run {saved_run_id}" if saved_run_id else f"{what}. {NO_REHEARSAL_LABEL}"
 
     def _fail(self, rec: WorkerRecord, error: str) -> None:
         with self._lock:
             rec.state, rec.error = "failed", error
             if rec.wall_start is not None and rec.wall_end is None:
                 rec.wall_end = self.clock()
-        self._fallback(f"GPU {rec.gpu_index} ({rec.tube}) worker failed: {error}", ". Other worker terminated.")
+        self._fallback(f"GPU {rec.gpu_index} ({rec.tube}) worker failed: {error}")
 
     # ---- views ---------------------------------------------------------
     def _verification(self, qualified: bool) -> dict:
@@ -535,8 +621,12 @@ class Orchestrator:
         with self._lock:
             return {r.tube: r.checkpoint for r in self.workers if r.checkpoint is not None}
 
-    def snapshot(self, budget: dict, *, qualified: bool) -> dict:
+    def snapshot(self, budget: dict, *, qualified: bool, saved_run_available: bool = True) -> dict:
+        """`saved_run_available=False`: the saved run this session would play is no longer served (its file was
+        removed or no longer qualifies), so the fallback must not name it."""
         with self._lock:
+            saved = self.saved_run_id if saved_run_available else None
+            label = self._label(saved) if self.mode == "fallback" else self.fallback_label
             workers = [r.to_status() for r in self.workers]
             samples = [s["t"] for r in self.workers for s in r.samples]
             revs = sorted({r.solver_revision for r in self.workers if r.solver_revision})
@@ -551,8 +641,8 @@ class Orchestrator:
                 "workers": workers,
                 "fallback": {
                     "active": self.mode == "fallback",
-                    "label": self.fallback_label,
-                    "savedRunId": self.saved_run_id,
+                    "label": label,
+                    "savedRunId": saved,
                 },
                 "provenance": {
                     "kind": "rehearsal" if self.kind == "rehearsal" else "live",

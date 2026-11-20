@@ -44,11 +44,12 @@
   border: 1px solid var(--lab-color-accent);
   border-radius: var(--lab-radius-xs);
 }
-/* Dashed = not backed by data in this repo (DESIGN §5): the outline follows the artifact's provenance kind. */
-.sp-timing[data-kind='prd-reported'] .sp-timing__fill { border-style: dashed; }
+/* Dashed = not backed by data in this repo (DESIGN §5): the outline follows what the panel's fixtures say. */
+.sp-timing:is([data-kind='prd-reported'], [data-kind='unverified']) .sp-timing__fill { border-style: dashed; }
 .sp-small { margin-top: var(--lab-space-2); font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-subtle); }
-/* The speedup fixture row measures itself against this wrapper (a ~450 px side card), not the viewport. */
-.sp-fixture { container-type: inline-size; }
+/* The fixture rows measure themselves against this wrapper (a ~450 px side card), not the viewport. */
+.sp-fixture { container-type: inline-size; display: flex; flex-direction: column; gap: var(--lab-space-2); }
+.sp-tally + .sp-fixture { margin-top: var(--lab-space-3); }
 
 .sp-tally { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--lab-space-2) var(--lab-space-4); flex-wrap: wrap; }
 .sp-tally__runs { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--lab-space-1); }
@@ -59,7 +60,7 @@
   font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); font-variant-numeric: tabular-nums;
 }
 /* PRD-reported passes: neutral and dashed, never the green 'Verified' treatment (verification is blocked). */
-.sp-tally[data-kind='prd-reported'] .sp-tally__run { border-style: dashed; }
+.sp-tally:is([data-kind='prd-reported'], [data-kind='unverified']) .sp-tally__run { border-style: dashed; }
 .sp-tally__run--pass { color: var(--lab-color-text); }
 .sp-tally__fail { flex-basis: 100%; margin-top: 0; color: var(--lab-status-mismatch-fg); }
 

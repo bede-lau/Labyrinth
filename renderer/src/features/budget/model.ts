@@ -1,4 +1,6 @@
 // Budget view data -> props logic (pure).
+// A fixture row is drawn by the design system's FixtureCheck from the artifact alone: a PRD range comes
+// from `claimedRange` and the basis of a match from `basis` (D-023), never from a list kept here.
 import type { FixtureCheckData, Provenance } from '../../design';
 import type { LiveState } from '../../lib/liveStatus';
 
@@ -12,14 +14,39 @@ export interface BudgetScenario {
   interpretation: string;
   provenance: Provenance;
 }
+/**
+ * The live budget guard's own plan (D-015, D-023), computed by the backend with the guard itself:
+ * posted spend + rehearsals + one live slot, each priced with setup, idle and storage/egress allowances.
+ */
+export interface GuardPlan {
+  slotEstimateUsd: number;
+  rehearsalEstimateUsd: number;
+  slotHardTimeoutS: number;
+  rehearsalHardTimeoutS: number;
+  plannedTotalUsd: number;
+  /** The guard's allowances (not PRD numbers) and whether every step fits the ceiling, in words. */
+  assumptions: string;
+}
 export interface BudgetArtifact {
   schemaVersion: 1;
   ceilingUsd: number;
   postedUsd: number;
+  /** The PRD's plan: GPU time only. */
   plannedUsd: number;
   remainingAfterPlanUsd: number;
   scenarios: BudgetScenario[];
   fixtures: FixtureCheckData[];
+  guardPlan: GuardPlan;
+}
+
+/** Structural check beyond schemaVersion: a budget artifact without the guard's plan is named, not half-drawn. */
+export function checkBudget(a: BudgetArtifact): string | null {
+  if (!Array.isArray(a.scenarios) || !Array.isArray(a.fixtures)) return 'scenarios or fixtures is missing';
+  const g = a.guardPlan as Partial<GuardPlan> | undefined;
+  if (!g || typeof g !== 'object') return 'guardPlan is missing (contract D-023)';
+  for (const k of ['slotEstimateUsd', 'rehearsalEstimateUsd', 'plannedTotalUsd'] as const)
+    if (typeof g[k] !== 'number' || !Number.isFinite(g[k])) return `guardPlan.${k} is not a number`;
+  return null;
 }
 
 export interface LedgerSegment {
@@ -84,23 +111,16 @@ export function guardView(s: LiveState): GuardView | null {
 }
 
 /**
- * The guard's planning figures recorded in decision.md D-015 (no artifact or API field carries the
- * rehearsal estimate or the planned total yet). Shown with that source, never as PRD numbers, and
- * marked as possibly out of date as soon as the live guard reports a different slot estimate.
+ * True when the live guard answered and its slot estimate is no longer the one the artifact's guard
+ * plan was priced with: the plan's other figures (rehearsal, total) may then be out of date.
  */
-export const GUARD_PLAN_D015 = {
-  source: 'decision.md · D-015',
-  slotUsd: 2.65,
-  slotHardTimeoutS: 1500,
-  rehearsalUsd: 7.73,
-  rehearsalHardTimeoutS: 4500,
-  plannedUsd: 26.21,
-} as const;
-
-/** True when the live guard answered and its slot estimate is no longer the one D-015 planned with. */
-export function guardPlanStale(guard: GuardView | null, planSlotUsd: number = GUARD_PLAN_D015.slotUsd): boolean {
-  return guard !== null && Math.round(guard.slotEstimateUsd * 100) !== Math.round(planSlotUsd * 100);
+export function guardPlanStale(guard: GuardView | null, plan: GuardPlan): boolean {
+  return guard !== null && Math.round(guard.slotEstimateUsd * 100) !== Math.round(plan.slotEstimateUsd * 100);
 }
+
+/** The two plans are never merged: the PRD's counts GPU time only, the guard's adds its allowances. */
+export const PRD_PLAN_LABEL = 'PRD GPU-only plan';
+export const GUARD_PLAN_LABEL = 'Guard plan';
 
 export interface PlanCheck {
   label: string;
@@ -111,77 +131,25 @@ export interface PlanCheck {
 }
 
 /** Each plan against the artifact's ceiling: the "stays inside" statement is computed, not typed in. */
-export function planChecks(a: BudgetArtifact, guardPlannedUsd: number): PlanCheck[] {
+export function planChecks(a: BudgetArtifact): PlanCheck[] {
   const check = (label: string, v: number): PlanCheck => {
     const over = Math.round((v - a.ceilingUsd) * 100) / 100;
     return { label, usd: v, inside: over <= 0, overBy: Math.max(0, over) };
   };
-  return [check('PRD plan', a.plannedUsd), check('D-015 guard plan', guardPlannedUsd)];
+  return [check(PRD_PLAN_LABEL, a.plannedUsd), check(GUARD_PLAN_LABEL, a.guardPlan.plannedTotalUsd)];
 }
-
-export interface RangeFixture {
-  id: string;
-  label: string;
-  /** False when neither the label nor the note carries "PRD range [lo, hi]": the range is then shown as unavailable. */
-  rangeAvailable: boolean;
-  lo: number | null;
-  hi: number | null;
-  loText: string;
-  hiText: string;
-  unit: string;
-  computed: number | null;
-  computedText: string;
-  inside: boolean | null;
-  /** The backend's flag disagrees with the range test — shown, treated as outside. */
-  inconsistent: boolean;
-}
-
-const RANGE = /PRD range \[([0-9][0-9,]*(?:\.[0-9]+)?),\s+([0-9][0-9,]*(?:\.[0-9]+)?)\]\s*([A-Za-z$-]+)?/;
-const num = (s: string) => Number(s.replace(/,/g, ''));
 
 /**
- * The four fixtures whose `claimed` is the midpoint of a PRD range (interface.md §2 item 7). They are
- * named here because the contract has no `claimedRange` field yet (interface.md §10): recognising them
- * by prose alone would let the midpoint through as a "Claimed (PRD)" figure the day the prose changes.
+ * What the PRD prints for a fixture, in dollars: its single value, its range (D-023: a range is
+ * never collapsed to a midpoint), or "—" when it prints neither.
  */
-export const RANGE_FIXTURE_IDS: readonly string[] = ['full-grid-days', 'full-grid-usd', 'halved-dt-days', 'halved-dt-usd'];
-
-export function isRangeFixture(f: FixtureCheckData): boolean {
-  return (
-    RANGE_FIXTURE_IDS.includes(f.id) ||
-    RANGE.test(f.label) ||
-    RANGE.test(f.note ?? '') ||
-    /midpoint of (?:the )?PRD range/i.test(`${f.label} ${f.note ?? ''}`)
-  );
-}
-
-/** A range fixture: the PRD prints only a range, so the range is shown — never the midpoint. */
-export function rangeFixture(f: FixtureCheckData): RangeFixture {
-  const m = RANGE.exec(f.label) ?? RANGE.exec(f.note ?? '');
-  const lo = m ? num(m[1] as string) : null;
-  const hi = m ? num(m[2] as string) : null;
-  const unit = m?.[3] ?? (fixtureUnit(f) === 'dimensionless' ? '' : fixtureUnit(f));
-  const computed = f.computed;
-  const inRange = computed === null || lo === null || hi === null ? null : computed >= lo && computed <= hi;
-  const inside = inRange === null || f.matches === null ? null : inRange && f.matches;
-  const decimals = unit === 'USD' ? 0 : 2;
-  return {
-    id: f.id,
-    label: f.label.replace(/\s*[—-]\s*PRD range \[.*$/, '').trim(),
-    rangeAvailable: m !== null,
-    lo,
-    hi,
-    loText: m ? (m[1] as string) : '',
-    hiText: m ? (m[2] as string) : '',
-    unit,
-    computed,
-    computedText:
-      computed === null
-        ? '—'
-        : computed.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }),
-    inside,
-    inconsistent: inRange !== null && f.matches !== null && inRange !== f.matches,
-  };
+export function claimUsd(f: FixtureCheckData | undefined): string {
+  if (!f) return '—';
+  if (f.claimedRange) {
+    const [a, b] = f.claimedRange;
+    return `${usd(Math.min(a, b))}–${usd(Math.max(a, b))}`;
+  }
+  return f.claimed === null ? '—' : usd(f.claimed);
 }
 
 /** Which fixtures belong under which scenario card. Unlisted fixtures go to "Other fixtures". */
@@ -219,15 +187,4 @@ export function fixtureUnit(f: FixtureCheckData): string {
  */
 export function claimedLabelFor(f: FixtureCheckData): string | undefined {
   return /value from \S*TASK\.md/.test(f.note ?? '') ? 'Claimed (TASK.md)' : undefined;
-}
-
-/**
- * What a matching fixture row is backed by (DS-13). A value "recomputed" from inputs that are
- * themselves PRD-reported (161 h × 288 processors = 46,368) only shows the arithmetic is consistent;
- * it is not a data-backed match. Read from the artifact: the fixture's scenario is PRD-reported, or
- * its note says "inputs are PRD-reported".
- */
-export function fixtureBasis(a: BudgetArtifact, f: FixtureCheckData): 'data' | 'arithmetic' {
-  const scenario = a.scenarios.find((s) => (SCENARIO_FIXTURES[s.id] ?? []).includes(f.id));
-  return scenario?.provenance.kind === 'prd-reported' || /inputs are PRD-reported/i.test(f.note ?? '') ? 'arithmetic' : 'data';
 }

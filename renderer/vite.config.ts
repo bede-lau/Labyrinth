@@ -2,6 +2,7 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { cpSync, createReadStream, existsSync, statSync } from 'node:fs';
+import { availableParallelism } from 'node:os';
 import { resolve, sep } from 'node:path';
 import type { Readable } from 'node:stream';
 
@@ -68,6 +69,21 @@ export function copyArtifacts(source = ARTIFACTS): Plugin {
   };
 }
 
+/** Cap on parallel test workers when VITEST_MAX_WORKERS does not set one (vitest itself applies the variable). */
+export const DEFAULT_MAX_TEST_WORKERS = 4;
+
+/**
+ * F13: how many test workers to start. Several agents run this suite in one tree at once, and an
+ * uncapped run starts one worker per core until workers time out starting ("Failed to start … worker",
+ * a red gate with zero failing tests). VITEST_MAX_WORKERS (scripts/dev.sh exports 4) wins when it is a
+ * positive integer; otherwise at most DEFAULT_MAX_TEST_WORKERS, leaving one core free.
+ */
+export function testMaxWorkers(env: Record<string, string | undefined> = process.env, cores = availableParallelism()): number {
+  const fromEnv = Number(env.VITEST_MAX_WORKERS);
+  if (Number.isInteger(fromEnv) && fromEnv > 0) return fromEnv;
+  return Math.max(1, Math.min(DEFAULT_MAX_TEST_WORKERS, cores - 1));
+}
+
 export default defineConfig({
   plugins: [react(), serveArtifacts(), copyArtifacts()],
   server: {
@@ -76,9 +92,18 @@ export default defineConfig({
   },
   build: { chunkSizeWarningLimit: 5000 },
   test: {
+    // DOM only where a file needs it: pure files opt out with `// @vitest-environment node`.
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
+    // F13: each test file still runs in its own VM context (fresh module graph and globals: per-file
+    // isolation is kept), but a worker builds its jsdom environment once instead of once per file —
+    // the environment was 64 % of the suite's time. Full suite, 4 workers, same 29 files / 1158 tests:
+    // 137 s with 'threads', 40 s with 'vmThreads'.
+    pool: 'vmThreads',
+    maxWorkers: testMaxWorkers(),
+    // A vm worker that grows past this is recycled before its next file, so a leak cannot exhaust memory.
+    vmMemoryLimit: '1024MB',
   },
 });

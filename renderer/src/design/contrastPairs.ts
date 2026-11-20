@@ -5,7 +5,7 @@
 //   fill as a shape, dashed "not backed by data" outlines, window edges): ≥ 3:1 (SC 1.4.11).
 // Alpha fills are composited the way the browser paints them before measuring.
 import { compositeOver, contrastRatio, withAlpha } from './color';
-import { unsampledShape, windowShape } from './plotTheme';
+import { unsampledShapes, windowShape } from './plotTheme';
 import { STATUS_META } from './status';
 import { CALLOUT_TONES, STATUS_KINDS, themes, type ThemeName } from './tokens';
 
@@ -56,20 +56,25 @@ export function contrastPairs(theme: ThemeName): ContrastPair[] {
     out.push({ name: `live pill fill vs ${sName}`, fg: t.status.live.bg, bg: sv, min: NON_TEXT });
   // Dashed outlines carry meaning ("not backed by data in this repo", DESIGN.md §5), so the dashes
   // must be visible against the surface around the pill and against the tint showing through the gaps.
+  // The billing-risk outline (and the Alert's border) carries meaning too: same rule.
   for (const k of STATUS_KINDS) {
-    if (!STATUS_META[k].dashed) continue;
+    const meta = STATUS_META[k];
+    if (!meta.dashed && !meta.outlined) continue;
     const s = t.status[k];
-    out.push({ name: `dashed ${k} border vs its own tint`, fg: s.border, bg: s.bg, min: NON_TEXT });
+    const how = meta.dashed ? 'dashed' : 'outlined';
+    out.push({ name: `${how} ${k} border vs its own tint`, fg: s.border, bg: s.bg, min: NON_TEXT });
     for (const [sName, sv] of Object.entries(surfaces))
-      out.push({ name: `dashed ${k} border vs ${sName}`, fg: s.border, bg: sv, min: NON_TEXT });
+      out.push({ name: `${how} ${k} border vs ${sName}`, fg: s.border, bg: sv, min: NON_TEXT });
   }
+  // An Alert's action may be a link ("Open Advance plasma to send Terminate").
+  out.push({ name: 'accentText on status billing-risk bg', fg: c.accentText, bg: t.status['billing-risk'].bg, min: TEXT });
   // Alpha fills on charts, composited the way the browser paints them.
   const shade = compositeOver(t.plot.plot, t.plot.windowShade);
   const unsampledFill = withAlpha(t.plot.unsampled, t.plot.unsampledAlpha);
   const unsampled = compositeOver(t.plot.plot, unsampledFill);
   const unsampledOnShade = compositeOver(t.plot.plot, t.plot.windowShade, unsampledFill);
   const windowLabel = windowShape([0, 1], theme, 'w').label?.font?.color as string;
-  const unsampledLabel = unsampledShape([0, 1], theme).label?.font?.color as string;
+  const unsampledLabel = unsampledShapes([0, 1], theme)[1]?.label?.font?.color as string;
   out.push({ name: 'window label text on the window shade over the plot', fg: windowLabel, bg: shade, min: TEXT });
   out.push({ name: 'window label text on the plot', fg: windowLabel, bg: t.plot.plot, min: TEXT });
   out.push({ name: 'unsampled label text on the unsampled fill over the plot', fg: unsampledLabel, bg: unsampled, min: TEXT });

@@ -110,41 +110,9 @@
 .bg-inputs { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: var(--lab-space-1) var(--lab-space-3); margin-top: var(--lab-space-2); }
 .bg-inputs dt { color: var(--lab-color-text-subtle); }
 .bg-inputs dd { margin: 0; color: var(--lab-color-text); }
-/* The fixture rows measure themselves against this wrapper (the card), not the viewport. */
+/* The fixture rows (FixtureCheck, PRD ranges included) measure themselves against this wrapper (the
+   card), not the viewport. */
 .bg-fixtures { container-type: inline-size; display: flex; flex-direction: column; gap: var(--lab-space-2); }
-
-/* Range fixture row (mirrors the FixtureCheck layout; shows the PRD range, never a midpoint). */
-.bg-range {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(max-content, 1fr) minmax(max-content, 1fr) max-content;
-  gap: var(--lab-space-2) var(--lab-space-4);
-  align-items: center;
-  padding: var(--lab-space-2) var(--lab-space-3);
-  border: 1px solid var(--lab-status-passed-border);
-  border-radius: var(--lab-radius-sm);
-  background: var(--lab-color-surface);
-}
-.bg-range[data-outcome='outside'] { border-color: var(--lab-status-mismatch-border); background: var(--lab-status-mismatch-bg); }
-.bg-range[data-outcome='unknown'] { border-color: var(--lab-color-border-strong); border-style: dashed; }
-.bg-range__label { display: flex; flex-direction: column; gap: var(--lab-space-0-5); min-width: 0; }
-.bg-range__name { font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); font-weight: var(--lab-font-weight-medium); color: var(--lab-color-text); }
-.bg-range__note { font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-subtle); }
-.bg-range__note--warn { color: var(--lab-status-mismatch-fg); }
-.bg-range__cell { display: flex; flex-direction: column; gap: var(--lab-space-0-5); min-width: 0; }
-.bg-range__k { font-size: var(--lab-font-size-2xs); line-height: var(--lab-line-height-2xs); color: var(--lab-color-text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
-.bg-range__v { font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text); white-space: nowrap; }
-.bg-range__outcome { display: inline-flex; align-items: center; gap: var(--lab-space-1); font-size: var(--lab-font-size-xs); font-weight: var(--lab-font-weight-semibold); color: var(--lab-status-passed-fg); white-space: nowrap; }
-.bg-range[data-outcome='outside'] .bg-range__outcome { color: var(--lab-status-mismatch-fg); }
-.bg-range[data-outcome='unknown'] .bg-range__outcome { color: var(--lab-color-text-muted); }
-
-/* Inside a card (.bg-fixtures up to 640 px): label and note on their own line, values under them, the
-   outcome on a line of its own. Nothing is ever narrower than its content. */
-@container (max-width: 640px) {
-  .bg-range { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .bg-range__label { grid-column: 1 / -1; }
-  .bg-range__outcome { grid-column: 1 / -1; }
-  .bg-range__v { white-space: normal; }
-}
 
 /* Narrow view (phone): one column of cards, stacked legend total, stacked comparison rows. */
 @container (max-width: 900px) {
