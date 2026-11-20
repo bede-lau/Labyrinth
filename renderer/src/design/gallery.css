@@ -1,0 +1,62 @@
+/* Gallery layout only (tokens only, no colour literals). */
+.gal { max-width: 1360px; margin: 0 auto; padding: var(--lab-space-6) var(--lab-space-6) var(--lab-space-12); }
+.gal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--lab-space-6);
+  flex-wrap: wrap;
+  padding-bottom: var(--lab-space-5);
+  margin-bottom: var(--lab-space-5);
+  border-bottom: 1px solid var(--lab-color-border);
+}
+.gal-eyebrow {
+  font-size: var(--lab-font-size-2xs);
+  line-height: var(--lab-line-height-2xs);
+  font-weight: var(--lab-font-weight-semibold);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--lab-color-accent-text);
+}
+.gal-title {
+  margin-top: var(--lab-space-1);
+  font-size: var(--lab-font-size-2xl);
+  line-height: var(--lab-line-height-2xl);
+  font-weight: var(--lab-font-weight-bold);
+  letter-spacing: -0.015em;
+  color: var(--lab-color-text);
+  max-width: 34ch;
+}
+.gal-sub { margin-top: var(--lab-space-1); color: var(--lab-color-text-muted); font-size: var(--lab-font-size-sm); }
+.gal-header__controls { display: flex; gap: var(--lab-space-3); align-items: center; }
+.gal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--lab-space-4); align-items: start; }
+.gal-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--lab-space-4); padding: var(--lab-space-1) 0 var(--lab-space-3); }
+.gal-figure { margin: 0; }
+.gal-chart { width: 100%; min-height: 300px; }
+.gal-scene { width: 100%; height: 300px; border-radius: var(--lab-radius-sm); overflow: hidden; }
+.gal-stack { display: flex; flex-direction: column; gap: var(--lab-space-2); margin-top: var(--lab-space-4); }
+.gal-row { margin-bottom: var(--lab-space-3); }
+.gal-colorbar { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: var(--lab-space-3); margin-top: var(--lab-space-3); font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); }
+.gal-colorbar__bar { height: 10px; border-radius: var(--lab-radius-xs); }
+.gal-colorbar__ticks { grid-column: 2; display: flex; justify-content: space-between; color: var(--lab-color-text-subtle); }
+.gal-status { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--lab-space-2) var(--lab-space-3); align-items: center; }
+.gal-status li { display: contents; }
+.gal-status__desc { font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-muted); }
+.gal-cvd { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: var(--lab-font-size-xs); }
+.gal-cvd th:first-child { width: 26%; }
+.gal-cvd th, .gal-cvd td { padding: 6px var(--lab-space-1); overflow: hidden; text-overflow: ellipsis; text-align: center; border-bottom: 1px solid var(--lab-color-border); }
+.gal-cvd thead th { color: var(--lab-color-text-muted); font-weight: var(--lab-font-weight-medium); }
+.gal-cvd tbody th { text-align: left; color: var(--lab-color-text-muted); font-weight: var(--lab-font-weight-regular); text-transform: capitalize; }
+.gal-cvd__chip { display: inline-block; width: 100%; max-width: 40px; height: 6px; border-radius: 3px; vertical-align: middle; }
+.gal-swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--lab-space-2) var(--lab-space-3); }
+.gal-swatch { display: grid; grid-template-columns: 28px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: var(--lab-space-2); align-items: center; }
+.gal-swatch__chip { grid-row: span 2; width: 28px; height: 28px; border-radius: var(--lab-radius-sm); border: 1px solid; }
+.gal-swatch__name { font-size: var(--lab-font-size-xs); color: var(--lab-color-text); }
+.gal-swatch__hex { font-size: var(--lab-font-size-2xs); color: var(--lab-color-text-subtle); }
+.gal-type { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--lab-space-1); color: var(--lab-color-text); }
+.gal-type__k { font-size: var(--lab-font-size-2xs); color: var(--lab-color-text-subtle); display: inline-block; width: 84px; }
+@media (max-width: 960px) {
+  .gal { padding: var(--lab-space-4); }
+  .gal-grid { grid-template-columns: minmax(0, 1fr); }
+  .gal-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

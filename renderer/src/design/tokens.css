@@ -1,0 +1,400 @@
+/* GENERATED from tokens.ts by renderTokensCss() — do not edit by hand.
+ * Regenerate: npm --prefix renderer run tokens   (tokens.test.ts fails if this file drifts.)
+ *
+ * Theme selection: light by default; dark when the OS prefers dark unless
+ * <html data-theme="light"> forces light; <html data-theme="dark"> forces dark. */
+
+:root {
+  color-scheme: light;
+  --lab-font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "DejaVu Sans", Arial, sans-serif;
+  --lab-font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --lab-font-size-2xs: 11px;
+  --lab-line-height-2xs: 16px;
+  --lab-font-size-xs: 12px;
+  --lab-line-height-xs: 16px;
+  --lab-font-size-sm: 13px;
+  --lab-line-height-sm: 20px;
+  --lab-font-size-md: 14px;
+  --lab-line-height-md: 20px;
+  --lab-font-size-lg: 16px;
+  --lab-line-height-lg: 24px;
+  --lab-font-size-xl: 20px;
+  --lab-line-height-xl: 28px;
+  --lab-font-size-2xl: 24px;
+  --lab-line-height-2xl: 32px;
+  --lab-font-size-3xl: 32px;
+  --lab-line-height-3xl: 40px;
+  --lab-font-weight-regular: 400;
+  --lab-font-weight-medium: 500;
+  --lab-font-weight-semibold: 600;
+  --lab-font-weight-bold: 700;
+  --lab-space-0: 0px;
+  --lab-space-1: 4px;
+  --lab-space-2: 8px;
+  --lab-space-3: 12px;
+  --lab-space-4: 16px;
+  --lab-space-5: 20px;
+  --lab-space-6: 24px;
+  --lab-space-8: 32px;
+  --lab-space-10: 40px;
+  --lab-space-12: 48px;
+  --lab-space-16: 64px;
+  --lab-space-px: 1px;
+  --lab-space-0-5: 2px;
+  --lab-radius-xs: 2px;
+  --lab-radius-sm: 4px;
+  --lab-radius-md: 6px;
+  --lab-radius-lg: 10px;
+  --lab-radius-pill: 999px;
+  --lab-motion-fast: 120ms;
+  --lab-motion-base: 180ms;
+  --lab-motion-easing: cubic-bezier(0.2, 0, 0, 1);
+  --lab-shadow-raised: 0 1px 2px var(--lab-color-shadow), 0 8px 24px var(--lab-color-shadow);
+  --lab-z-popover: 20;
+  --lab-z-toast: 30;
+  --lab-color-bg: #f3f5f6;
+  --lab-color-surface: #ffffff;
+  --lab-color-surface-sunken: #eef2f4;
+  --lab-color-surface-raised: #ffffff;
+  --lab-color-surface-hover: #e9eef1;
+  --lab-color-border: #dbe2e6;
+  --lab-color-border-strong: #73868e;
+  --lab-color-text: #14262f;
+  --lab-color-text-muted: #42565e;
+  --lab-color-text-subtle: #56686f;
+  --lab-color-accent: #0b7f80;
+  --lab-color-accent-hover: #096a6b;
+  --lab-color-accent-text: #086a6b;
+  --lab-color-accent-fg: #ffffff;
+  --lab-color-accent-subtle: #e2f1f0;
+  --lab-color-focus: #0b7f80;
+  --lab-color-shadow: rgba(20, 38, 47, 0.14);
+  --lab-status-live-fg: #ffffff;
+  --lab-status-live-bg: #c4122f;
+  --lab-status-live-border: #c4122f;
+  --lab-status-replay-fg: #42565e;
+  --lab-status-replay-bg: #eef2f4;
+  --lab-status-replay-border: #c9d3d8;
+  --lab-status-rehearsal-fg: #3a4796;
+  --lab-status-rehearsal-bg: #eceefa;
+  --lab-status-rehearsal-border: #c3c9ec;
+  --lab-status-archive-fg: #2c5674;
+  --lab-status-archive-bg: #e8f0f6;
+  --lab-status-archive-border: #bcd0e0;
+  --lab-status-derived-fg: #086a6b;
+  --lab-status-derived-bg: #e2f1f0;
+  --lab-status-derived-border: #a9d4d2;
+  --lab-status-prd-reported-fg: #6c5715;
+  --lab-status-prd-reported-bg: #f7f2e3;
+  --lab-status-prd-reported-border: #cfbd84;
+  --lab-status-unverified-fg: #56686f;
+  --lab-status-unverified-bg: #f6f8f9;
+  --lab-status-unverified-border: #8a9ba2;
+  --lab-status-passed-fg: #1d6a39;
+  --lab-status-passed-bg: #e5f3e9;
+  --lab-status-passed-border: #a3d2b1;
+  --lab-status-failed-fg: #b3261e;
+  --lab-status-failed-bg: #fcebea;
+  --lab-status-failed-border: #efb0aa;
+  --lab-status-blocked-fg: #673f9c;
+  --lab-status-blocked-bg: #f1ecf8;
+  --lab-status-blocked-border: #cbb9e4;
+  --lab-status-mismatch-fg: #a8400c;
+  --lab-status-mismatch-bg: #fdefe5;
+  --lab-status-mismatch-border: #efbb98;
+  --lab-status-not-applicable-fg: #56686f;
+  --lab-status-not-applicable-bg: #eef2f4;
+  --lab-status-not-applicable-border: #c9d3d8;
+  --lab-callout-info-fg: #24557f;
+  --lab-callout-info-bg: #ebf2f8;
+  --lab-callout-info-border: #9fbfda;
+  --lab-callout-warn-fg: #7d4c00;
+  --lab-callout-warn-bg: #fcf4e2;
+  --lab-callout-warn-border: #e0bd73;
+  --lab-callout-blocked-fg: #673f9c;
+  --lab-callout-blocked-bg: #f1ecf8;
+  --lab-callout-blocked-border: #b9a2dc;
+  --lab-series-stella: #1148b3;
+  --lab-series-gene: #b68b16;
+  --lab-series-gx: #2c2024;
+  --lab-series-bean: #0b7f80;
+  --lab-series-triangular: #a8482a;
+  --lab-plot-paper: #ffffff;
+  --lab-plot-plot: #ffffff;
+  --lab-plot-grid: #e6ebee;
+  --lab-plot-axis: #73868e;
+  --lab-plot-zero: #c3ced3;
+  --lab-plot-window-shade: rgba(11, 127, 128, 0.07);
+  --lab-plot-window-edge: rgba(11, 127, 128, 0.45);
+  --lab-plot-unsampled: #c9d2d6;
+  --lab-plot-band-alpha: 0.18;
+  --lab-scene-background: #ffffff;
+  --lab-scene-surface-line: #b8c6cc;
+  --lab-scene-surface-fill: #eef2f4;
+  --lab-scene-surface-opacity: 0.35;
+  --lab-scene-unsampled: #b8c6cc;
+  --lab-scene-boundary: #5d6d75;
+  --lab-scene-sampled-surface: #6a939a;
+  --lab-scene-marker-outline: #ffffff;
+  --lab-bmag-0: #182b58;
+  --lab-bmag-1: #003d63;
+  --lab-bmag-2: #004f67;
+  --lab-bmag-3: #006064;
+  --lab-bmag-4: #006f5a;
+  --lab-bmag-5: #2f7b4a;
+  --lab-bmag-6: #608338;
+  --lab-bmag-7: #888528;
+  --lab-bmag-8: #b28a29;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --lab-color-bg: #0b1317;
+    --lab-color-surface: #111b20;
+    --lab-color-surface-sunken: #0d161a;
+    --lab-color-surface-raised: #17242a;
+    --lab-color-surface-hover: #1b2a31;
+    --lab-color-border: #233239;
+    --lab-color-border-strong: #62777f;
+    --lab-color-text: #e4ecef;
+    --lab-color-text-muted: #a9b8be;
+    --lab-color-text-subtle: #91a3aa;
+    --lab-color-accent: #41b2b2;
+    --lab-color-accent-hover: #5cc2c1;
+    --lab-color-accent-text: #5cc2c1;
+    --lab-color-accent-fg: #04191a;
+    --lab-color-accent-subtle: #0f2a2b;
+    --lab-color-focus: #5cc2c1;
+    --lab-color-shadow: rgba(0, 0, 0, 0.5);
+    --lab-status-live-fg: #ffffff;
+    --lab-status-live-bg: #cf1739;
+    --lab-status-live-border: #cf1739;
+    --lab-status-replay-fg: #b4c2c8;
+    --lab-status-replay-bg: #18252b;
+    --lab-status-replay-border: #34464e;
+    --lab-status-rehearsal-fg: #aab4f2;
+    --lab-status-rehearsal-bg: #181d36;
+    --lab-status-rehearsal-border: #3a4584;
+    --lab-status-archive-fg: #97bfe2;
+    --lab-status-archive-bg: #12212d;
+    --lab-status-archive-border: #2e4d66;
+    --lab-status-derived-fg: #6fcfcb;
+    --lab-status-derived-bg: #0f2627;
+    --lab-status-derived-border: #245e5d;
+    --lab-status-prd-reported-fg: #dcc78c;
+    --lab-status-prd-reported-bg: #241f12;
+    --lab-status-prd-reported-border: #6b5b2d;
+    --lab-status-unverified-fg: #a9b8be;
+    --lab-status-unverified-bg: #141f24;
+    --lab-status-unverified-border: #62777f;
+    --lab-status-passed-fg: #74d394;
+    --lab-status-passed-bg: #11281a;
+    --lab-status-passed-border: #2b6a3f;
+    --lab-status-failed-fg: #ff8f85;
+    --lab-status-failed-bg: #311513;
+    --lab-status-failed-border: #7a2b25;
+    --lab-status-blocked-fg: #c7aaf5;
+    --lab-status-blocked-bg: #221a33;
+    --lab-status-blocked-border: #54417c;
+    --lab-status-mismatch-fg: #ffa56b;
+    --lab-status-mismatch-bg: #321f10;
+    --lab-status-mismatch-border: #7a4719;
+    --lab-status-not-applicable-fg: #a9b8be;
+    --lab-status-not-applicable-bg: #18252b;
+    --lab-status-not-applicable-border: #34464e;
+    --lab-callout-info-fg: #93c0ee;
+    --lab-callout-info-bg: #0f2134;
+    --lab-callout-info-border: #2d5582;
+    --lab-callout-warn-fg: #f0c26a;
+    --lab-callout-warn-bg: #2a2110;
+    --lab-callout-warn-border: #6e5418;
+    --lab-callout-blocked-fg: #c7aaf5;
+    --lab-callout-blocked-bg: #221a33;
+    --lab-callout-blocked-border: #54417c;
+    --lab-series-stella: #467cc0;
+    --lab-series-gene: #e5c057;
+    --lab-series-gx: #ece6e7;
+    --lab-series-bean: #41b2b2;
+    --lab-series-triangular: #c36953;
+    --lab-plot-paper: #111b20;
+    --lab-plot-plot: #111b20;
+    --lab-plot-grid: #1e2b31;
+    --lab-plot-axis: #62777f;
+    --lab-plot-zero: #34464e;
+    --lab-plot-window-shade: rgba(65, 178, 178, 0.09);
+    --lab-plot-window-edge: rgba(65, 178, 178, 0.5);
+    --lab-plot-unsampled: #3a4a51;
+    --lab-plot-band-alpha: 0.22;
+    --lab-scene-background: #111b20;
+    --lab-scene-surface-line: #3c4d55;
+    --lab-scene-surface-fill: #162228;
+    --lab-scene-surface-opacity: 0.35;
+    --lab-scene-unsampled: #3c4d55;
+    --lab-scene-boundary: #8a9ca4;
+    --lab-scene-sampled-surface: #6fa3aa;
+    --lab-scene-marker-outline: #111b20;
+    --lab-bmag-0: #546b9d;
+    --lab-bmag-1: #4980ab;
+    --lab-bmag-2: #4095b1;
+    --lab-bmag-3: #42aab0;
+    --lab-bmag-4: #58bcaa;
+    --lab-bmag-5: #7ccba0;
+    --lab-bmag-6: #a7d895;
+    --lab-bmag-7: #d3e18e;
+    --lab-bmag-8: #ffe891;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --lab-color-bg: #0b1317;
+  --lab-color-surface: #111b20;
+  --lab-color-surface-sunken: #0d161a;
+  --lab-color-surface-raised: #17242a;
+  --lab-color-surface-hover: #1b2a31;
+  --lab-color-border: #233239;
+  --lab-color-border-strong: #62777f;
+  --lab-color-text: #e4ecef;
+  --lab-color-text-muted: #a9b8be;
+  --lab-color-text-subtle: #91a3aa;
+  --lab-color-accent: #41b2b2;
+  --lab-color-accent-hover: #5cc2c1;
+  --lab-color-accent-text: #5cc2c1;
+  --lab-color-accent-fg: #04191a;
+  --lab-color-accent-subtle: #0f2a2b;
+  --lab-color-focus: #5cc2c1;
+  --lab-color-shadow: rgba(0, 0, 0, 0.5);
+  --lab-status-live-fg: #ffffff;
+  --lab-status-live-bg: #cf1739;
+  --lab-status-live-border: #cf1739;
+  --lab-status-replay-fg: #b4c2c8;
+  --lab-status-replay-bg: #18252b;
+  --lab-status-replay-border: #34464e;
+  --lab-status-rehearsal-fg: #aab4f2;
+  --lab-status-rehearsal-bg: #181d36;
+  --lab-status-rehearsal-border: #3a4584;
+  --lab-status-archive-fg: #97bfe2;
+  --lab-status-archive-bg: #12212d;
+  --lab-status-archive-border: #2e4d66;
+  --lab-status-derived-fg: #6fcfcb;
+  --lab-status-derived-bg: #0f2627;
+  --lab-status-derived-border: #245e5d;
+  --lab-status-prd-reported-fg: #dcc78c;
+  --lab-status-prd-reported-bg: #241f12;
+  --lab-status-prd-reported-border: #6b5b2d;
+  --lab-status-unverified-fg: #a9b8be;
+  --lab-status-unverified-bg: #141f24;
+  --lab-status-unverified-border: #62777f;
+  --lab-status-passed-fg: #74d394;
+  --lab-status-passed-bg: #11281a;
+  --lab-status-passed-border: #2b6a3f;
+  --lab-status-failed-fg: #ff8f85;
+  --lab-status-failed-bg: #311513;
+  --lab-status-failed-border: #7a2b25;
+  --lab-status-blocked-fg: #c7aaf5;
+  --lab-status-blocked-bg: #221a33;
+  --lab-status-blocked-border: #54417c;
+  --lab-status-mismatch-fg: #ffa56b;
+  --lab-status-mismatch-bg: #321f10;
+  --lab-status-mismatch-border: #7a4719;
+  --lab-status-not-applicable-fg: #a9b8be;
+  --lab-status-not-applicable-bg: #18252b;
+  --lab-status-not-applicable-border: #34464e;
+  --lab-callout-info-fg: #93c0ee;
+  --lab-callout-info-bg: #0f2134;
+  --lab-callout-info-border: #2d5582;
+  --lab-callout-warn-fg: #f0c26a;
+  --lab-callout-warn-bg: #2a2110;
+  --lab-callout-warn-border: #6e5418;
+  --lab-callout-blocked-fg: #c7aaf5;
+  --lab-callout-blocked-bg: #221a33;
+  --lab-callout-blocked-border: #54417c;
+  --lab-series-stella: #467cc0;
+  --lab-series-gene: #e5c057;
+  --lab-series-gx: #ece6e7;
+  --lab-series-bean: #41b2b2;
+  --lab-series-triangular: #c36953;
+  --lab-plot-paper: #111b20;
+  --lab-plot-plot: #111b20;
+  --lab-plot-grid: #1e2b31;
+  --lab-plot-axis: #62777f;
+  --lab-plot-zero: #34464e;
+  --lab-plot-window-shade: rgba(65, 178, 178, 0.09);
+  --lab-plot-window-edge: rgba(65, 178, 178, 0.5);
+  --lab-plot-unsampled: #3a4a51;
+  --lab-plot-band-alpha: 0.22;
+  --lab-scene-background: #111b20;
+  --lab-scene-surface-line: #3c4d55;
+  --lab-scene-surface-fill: #162228;
+  --lab-scene-surface-opacity: 0.35;
+  --lab-scene-unsampled: #3c4d55;
+  --lab-scene-boundary: #8a9ca4;
+  --lab-scene-sampled-surface: #6fa3aa;
+  --lab-scene-marker-outline: #111b20;
+  --lab-bmag-0: #546b9d;
+  --lab-bmag-1: #4980ab;
+  --lab-bmag-2: #4095b1;
+  --lab-bmag-3: #42aab0;
+  --lab-bmag-4: #58bcaa;
+  --lab-bmag-5: #7ccba0;
+  --lab-bmag-6: #a7d895;
+  --lab-bmag-7: #d3e18e;
+  --lab-bmag-8: #ffe891;
+}
+
+/* ---- base ------------------------------------------------------------------------------ */
+*, *::before, *::after { box-sizing: border-box; }
+html {
+  background: var(--lab-color-bg);
+  color: var(--lab-color-text);
+  font-family: var(--lab-font-sans);
+  font-size: var(--lab-font-size-md);
+  line-height: var(--lab-line-height-md);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+body {
+  margin: 0;
+  background: var(--lab-color-bg);
+  color: var(--lab-color-text);
+}
+h1, h2, h3, h4, h5, h6, p, dl, dd, figure { margin: 0; }
+a { color: var(--lab-color-accent-text); text-underline-offset: 2px; }
+a:hover { color: var(--lab-color-accent-hover); }
+button, input, select, textarea { font: inherit; color: inherit; }
+::selection { background: var(--lab-color-accent-subtle); color: var(--lab-color-text); }
+
+/* Focus: visible only for keyboard users; 2px ring + 2px offset reads on any fill. */
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid var(--lab-color-focus);
+  outline-offset: 2px;
+  border-radius: var(--lab-radius-xs);
+}
+
+/* ---- utilities ------------------------------------------------------------------------- */
+/* Numbers: tabular, lining figures so columns of values align digit-for-digit. */
+.lab-num, .lab-tabular {
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+.lab-mono { font-family: var(--lab-font-mono); font-size: 0.92em; }
+.lab-visually-hidden {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
+  white-space: nowrap; border: 0;
+}
+
+/* ---- reduced motion -------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
