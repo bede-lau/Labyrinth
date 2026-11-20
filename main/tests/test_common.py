@@ -13,6 +13,7 @@ PINNED = {
     "stella_test2_vmec_geometry.geometry": "5c156224ded135408879aa7ddec09a66ec99a354b469f9e5ad3967188425602d",
     "stella_test2_vmec_geometry.vmec.geo": "efccb0d34a3d5ba9489e5d0cce9f1c1136909730e52a38e4689e9064bf2dd491",
     "stella_test2_vmec_geometry.in": "ea741f75e855d26238496e0c2594421526dc6e93e467ed009724124745cd011d",
+    "stella_test2_vmec_geometry.out.nc": "75b8d0ace716913e45f9d11f7fbc66f1a7dae1237ee78a5df87d348e54b29f00",
 }
 
 

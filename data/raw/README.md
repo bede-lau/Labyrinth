@@ -10,6 +10,7 @@ Committed so replay needs no network and $0. Integrity is enforced by
 | `stella_test2_vmec_geometry.geometry` | stellaGK/stella @ `6f60964d` `AUTOMATIC_TESTS/numerical_tests/test_2_geometry/EXPECTED_OUTPUT.vmec_geometry.geometry` | `5c156224…602d` |
 | `stella_test2_vmec_geometry.vmec.geo` | same directory, `EXPECTED_OUTPUT.vmec_geometry.vmec.geo` | `efccb0d3…491` |
 | `stella_test2_vmec_geometry.in` | same directory, `vmec_geometry.in` | `ea741f75…11d` |
+| `stella_test2_vmec_geometry.out.nc` | same directory, `EXPECTED_OUTPUT.vmec_geometry.out.nc` (float64 `bmag(zed, alpha)`, used for the 1e-10 tracer check) | `75b8d0ac…f00` |
 
 stella is MIT-licensed (`LICENCE.md` in the upstream repo; authors in its `CITATION.cff`).
 

@@ -15,7 +15,7 @@ VALIDITY = "Only for raw GX normalisations whose dimensional references (a, B_re
 
 
 def gx_to_archive(t: Sequence[float], q: Sequence[float], *, identical_references: bool) -> tuple[list[float], list[float]]:
-    if not identical_references:
+    if identical_references is not True:  # reject truthy non-bools such as "yes" or 1
         raise ValueError("refusing GX->archive conversion: dimensional references not asserted identical")
     if len(t) != len(q):
         raise ValueError("t and Q must have equal length")
