@@ -9,13 +9,23 @@ import {
   plotLayout,
   seriesStyle,
   themes,
+  trimNumber,
   typeScale,
   uncertaintyBand,
   windowShape,
   type PlotLayout,
+  type StatusKind,
   type ThemeName,
 } from '../../design';
-import { isLive, type LiveSample, type LiveState } from '../../lib/liveStatus';
+import {
+  isLive,
+  type LiveArchiveVerdict,
+  type LiveComparison,
+  type LiveComparisonWindow,
+  type LiveSample,
+  type LiveState,
+  type LiveVerdict,
+} from '../../lib/liveStatus';
 import type { TransportArtifact, TransportTrace, TransportWindow, Window } from './types';
 
 /** Display units for the archive normalisation in `artifact.units` ("Q_i/Q_gB,i vs t v_th,i/a"). */
@@ -119,7 +129,7 @@ export interface WindowRow {
  * Verdict word for the stationarity column. `null` is "Undecidable" and nothing more (interface.md §2
  * item 4): the backend's indicative test result stays in the collapsed detail, never in the verdict.
  */
-export function stationarityText(w: TransportWindow, d: WindowDetail): string {
+export function stationarityText(w: Pick<TransportWindow, 'covered' | 'stationary'>, d: WindowDetail): string {
   if (!w.covered) return 'Not covered';
   if (w.stationary === null) return 'Undecidable';
   const base = w.stationary ? 'Stationary' : 'Not stationary';
@@ -351,6 +361,209 @@ export function liveGxSamples(state: LiveState): LiveSample[] | null {
 }
 
 export const GX_LIVE_NAME = 'GX · LIVE (archive units)';
+
+/* ---- live comparison (D-024, T13) ----------------------------------------------------------- */
+
+/**
+ * The backend's comparison of this session's bean samples with the archive, to show on Check transport:
+ * only from a valid (the store holds validated snapshots only), fresh snapshot whose mode is "live" and that
+ * carries one. Anything else (another mode, an unreachable or stale API, a snapshot past its freshness, the
+ * field absent) shows nothing, so no comparison outlives the live session it belongs to.
+ */
+export function liveComparison(state: LiveState, now: number = Date.now()): LiveComparison | null {
+  if (!isLive(state) || state.status !== 'ready') return null;
+  const fresh = state.receivedAt !== undefined && state.freshForMs !== undefined && now - state.receivedAt <= state.freshForMs;
+  return fresh ? (state.data.comparison ?? null) : null;
+}
+
+export const VERDICT_TEXT: Readonly<Record<LiveVerdict, string>> = {
+  agree: 'Agree',
+  disagree: 'Disagree',
+  inconclusive: 'Inconclusive',
+  'no claim': 'No claim',
+};
+/**
+ * One treatment per verdict (colour + icon + word). "No claim" takes the archive table's "Claim not allowed"
+ * treatment (blocked): never the agree (passed) or disagree (mismatch) one.
+ */
+export const VERDICT_STATUS: Readonly<Record<LiveVerdict, StatusKind>> = {
+  agree: 'passed',
+  disagree: 'mismatch',
+  inconclusive: 'not-applicable',
+  'no claim': 'blocked',
+};
+
+export interface LiveArchiveRow {
+  key: string;
+  code: LiveArchiveVerdict['code'];
+  window: Window;
+  windowText: string;
+  mean: number | null;
+  meanText: string;
+  /** Live mean − archive mean, always signed ("+0.123", "−0.288"), "—" when the backend has none. */
+  deltaText: string;
+  verdict: LiveVerdict;
+  verdictText: string;
+  verdictStatus: StatusKind;
+  /** The backend's reason, verbatim. */
+  reason: string;
+  /** An "agree" the live window's own gate does not back (backend-forbidden): never counted as a claim. */
+  inconsistency: string | null;
+}
+
+export interface LiveWindowRow {
+  key: string;
+  window: Window;
+  windowText: string;
+  covered: boolean;
+  coverageText: string;
+  mean: number | null;
+  meanText: string;
+  stderrText: string;
+  stderrSpoken: string;
+  /** N_eff at the one-sigma tau upper bound against the gate (≥ 20). */
+  nEffText: string;
+  stationarityText: string;
+  claimAllowed: boolean;
+  claimText: WindowRow['claimText'];
+  claimReason: string | null;
+  claimInconsistent: boolean;
+  /** The backend's window_stats text. */
+  detail: string;
+  archive: LiveArchiveRow[];
+}
+
+const samplesText = (n: number) => `${n} sample${n === 1 ? '' : 's'}`;
+
+/**
+ * The live trace's own gate on one window, read like `claimVerdict`: the backend flag is necessary, not
+ * sufficient. "Claim allowed" needs a covered, stationary window with a finite stderr and N_eff at the tau
+ * upper bound of at least 20 on the row itself.
+ */
+export function liveWindowGate(w: LiveComparisonWindow): ClaimVerdict {
+  const gaps: string[] = [];
+  if (!w.covered) gaps.push('window not covered');
+  else {
+    if (w.stationary === null) gaps.push('stationarity undecidable');
+    else if (!w.stationary) gaps.push('not stationary');
+    if (w.stderr === null || !Number.isFinite(w.stderr)) gaps.push('sampling uncertainty not finite');
+    if (w.nEffLower === null) gaps.push('N_eff at the tau upper bound not established');
+    else if (w.nEffLower < MIN_N_EFF) gaps.push(`N_eff (at the tau upper bound) below ${MIN_N_EFF}`);
+  }
+  if (w.saturatedClaimAllowed && gaps.length === 0) return { allowed: true, reason: null, inconsistent: false };
+  if (w.saturatedClaimAllowed) {
+    return { allowed: false, inconsistent: true, reason: `backend flag says allowed, but the window does not meet the gate (${gaps.join('; ')})` };
+  }
+  const reason = parseWindowDetail(w.detail).claimReason ?? (gaps.length > 0 ? gaps.join('; ') : null);
+  return { allowed: false, inconsistent: false, reason };
+}
+
+function liveNEffText(w: LiveComparisonWindow): string {
+  if (!w.covered) return '—';
+  if (w.nEffLower === null || !Number.isFinite(w.nEffLower)) return 'not established';
+  return `${formatNumber(w.nEffLower, 1)} (${w.nEffLower >= MIN_N_EFF ? '≥' : '<'} ${MIN_N_EFF})`;
+}
+
+export function liveWindowRows(c: LiveComparison): LiveWindowRow[] {
+  return c.windows.map((w) => {
+    const windowText = formatWindow(w.window);
+    const gate = liveWindowGate(w);
+    const se =
+      w.stderr === null || !Number.isFinite(w.stderr)
+        ? { text: '—', spoken: w.covered ? 'not finite' : 'not available' }
+        : w.stderrApproximate
+          ? { text: `≈${formatNumber(w.stderr, MEAN_DECIMALS)}`, spoken: `approximately ${formatNumber(w.stderr, MEAN_DECIMALS)}, a lower bound` }
+          : { text: formatNumber(w.stderr, MEAN_DECIMALS), spoken: formatNumber(w.stderr, MEAN_DECIMALS) };
+    const key = `${trimNumber(w.window[0])}-${trimNumber(w.window[1])}`;
+    return {
+      key,
+      window: w.window,
+      windowText,
+      covered: w.covered,
+      coverageText: `${w.covered ? 'Covered' : 'Not covered'} · ${samplesText(w.nSamples)}`,
+      mean: w.mean,
+      meanText: formatNumber(w.mean, MEAN_DECIMALS),
+      stderrText: se.text,
+      stderrSpoken: se.spoken,
+      nEffText: liveNEffText(w),
+      stationarityText: stationarityText(w, parseWindowDetail(w.detail)),
+      claimAllowed: gate.allowed,
+      claimText: gate.allowed ? 'Claim allowed' : 'Claim not allowed',
+      claimReason: gate.reason,
+      claimInconsistent: gate.inconsistent,
+      detail: w.detail,
+      archive: w.archive.map((v) => ({
+        key: `${key}:${v.code}`,
+        code: v.code,
+        window: w.window,
+        windowText,
+        mean: v.mean,
+        meanText: formatNumber(v.mean, MEAN_DECIMALS),
+        deltaText: v.delta === null ? '—' : formatSigned(v.delta, MEAN_DECIMALS),
+        verdict: v.verdict,
+        verdictText: VERDICT_TEXT[v.verdict],
+        verdictStatus: VERDICT_STATUS[v.verdict],
+        reason: v.reason,
+        inconsistency:
+          v.verdict === 'agree' && !backsAgree(w, v)
+            ? `"agree" without a backed claim: ${gate.allowed ? 'the backend reports no archive mean or Δ' : 'the live window does not meet the claim gate'}; not counted as a claim`
+            : null,
+      })),
+    };
+  });
+}
+
+/** An "agree" verdict is a claim only on a window whose own live gate holds, with an archive mean and Δ. */
+const backsAgree = (w: LiveComparisonWindow, v: LiveArchiveVerdict) =>
+  v.verdict === 'agree' && liveWindowGate(w).allowed && v.mean !== null && v.delta !== null;
+
+export interface ComparisonClaim {
+  /** "Saturated agreement: claim allowed" may be shown. */
+  allowed: boolean;
+  /** Why the backend flag and the verdicts cannot both hold (shown, never read as a claim); null when they agree. */
+  inconsistency: string | null;
+}
+
+/**
+ * D-024 item 3: a claim is shown only when the backend flag is true AND an "agree" verdict backs it (on a
+ * window whose live gate holds). A flag without such a verdict, or an "agree" under a false flag, is an
+ * inconsistency: it is named, and the claim is not allowed.
+ */
+export function comparisonClaim(c: LiveComparison): ComparisonClaim {
+  const agrees = c.windows.flatMap((w) => w.archive.filter((v) => v.verdict === 'agree').map((v) => ({ w, v })));
+  const backed = agrees.filter(({ w, v }) => backsAgree(w, v));
+  if (c.saturatedClaimAllowed && agrees.length === 0) {
+    return { allowed: false, inconsistency: 'The backend flag says a saturated-agreement claim is allowed, but no archive verdict is "agree".' };
+  }
+  if (c.saturatedClaimAllowed && backed.length === 0) {
+    return {
+      allowed: false,
+      inconsistency: 'The backend flag says a saturated-agreement claim is allowed, but no "agree" verdict sits on a window that meets the live claim gate.',
+    };
+  }
+  if (!c.saturatedClaimAllowed && agrees.length > 0) {
+    return { allowed: false, inconsistency: 'An archive verdict is "agree", but the backend flag says a saturated-agreement claim is not allowed.' };
+  }
+  return { allowed: c.saturatedClaimAllowed, inconsistency: null };
+}
+
+/** One line for the live panel: what Check transport shows, by the same rule (comparisonClaim). */
+export function comparisonSummary(c: LiveComparison): string {
+  if (c.windows.length === 0) return 'Archive comparison: could not be computed';
+  return `Archive comparison: saturated-agreement claim ${comparisonClaim(c).allowed ? 'allowed' : 'not allowed'}`;
+}
+
+/** "±10 % of |archive mean|": the TOST margin as the backend states it (a fraction of the archive mean). */
+export function marginText(fraction: number): string {
+  return `±${trimNumber(Number((fraction * 100).toFixed(2)))} % of |archive mean|`;
+}
+
+/** The bean samples' span in archive time, or null without samples. */
+export function spanText(c: LiveComparison): string | null {
+  if (c.tStart === null && c.tEnd === null) return null;
+  const t = (v: number | null) => (v === null ? '—' : trimNumber(Number(v.toFixed(3))));
+  return `${t(c.tStart)}–${t(c.tEnd)}`;
+}
 
 function traceLine(trace: TransportTrace, theme: ThemeName): PlotTrace {
   const s = seriesStyle(trace.code, theme);

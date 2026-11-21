@@ -2,7 +2,15 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { liveStatusStore, type LiveState, type LiveStatus, type LiveWorker, type SavedRun } from '../../lib/liveStatus';
+import {
+  liveStatusStore,
+  type LiveComparison,
+  type LiveComparisonWindow,
+  type LiveState,
+  type LiveStatus,
+  type LiveWorker,
+  type SavedRun,
+} from '../../lib/liveStatus';
 import { LiveView } from './LiveView';
 import { canLaunch, canTerminate, clockAdvance, launchBlockedReason, overlapClaim, provenanceIsLive, savedRunQualified, trackClocks } from './model';
 
@@ -446,6 +454,93 @@ test('L9 FA-3 the provenance badge reads Live only for a fresh, valid mode "live
   }
   expect(provenanceIsLive({ status: 'unreachable', message: 'x', lastKnown: { data: liveNow(), receivedAt: at } }, at)).toBe(false);
   expect(provenanceIsLive({ status: 'connecting' }, at)).toBe(false);
+});
+
+/** A valid live-status `comparison` (D-024) as the backend sends it with the committed archive: every verdict "no claim". */
+const noClaim = (reason: string, deltas: [number | null, number | null]): LiveComparisonWindow['archive'] => [
+  { code: 'stella', mean: 2.9, stderr: null, delta: deltas[0], verdict: 'no claim', reason },
+  { code: 'GENE', mean: 2.75, stderr: 0.021, delta: deltas[1], verdict: 'no claim', reason },
+];
+const COMPARISON: LiveComparison = {
+  tube: 'bean',
+  nSamples: 85,
+  tStart: 182.43,
+  tEnd: 290.1,
+  marginFraction: 0.1,
+  method: 'transport.stats + transport.compare (TOST)',
+  saturatedClaimAllowed: false,
+  reason: 'No window has an "agree" verdict.',
+  windows: [
+    {
+      window: [200, 300],
+      covered: true,
+      nSamples: 71,
+      mean: 2.612,
+      stderr: 0.031,
+      stderrApproximate: true,
+      nEff: 14.2,
+      nEffLower: 9.8,
+      stationary: null,
+      saturatedClaimAllowed: false,
+      detail: 'Saturated claim NOT allowed: N_eff (at the tau upper bound) below 20, not shown stationary.',
+      archive: noClaim('new trace not shown stationary on 200-300', [-0.288, -0.138]),
+    },
+    {
+      window: [300, 400],
+      covered: false,
+      nSamples: 0,
+      mean: null,
+      stderr: null,
+      stderrApproximate: true,
+      nEff: null,
+      nEffLower: null,
+      stationary: null,
+      saturatedClaimAllowed: false,
+      detail: 'not covered; no mean, uncertainty or claim.',
+      archive: noClaim('new trace does not cover 300-400', [null, null]),
+    },
+  ],
+};
+
+test('L9 T13 the live chart carries a one-line archive comparison summary linking to Check transport, only when live with the field', async () => {
+  // Live with the comparison: the claim verdict in one line, by Check transport's rule.
+  server.status = liveNow({ comparison: COMPARISON });
+  const a = render(<LiveView pollMs={60_000} autoPlay={false} />);
+  const line = await screen.findByTestId('comparison-summary');
+  expect(line.textContent).toBe('Archive comparison: saturated-agreement claim not allowed — see Check transport.');
+  expect(within(line).getByRole('link', { name: 'Check transport' })).toHaveAttribute('href', '#/transport');
+  a.unmount();
+
+  // A flag without an "agree" verdict is not a claim here either.
+  server.status = liveNow({ comparison: { ...COMPARISON, saturatedClaimAllowed: true } });
+  const b = render(<LiveView pollMs={60_000} autoPlay={false} />);
+  expect((await screen.findByTestId('comparison-summary')).textContent).toBe('Archive comparison: saturated-agreement claim not allowed — see Check transport.');
+  b.unmount();
+
+  // Not computed: said so.
+  server.status = liveNow({ comparison: { ...COMPARISON, windows: [], reason: "Live comparison could not be computed: KeyError: 'GENE'" } });
+  const c = render(<LiveView pollMs={60_000} autoPlay={false} />);
+  expect((await screen.findByTestId('comparison-summary')).textContent).toBe('Archive comparison: could not be computed — see Check transport.');
+  c.unmount();
+
+  // Live without the field: the chart, no line.
+  server.status = liveNow();
+  const d = render(<LiveView pollMs={60_000} autoPlay={false} />);
+  expect(await screen.findByText('New GX flux samples (live, archive units)')).toBeInTheDocument();
+  expect(screen.queryByTestId('comparison-summary')).toBeNull();
+  d.unmount();
+
+  // A fallback snapshot that still carries the comparison: no line (and no live chart).
+  server.status = status('fallback', {
+    reason: 'GPU 1 (triangular) worker failed: CUDA error. Other worker terminated.',
+    workers: [worker(0, 80, 5, { state: 'done' }), worker(1, 40, 2, { state: 'failed', error: 'CUDA error' })],
+    fallback: { active: true, label: 'Worker failed. No qualified GX rehearsal recorded — showing archived stella/GENE evidence', savedRunId: null },
+    comparison: COMPARISON,
+  });
+  render(<LiveView pollMs={60_000} autoPlay={false} />);
+  expect(await screen.findByText('FALLBACK — Worker failed')).toBeInTheDocument();
+  expect(screen.queryByTestId('comparison-summary')).toBeNull();
+  expect(screen.queryByText(/^Archive comparison/)).toBeNull();
 });
 
 test('A3 L9 a missing transport artifact on Advance plasma names the file instead of a blank replay panel', async () => {

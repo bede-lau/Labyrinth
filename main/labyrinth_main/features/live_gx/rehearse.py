@@ -41,7 +41,7 @@ from pathlib import Path
 
 from ..budget.pricing import REHEARSAL_H
 from . import budget_guard as guard
-from .orchestrator import COMPARISON_NOT_COMPUTED, Orchestrator, WorkerBackend, stopped_wording
+from .orchestrator import ARCHIVE_COMPARISON, Orchestrator, WorkerBackend, stopped_wording
 from .service import (
     POLL_INTERVAL_S,
     WORST_CASE_STOP_S,
@@ -156,7 +156,7 @@ def run_rehearsal(backend_factory: Callable[[str, int], WorkerBackend], *, state
             "outcome": "passed" if ok else "failed",
             "details": (f"Qualification rehearsal {run_id}, {name}: " +
                         ", ".join(f"{k} {'ok' if v else 'FAILED'}" for k, v in record["checks"].items()) + ". "
-                        + COMPARISON_NOT_COMPUTED),
+                        + ARCHIVE_COMPARISON),
         }
     atomic_write(state_dir / "runs" / f"{run_id}.json", json.dumps(record, indent=2) + "\n")
     if ok:

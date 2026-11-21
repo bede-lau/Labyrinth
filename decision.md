@@ -209,6 +209,39 @@ deployed consumer exists and the renderer and artifacts always ship together):
 **Consequences.** `interface.md` §10's list becomes empty except the known PRD-side mismatches. Every producer and consumer test changes
 with the contract (interface.md §9). The 129-sample acceptance can no longer be marked passed by an artifact alone.
 
+## D-024 · The live comparison with the archive is computed by the backend and carried in live-status `comparison` (closes cross-RX-2)
+**Context.** PRD "Check transport": "Compare time-weighted means on 200–300 and 300–400 when covered. Claim saturated agreement only for a
+covered stationary window with sampling uncertainty." New GX bean samples were converted to archive units and overlaid, but nothing compared
+them with the archive; the live provenance said "Live comparison NOT computed". The statistics already exist and are verified (D-013 window
+mean, D-017 gate: Sokal stderr, half-split stationarity, N_eff ≥ 20 at the τ upper bound, TOST `compare_window`).
+**Decision.**
+1. `contracts/live-status.schema.json` gains an optional, closed `comparison` object. Every snapshot of a session (the orchestrator's) carries it;
+   the gate's snapshot with no session omits it. Fields: `tube` (`"bean"`), `nSamples`, `tStart`/`tEnd` (the bean samples' span in archive units,
+   null without samples), `marginFraction` (0.10, the TOST margin as a fraction of |archive mean|), `method`, `saturatedClaimAllowed`, `reason`, `windows`.
+2. `windows` holds exactly the two PRD windows, 200–300 then 300–400, or is empty when the comparison could not be computed (`reason` says why;
+   a status answer never fails because of it). Each window: `window`, `covered`, `nSamples`, `mean`, `stderr`, `stderrApproximate`, `nEff`,
+   `nEffLower` (N_eff at the one-sigma τ upper bound: the gate's value), `stationary` (`true | false | null`, null = undecidable, as in
+   transport `windows[]`), `saturatedClaimAllowed` (the live trace's own gate on that window: covered ∧ stationary ∧ finite stderr ∧ nEffLower ≥ 20,
+   the same meaning as transport `windows[].saturatedClaimAllowed`), `detail` (the `window_stats` text) and `archive`: exactly two entries,
+   `stella` then `GENE`, each `{code, mean, stderr, delta, verdict, reason}` where `delta` = live mean − archive mean (null when either is missing)
+   and `verdict` ∈ `agree | disagree | inconclusive | no claim` is `transport.compare.compare_window(live, archive, window)` unchanged.
+   Schema `if/then`: a window with `covered: false` has `mean`, `stderr`, `nEff`, `nEffLower`, `stationary` null and `saturatedClaimAllowed` false.
+3. Top-level `saturatedClaimAllowed` is true **only** when at least one window has verdict `agree` against at least one archive trace (`agree` already
+   requires both sides to pass the gate). Consumers show a claim only when the flag is true **and** an `agree` verdict is present; a flag that
+   disagrees with the verdicts is shown as an inconsistency, never as a claim.
+4. The backend computes it from every bean sample received in the session (already converted, t×√2, Q÷2√2), against the committed archive
+   traces (`transport.archive.load_trace`), with `transport.stats` and `transport.compare` only — no second definition. It is recomputed when the
+   bean sample count changes and cached otherwise. The provenance's "Live comparison NOT computed" sentence is removed.
+5. The renderer shows the comparison only when `isLive` (a valid, fresh snapshot with `mode === "live"`), with the archive table's honesty rules:
+   "undecidable" for null stationarity, "not covered" and "—" for nulls, approximate stderr marked as a lower bound, the claim "not allowed" with its
+   reason, signed deltas, and stella and GENE never shown as agreeing with each other.
+**Consequences.** With the committed archive no verdict can be `agree`: every archive 200–300 / 300–400 window is undecidable and its N_eff is not
+established (the bias-corrected Sokal estimate does not converge; GENE's uncorrected fallback gives only N_eff ≈ 6 and 10), so the ≥ 20 gate is
+not met (D-017): `compare_window` answers "no claim" whatever the live trace does, and `saturatedClaimAllowed` stays false. That is the honest answer
+for 100-unit archive windows, and the reason is shown. The live mean, its uncertainty, its own gate and the deltas to both archive means are still
+shown. Tests drive the other verdicts with injected synthetic archive traces. `schemaVersion` stays 1 (optional field; saved runs written before
+this decision stay valid). The renderer's validator in `renderer/src/lib/liveContract.ts` changes, so tasks 02, 06 and 09 are re-verified.
+
 ## D-014 · (not adopted) "Wave mode" for the orchestrator's Stop hook
 **Context.** With parallel agents editing one working tree, the Stop hook (`verify.sh all` on the shared tree)
 repeatedly blocked the orchestrator on files it must not touch. A proposal to verify committed HEAD in a clean

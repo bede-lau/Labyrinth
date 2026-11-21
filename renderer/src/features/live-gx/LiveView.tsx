@@ -40,11 +40,13 @@ import {
   sendTerminate,
   terminationProblem,
   useLiveStatus,
+  type LiveComparison,
   type LiveState,
   type LiveStatus,
   type LiveWorker,
   type TerminateAnswer,
 } from '../../lib/liveStatus';
+import { comparisonSummary, liveComparison } from '../transport/model';
 import { PlotlyChart } from '../transport/PlotlyChart';
 import type { TransportArtifact } from '../transport/types';
 import { TIME_UNIT, FLUX_UNIT, playFigure } from './chart';
@@ -385,7 +387,7 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
 
       {isLiveNow && data ? (
         <SectionBoundary what="the live chart" resetKey={data.workers}>
-          <LiveChart workers={data.workers} />
+          <LiveChart workers={data.workers} comparison={liveComparison(live)} />
         </SectionBoundary>
       ) : (
         <SectionBoundary what="the replay" resetKey={`${transport.status}|${saved.status}`}>
@@ -592,7 +594,8 @@ function WorkerCard({ w, track }: { w: LiveWorker; track: ClockTrack | undefined
   );
 }
 
-function LiveChart({ workers }: { workers: LiveWorker[] }) {
+/** `comparison`: the backend's archive comparison, only for a fresh live snapshot that carries one (D-024). */
+function LiveChart({ workers, comparison }: { workers: LiveWorker[]; comparison: LiveComparison | null }) {
   const theme = useResolvedTheme();
   const series: PlaySeries[] = useMemo(
     () =>
@@ -614,6 +617,11 @@ function LiveChart({ workers }: { workers: LiveWorker[] }) {
       <p className="lg-note">
         Q in <Unit unit={FLUX_UNIT} />, t in <Unit unit={TIME_UNIT} />; compare with the archives on the Check transport view.
       </p>
+      {comparison && (
+        <p className="lg-note" data-testid="comparison-summary">
+          {comparisonSummary(comparison)} — see <a href="#/transport">Check transport</a>.
+        </p>
+      )}
     </Panel>
   );
 }

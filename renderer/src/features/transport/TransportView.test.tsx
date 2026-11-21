@@ -1,13 +1,15 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { LiveState, LiveStatus } from '../../lib/liveStatus';
+import { liveStatusStore, type LiveComparison, type LiveComparisonWindow, type LiveState, type LiveStatus } from '../../lib/liveStatus';
 import {
   buildTransportFigure,
   claimSummary,
+  comparisonClaim,
   discrepancy,
   gapSentence,
   lateComparison,
+  liveComparison,
   liveGxSamples,
   parseWindowDetail,
   plotWindows,
@@ -723,4 +725,371 @@ test('A3 transport: a missing or invalid artifact shows an error naming the file
   render(<TransportView livePollMs={60_000} />);
   const bad = await screen.findByRole('note', { name: /artifacts\/transport\.json failed to load/ });
   expect(bad).toHaveTextContent('unexpected schemaVersion');
+});
+
+/* ============================== T13 live comparison (D-024) =================================== */
+
+const BEAN: Samples = [
+  { t: 182.43, Q: 2.6 },
+  { t: 290.1, Q: 2.62 },
+];
+// What the backend sends with the committed archive: 200–300 covered but undecidable with N_eff < 20, 300–400 not
+// reached yet, every verdict "no claim" (D-017), the claim not allowed.
+const NO_CLAIM_DETAIL =
+  "Half-split test: mean[200,250]=2.6300, mean[250,300]=2.5940, t=+0.71 vs t_crit=2.09 (df=19.1, two-sided alpha 0.05), tau=6.1 time units -> undecidable — test result 'stationary' is indicative only (N_eff=14.2 < 20). " +
+  'tau_int=3.52 time units (bias-corrected Sokal, C=5, lag 11), N_eff=14.2 (>= 9.8 at the one-sigma tau upper bound), stderr=0.031 — APPROXIMATE (N_eff at the tau upper bound < 20; Sokal stderr biased low at small N_eff). ' +
+  'Saturated claim NOT allowed: N_eff (at the tau upper bound) below 20, not shown stationary.';
+const STELLA_200_REASON = 'new trace not shown stationary on 200-300; archive trace not shown stationary on 200-300';
+const GENE_200_REASON = 'new trace not shown stationary on 200-300';
+const UNCOVERED_REASON = 'new trace does not cover 300-400';
+const covered200 = (): LiveComparisonWindow => ({
+  window: [200, 300],
+  covered: true,
+  nSamples: 71,
+  mean: 2.612,
+  stderr: 0.031,
+  stderrApproximate: true,
+  nEff: 14.2,
+  nEffLower: 9.8,
+  stationary: null,
+  saturatedClaimAllowed: false,
+  detail: NO_CLAIM_DETAIL,
+  archive: [
+    { code: 'stella', mean: 2.9, stderr: null, delta: 2.612 - 2.9, verdict: 'no claim', reason: STELLA_200_REASON },
+    { code: 'GENE', mean: 2.75, stderr: 0.021, delta: 2.612 - 2.75, verdict: 'no claim', reason: GENE_200_REASON },
+  ],
+});
+const uncovered300 = (): LiveComparisonWindow => ({
+  window: [300, 400],
+  covered: false,
+  nSamples: 0,
+  mean: null,
+  stderr: null,
+  stderrApproximate: true,
+  nEff: null,
+  nEffLower: null,
+  stationary: null,
+  saturatedClaimAllowed: false,
+  detail: 'trace ends at t = 290.1 before the window ends at 400; no mean, uncertainty or claim.',
+  archive: [
+    { code: 'stella', mean: 2.55, stderr: null, delta: null, verdict: 'no claim', reason: UNCOVERED_REASON },
+    { code: 'GENE', mean: 2.6804, stderr: 0.0207, delta: null, verdict: 'no claim', reason: UNCOVERED_REASON },
+  ],
+});
+const COMPARISON: LiveComparison = {
+  tube: 'bean',
+  nSamples: 85,
+  tStart: 182.43,
+  tEnd: 290.1,
+  marginFraction: 0.1,
+  method: 'transport.stats window_stats (time-weighted mean, Sokal stderr, half-split stationarity) and transport.compare compare_window (TOST).',
+  saturatedClaimAllowed: false,
+  reason: 'No saturated-agreement claim: no window has an "agree" verdict (archive 200–300 and 300–400 are undecidable with N_eff < 20, D-017).',
+  windows: [covered200(), uncovered300()],
+};
+// Synthetic: every verdict once, deltas of both signs, a live window whose own gate holds (D-024 tests drive the
+// other verdicts with injected traces the same way).
+const ALLOWED: LiveComparison = {
+  ...COMPARISON,
+  nSamples: 260,
+  saturatedClaimAllowed: true,
+  reason: 'Saturated agreement claim allowed on 200-300 against stella.',
+  windows: [
+    {
+      ...covered200(),
+      nSamples: 140,
+      stderr: 0.012,
+      stderrApproximate: false,
+      nEff: 31,
+      nEffLower: 24.5,
+      stationary: true,
+      saturatedClaimAllowed: true,
+      detail: 'Half-split test: … -> stationary. tau_int=2.1 time units, N_eff=31 (>= 24.5 at the one-sigma tau upper bound), stderr=0.012 — reliable. Saturated claim allowed.',
+      archive: [
+        { code: 'stella', mean: 2.6, stderr: 0.01, delta: 0.012, verdict: 'agree', reason: '90% CI of delta [-0.01, 0.034] lies within ±0.26 (TOST, alpha 0.05)' },
+        { code: 'GENE', mean: 2.75, stderr: 0.01, delta: -0.138, verdict: 'disagree', reason: '95% CI of delta [-0.17, -0.11] excludes 0' },
+      ],
+    },
+    {
+      ...covered200(),
+      window: [300, 400],
+      nSamples: 120,
+      mean: 2.7,
+      stderr: 0.05,
+      nEffLower: 8.4,
+      stationary: false,
+      detail: 'Half-split test: … -> NOT stationary. Saturated claim NOT allowed: N_eff (at the tau upper bound) below 20, not shown stationary.',
+      archive: [
+        { code: 'stella', mean: 2.55, stderr: 0.02, delta: 0.15, verdict: 'inconclusive', reason: '95% CI of delta includes 0: uncertainty too large' },
+        { code: 'GENE', mean: 2.68, stderr: 0.02, delta: 0.02, verdict: 'no claim', reason: 'new trace not shown stationary on 300-400' },
+      ],
+    },
+  ],
+};
+const EMPTY: LiveComparison = { ...COMPARISON, nSamples: 0, tStart: null, tEnd: null, windows: [], reason: "Live comparison could not be computed: KeyError: 'GENE'" };
+const copyOf = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+const withComparison = (s: LiveStatus, c: LiveComparison = COMPARISON): LiveStatus => ({ ...s, comparison: c });
+const liveCompared = (c: LiveComparison = COMPARISON) => withComparison(liveStatus('live', BEAN), c);
+
+const comparisonPanel = () => screen.queryByRole('region', { name: /^Live comparison/ });
+const liveCell = (key: string, label: string) => screen.getByTestId(`live-row-${key}`).querySelector(`[data-label="${label}"]`) as HTMLElement;
+const verdictCell = (key: string, label: string) => screen.getByTestId(`verdict-row-${key}`).querySelector(`[data-label="${label}"]`) as HTMLElement;
+/** A cell's own text: without the unit drawn only in the narrow layout, the reason line and the disclosures. */
+function ownText(el: Element): string {
+  const copy = el.cloneNode(true) as Element;
+  copy.querySelectorAll('.tr-cell-unit, .tr-claim__why, details').forEach((n) => n.remove());
+  return copy.textContent ?? '';
+}
+const headerPills = (panel: HTMLElement) =>
+  [...panel.querySelectorAll<HTMLElement>('.lab-panel__meta .lab-pill')].map((p) => `${p.dataset.status}:${p.textContent}`);
+const verdictPills = () =>
+  screen.getAllByTestId(/^verdict-row-/).map((r) => {
+    const pill = r.querySelector<HTMLElement>('[data-label="Verdict (live vs archive)"] .lab-pill')!;
+    return `${r.dataset.testid?.replace('verdict-row-', '')} ${pill.dataset.status}:${pill.textContent}`;
+  });
+
+// Every state that is not a fresh live snapshot, each payload carrying a comparison: nothing is shown.
+const COMPARISON_HIDDEN: [string, Api, Record<string, unknown>][] = [
+  ['mode unavailable', withComparison(liveStatus('unavailable', BEAN)), { status: 'ready', data: { mode: 'unavailable' } }],
+  ['mode idle', withComparison(liveStatus('idle', BEAN)), { status: 'ready', data: { mode: 'idle' } }],
+  ['mode launching', withComparison(liveStatus('launching', BEAN)), { status: 'ready', data: { mode: 'launching' } }],
+  ['mode fallback', withComparison(liveStatus('fallback', BEAN)), { status: 'ready', data: { mode: 'fallback' } }],
+  ['mode terminated', withComparison(liveStatus('terminated', BEAN)), { status: 'ready', data: { mode: 'terminated' } }],
+  ['an unreachable API (HTTP 502)', null, { status: 'unreachable', cause: 'http' }],
+  ['an unreachable API (network error)', 'reject', { status: 'unreachable', cause: 'network' }],
+];
+
+test.each(COMPARISON_HIDDEN)('T13 no live comparison for %s, even when the snapshot carries one', async (_name, api, state) => {
+  serve(api);
+  render(<TransportView livePollMs={60_000} />);
+  await screen.findByRole('region', { name: /^Verdict/ });
+  // The answer was applied (the snapshot with its comparison is in the store), and still nothing is drawn.
+  await waitFor(() => expect(liveStatusStore.getState()).toMatchObject(state));
+  expect(comparisonPanel()).toBeNull();
+  expect(screen.queryByText(/^Live comparison|^Saturated agreement: claim/)).toBeNull();
+  expect(screen.queryByTestId('live-window-table')).toBeNull();
+  expect(screen.queryByTestId('live-verdict-table')).toBeNull();
+});
+
+test('T13 a live snapshot without the comparison field shows the GX overlay and no comparison', async () => {
+  serve(liveStatus('live', BEAN));
+  render(<TransportView livePollMs={60_000} />);
+  expect(await screen.findByText('LIVE · GX bean')).toBeInTheDocument();
+  expect(comparisonPanel()).toBeNull();
+  expect(screen.queryByText(/^Saturated agreement: claim/)).toBeNull();
+});
+
+test('T13 liveComparison: only a fresh, ready, live snapshot that carries a comparison yields one (pure)', () => {
+  const at = 1_000_000;
+  const data = liveCompared();
+  const ready = (d: LiveStatus, receivedAt = at, freshForMs = 5000): LiveState => ({ status: 'ready', data: d, receivedAt, freshForMs });
+  const states: [string, LiveState, LiveComparison | null][] = [
+    ['connecting', { status: 'connecting' }, null],
+    ['stale', { status: 'unreachable', cause: 'stale', message: 'no fresh status for 9 s', lastKnown: { data, receivedAt: at - 9000 } }, null],
+    ['unreachable', { status: 'unreachable', cause: 'http', message: 'HTTP 502', lastKnown: { data, receivedAt: at } }, null],
+    ['live, fresh', ready(data), COMPARISON],
+    ['live, at the end of its freshness', ready(data, at - 5000), COMPARISON],
+    ['live, past its freshness', ready(data, at - 5001), null],
+    ['live, no timestamp', { status: 'ready', data }, null],
+    ['live, no field', ready(liveStatus('live', BEAN)), null],
+    ...(['unavailable', 'idle', 'launching', 'fallback', 'terminated'] as const).map((m): [string, LiveState, null] => [m, ready(withComparison(liveStatus(m, BEAN))), null]),
+  ];
+  expect(Object.fromEntries(states.map(([k, s]) => [k, liveComparison(s, at)]))).toEqual(Object.fromEntries(states.map(([k, , c]) => [k, c])));
+});
+
+test('T13 the comparison leaves with the live session: a stale or unreachable API or another mode hides it, live brings it back', async () => {
+  let api: Api | 'hang' = liveCompared();
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/artifacts/transport.json') return new Response(JSON.stringify(ARTIFACT));
+      if (url !== '/api/live/status') return new Response('not found', { status: 404 });
+      if (api === 'hang') return new Promise<Response>(() => {});
+      if (api === 'reject') throw new TypeError('network down');
+      return api ? new Response(JSON.stringify(api)) : new Response('down', { status: 502 });
+    }),
+  );
+  render(<TransportView livePollMs={300} />);
+  await waitFor(() => expect(comparisonPanel()).not.toBeNull());
+
+  const real = Date.now.bind(Date);
+  const clock = vi.spyOn(Date, 'now');
+  try {
+    // 1. The API stops answering and the clock moves on: the snapshot outlives its freshness (stale) and goes.
+    api = 'hang';
+    clock.mockImplementation(() => real() + 3_600_000);
+    await waitFor(
+      () => {
+        expect(liveStatusStore.getState()).toMatchObject({ status: 'unreachable', cause: 'stale' });
+        expect(comparisonPanel()).toBeNull();
+      },
+      { timeout: 3000 },
+    );
+    // 2. An answer that is not a snapshot: still nothing (no comparison kept from the last live snapshot).
+    api = null;
+    await waitFor(() => expect(liveStatusStore.getState()).toMatchObject({ status: 'unreachable', cause: 'http' }), { timeout: 3000 });
+    expect(comparisonPanel()).toBeNull();
+    // 3. Live again: shown again, from the new snapshot.
+    api = liveCompared(ALLOWED);
+    await waitFor(() => expect(comparisonPanel()).not.toBeNull(), { timeout: 3000 });
+    expect(screen.getByTestId('comparison-samples').textContent).toBe('260');
+    // 4. The session falls back while its snapshots still carry a comparison: gone.
+    api = withComparison(liveStatus('fallback', BEAN), ALLOWED);
+    await waitFor(() => expect(liveStatusStore.getState()).toMatchObject({ status: 'ready', data: { mode: 'fallback' } }), { timeout: 3000 });
+    expect(comparisonPanel()).toBeNull();
+  } finally {
+    clock.mockRestore();
+  }
+}, 15_000);
+
+test('T13 live: facts, both windows ("Not covered" and "—" for the uncovered one, "Undecidable" for null), the archive verdicts and "claim not allowed" with the backend reason', async () => {
+  serve(liveCompared());
+  render(<TransportView livePollMs={60_000} />);
+  const panel = await screen.findByRole('region', { name: 'Live comparison: new GX bean samples vs the stella and GENE archives' });
+  expect(headerPills(panel)).toEqual(['live:LIVE · this session', 'blocked:Saturated agreement: claim not allowed']);
+  expect(within(panel).queryByText('Saturated agreement: claim allowed')).toBeNull();
+  expect(within(panel).queryByRole('note', { name: /Inconsistent/ })).toBeNull();
+  // Header facts, the backend reason verbatim.
+  expect(screen.getByTestId('comparison-samples').textContent).toBe('85');
+  expect(screen.getByTestId('comparison-span').textContent).toBe('182.43–290.1 a/vth,i');
+  expect(screen.getByTestId('comparison-margin').textContent).toBe('±10 % of |archive mean|');
+  expect(screen.getByTestId('comparison-reason').textContent).toBe(COMPARISON.reason);
+  expect(within(panel).getByText(COMPARISON.method, { selector: 'details p' })).toBeInTheDocument();
+
+  // The live trace on each window, in the order the backend sends them.
+  expect(screen.getAllByTestId(/^live-row-/).map((r) => r.dataset.testid)).toEqual(['live-row-200-300', 'live-row-300-400']);
+  const labels = ['Coverage', 'Mean', '± stderr', 'Effective samples (gate 20)', 'Stationarity', 'Live trace claim'];
+  const row = (key: string) => labels.map((l) => ownText(liveCell(key, l)));
+  expect(row('200-300')).toEqual(['Covered · 71 samples', '2.612', '≈0.031', '9.8 (< 20)', 'Undecidable', 'Claim not allowed']);
+  expect(row('300-400')).toEqual(['Not covered · 0 samples', '—', '—', '—', 'Not covered', 'Claim not allowed']);
+  expect(liveCell('200-300', '± stderr')).toHaveAccessibleName('stderr approximately 0.031, a lower bound');
+  expect(liveCell('300-400', '± stderr')).toHaveAccessibleName('stderr not available');
+  expect(liveCell('200-300', 'Live trace claim').querySelector('.lab-pill')).toHaveAttribute('data-status', 'blocked');
+  expect(liveCell('200-300', 'Live trace claim').querySelector('.tr-claim__why')?.textContent).toBe('N_eff (at the tau upper bound) below 20, not shown stationary');
+  expect(liveCell('300-400', 'Live trace claim').querySelector('.tr-claim__why')?.textContent).toBe('window not covered');
+
+  // Against each archive trace: archive mean, signed Δ (live − archive, "—" when the backend has none), verdict.
+  const vrow = (key: string) => ['Window (t)', 'Archive mean', 'Δ = live − archive', 'Verdict (live vs archive)'].map((l) => ownText(verdictCell(key, l)));
+  expect(vrow('200-300:stella')).toEqual(['200–300', '2.900', '−0.288', 'No claim']);
+  expect(vrow('200-300:GENE')).toEqual(['200–300', '2.750', '−0.138', 'No claim']);
+  expect(vrow('300-400:stella')).toEqual(['300–400', '2.550', '—', 'No claim']);
+  expect(vrow('300-400:GENE')).toEqual(['300–400', '2.680', '—', 'No claim']);
+  expect(screen.getAllByTestId(/^verdict-row-/).map((r) => within(r).getByRole('rowheader').textContent)).toEqual(['stella', 'GENE', 'stella', 'GENE']);
+  // "No claim" has its own treatment, never the agree or disagree one; each reason is there, verbatim.
+  expect(verdictPills()).toEqual(['200-300:stella blocked:No claim', '200-300:GENE blocked:No claim', '300-400:stella blocked:No claim', '300-400:GENE blocked:No claim']);
+  expect(within(screen.getByTestId('verdict-row-200-300:stella')).getByText(STELLA_200_REASON, { selector: 'details p' })).toBeInTheDocument();
+  expect(within(screen.getByTestId('verdict-row-200-300:GENE')).getByText(GENE_200_REASON, { selector: 'details p' })).toBeInTheDocument();
+  expect(within(screen.getByTestId('verdict-row-300-400:GENE')).getByText(UNCOVERED_REASON, { selector: 'details p' })).toBeInTheDocument();
+  // stella and GENE are never presented as agreeing with each other.
+  expect(screen.getByTestId('live-key')).toHaveTextContent('it says nothing about stella against GENE, which are not shown to agree with each other');
+  expect(document.body).not.toHaveTextContent(/stella and GENE agree|are equivalent|in agreement with each other/i);
+  // The section sits right under the plot that overlays the same GX samples.
+  const titles = screen.getAllByRole('region').filter((r) => r.classList.contains('lab-panel')).map((r) => within(r).getAllByRole('heading')[0]!.textContent);
+  expect(titles.slice(0, 3)).toEqual([
+    'Verdict: what the archived evidence supports',
+    'Bean tube ion heat flux: stella and GENE archives',
+    'Live comparison: new GX bean samples vs the stella and GENE archives',
+  ]);
+});
+
+test('T13 verdict cells read Agree / Disagree / Inconclusive / No claim with distinct treatments, deltas carry + and −, and the claim pill needs flag + agree', async () => {
+  serve(liveCompared(ALLOWED));
+  render(<TransportView livePollMs={60_000} />);
+  const panel = await screen.findByRole('region', { name: /^Live comparison/ });
+  expect(verdictPills()).toEqual([
+    '200-300:stella passed:Agree',
+    '200-300:GENE mismatch:Disagree',
+    '300-400:stella not-applicable:Inconclusive',
+    '300-400:GENE blocked:No claim',
+  ]);
+  const delta = (key: string) => ownText(verdictCell(key, 'Δ = live − archive'));
+  expect(['200-300:stella', '200-300:GENE', '300-400:stella', '300-400:GENE'].map(delta)).toEqual(['+0.012', '−0.138', '+0.150', '+0.020']);
+  // The live trace's own gate, row by row: a plain stderr when the backend does not flag it approximate.
+  const labels = ['Coverage', 'Mean', '± stderr', 'Effective samples (gate 20)', 'Stationarity', 'Live trace claim'];
+  expect(labels.map((l) => ownText(liveCell('200-300', l)))).toEqual(['Covered · 140 samples', '2.612', '0.012', '24.5 (≥ 20)', 'Stationary', 'Claim allowed']);
+  expect(labels.map((l) => ownText(liveCell('300-400', l)))).toEqual(['Covered · 120 samples', '2.700', '≈0.050', '8.4 (< 20)', 'Not stationary', 'Claim not allowed']);
+  expect(liveCell('200-300', 'Live trace claim').querySelector('.lab-pill')).toHaveAttribute('data-status', 'passed');
+  // Flag true and an "agree" on a window whose live gate holds: the one case that shows the claim.
+  expect(headerPills(panel)).toEqual(['live:LIVE · this session', 'passed:Saturated agreement: claim allowed']);
+  expect(within(panel).queryByRole('note', { name: /Inconsistent/ })).toBeNull();
+  expect(screen.getByTestId('comparison-reason').textContent).toBe(ALLOWED.reason);
+});
+
+test('T13 the claim needs the flag AND an agree verdict: a flag without one, or an agree without the flag, is an inconsistency, never a claim', async () => {
+  const flagOnly: LiveComparison = { ...COMPARISON, saturatedClaimAllowed: true };
+  const agreeOnly: LiveComparison = { ...ALLOWED, saturatedClaimAllowed: false };
+  const ungated = copyOf(ALLOWED);
+  ungated.windows[0]!.stationary = null; // the "agree" now sits on a window whose own gate does not hold
+  expect(comparisonClaim(COMPARISON)).toEqual({ allowed: false, inconsistency: null });
+  expect(comparisonClaim(ALLOWED)).toEqual({ allowed: true, inconsistency: null });
+  expect(comparisonClaim(flagOnly)).toEqual({ allowed: false, inconsistency: 'The backend flag says a saturated-agreement claim is allowed, but no archive verdict is "agree".' });
+  expect(comparisonClaim(agreeOnly)).toEqual({ allowed: false, inconsistency: 'An archive verdict is "agree", but the backend flag says a saturated-agreement claim is not allowed.' });
+  expect(comparisonClaim(ungated)).toEqual({
+    allowed: false,
+    inconsistency: 'The backend flag says a saturated-agreement claim is allowed, but no "agree" verdict sits on a window that meets the live claim gate.',
+  });
+  expect(comparisonClaim({ ...EMPTY, saturatedClaimAllowed: true }).allowed).toBe(false);
+
+  // Rendered: the flag without an agree verdict is named in a callout and the pill says "not allowed".
+  serve(liveCompared(flagOnly));
+  const first = render(<TransportView livePollMs={60_000} />);
+  const panel = await screen.findByRole('region', { name: /^Live comparison/ });
+  expect(headerPills(panel)).toEqual(['live:LIVE · this session', 'blocked:Saturated agreement: claim not allowed']);
+  const callout = within(panel).getByRole('note', { name: 'Warning: Inconsistent comparison: the claim flag and the verdicts disagree' });
+  expect(within(callout).getByTestId('comparison-inconsistency').textContent).toBe(comparisonClaim(flagOnly).inconsistency);
+  expect(callout).toHaveTextContent('No saturated-agreement claim is shown.');
+  expect(screen.queryByText('Saturated agreement: claim allowed')).toBeNull();
+  first.unmount();
+
+  // An "agree" on a window that does not meet the live gate: shown as the backend's word, flagged, not counted.
+  serve(liveCompared(ungated));
+  render(<TransportView livePollMs={60_000} />);
+  const panel2 = await screen.findByRole('region', { name: /^Live comparison/ });
+  expect(headerPills(panel2)).toEqual(['live:LIVE · this session', 'blocked:Saturated agreement: claim not allowed']);
+  expect(verdictCell('200-300:stella', 'Verdict (live vs archive)').querySelector('.tr-claim__why')?.textContent).toBe(
+    '"agree" without a backed claim: the live window does not meet the claim gate; not counted as a claim',
+  );
+  expect(ownText(liveCell('200-300', 'Live trace claim'))).toBe('Claim not allowed');
+  expect(liveCell('200-300', 'Live trace claim').querySelector('.tr-claim__why')?.textContent).toBe(
+    'backend flag says allowed, but the window does not meet the gate (stationarity undecidable)',
+  );
+  expect(within(panel2).getByRole('note', { name: /Inconsistent comparison/ })).toBeInTheDocument();
+});
+
+test('T13 empty windows: "Live comparison could not be computed" with the backend reason, and no table', async () => {
+  serve(liveCompared(EMPTY));
+  render(<TransportView livePollMs={60_000} />);
+  const panel = await screen.findByRole('region', { name: /^Live comparison/ });
+  const callout = within(panel).getByRole('note', { name: 'Note: Live comparison could not be computed' });
+  expect(within(callout).getByTestId('comparison-reason').textContent).toBe(EMPTY.reason);
+  expect(within(panel).queryAllByRole('table')).toEqual([]);
+  expect(screen.queryByTestId('live-key')).toBeNull();
+  expect(headerPills(panel)).toEqual(['live:LIVE · this session', 'blocked:Saturated agreement: claim not allowed']);
+  expect(screen.getByTestId('comparison-samples').textContent).toBe('0');
+  expect(screen.getByTestId('comparison-span').textContent).toBe('no bean samples yet');
+  expect(screen.getAllByTestId('comparison-reason')).toHaveLength(1);
+});
+
+test('T13 DS-6 every live comparison cell carries its column label and the facts reflow, so a 390 px phone needs no sideways page scroll', async () => {
+  serve(liveCompared(ALLOWED));
+  render(<TransportView livePollMs={60_000} />);
+  await screen.findByRole('region', { name: /^Live comparison/ });
+  const tables = [screen.getByTestId('live-window-table'), screen.getByTestId('live-verdict-table')];
+  for (const table of tables) {
+    // The narrow card layout of the archive table applies: the same well and table classes.
+    expect(table).toHaveClass('tr-table');
+    expect(table.parentElement).toHaveClass('tr-table-wrap');
+    expect(table.parentElement).toHaveAttribute('tabindex', '0');
+    const heads = within(table).getAllByRole('columnheader').length;
+    for (const tr of within(table).getAllByRole('row').slice(1)) {
+      const tds = [...tr.querySelectorAll('td')];
+      expect(tds).toHaveLength(heads - 1);
+      expect(tds.every((td) => (td.getAttribute('data-label') ?? '').length > 0)).toBe(true);
+    }
+  }
+  const css = readFileSync(resolve(__dirname, 'transport.css'), 'utf8');
+  expect(css).toMatch(/\.tr-facts\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(min\(100%/);
+  expect(css).toMatch(/\.tr-facts dd\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  expect(css).toMatch(/\.tr-live \.tr-claim__why, \.tr-live \.tr-details p, \.tr-live \.lab-callout__body\s*\{[^}]*overflow-wrap:\s*anywhere/);
 });

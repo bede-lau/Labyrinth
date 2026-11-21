@@ -16,6 +16,6 @@ frontend-engineer (`renderer/src/shell/`, `renderer/src/lib/`)
 | A1–A5 | `renderer/src/shell/*.test.tsx`, `renderer/src/lib/*.test.ts` |
 
 ## Status
-DONE
+VERIFYING
 
-Verified at commit 3faed3a: tasks/09-app-shell/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).
+Reopened 2026-11-20 for D-024: `renderer/src/lib/liveContract.ts` validates the new live-status `comparison` field. Previously DONE at commit 3faed3a (VERIFY.md run of that date, `Verdict: PASS`).
