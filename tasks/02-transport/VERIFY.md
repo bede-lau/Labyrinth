@@ -1315,3 +1315,280 @@ probe copy removed
 - Five of five T13 mutations go red on assertions.
 
 Verdict: PASS
+
+---
+
+## Run 6 — whole task
+Verifier run: 2026-11-21, commit 8a85c67
+
+Scope: T1–T13 after D-025 (τ_int floored at ½ sample in `transport/stats.py`, so N_eff never exceeds the samples in a window; `half_split_test` keeps its unfloored se and only caps its reported N_eff/df at N − 1). The owner asked for a short run: targeted tests, one independent probe per outcome, at most five mutations, all mutations in an isolated copy. The focus is T3 and T6.
+
+Tree state:
+- `git status --short` (whole tree) was empty at the start and at the end. HEAD was 8a85c67 both times.
+- `git diff --stat 77fd8b6 HEAD` on the owned paths lists only `main/labyrinth_main/features/transport/stats.py` (36 insertions, 14 deletions). The whole commit touches no file under `renderer/` or `contracts/`; `compare.py`, `units.py`, `archive.py` and `artifact.py` are unchanged, so the frontend outcomes carry over from run 5.
+
+Where each step ran:
+- Shared tree, read-only (no bytecode, no pytest cache): the targeted pytest and vitest runs, `check_boundaries.py`, and my probe (`probe.py`), which imports HEAD's code and, as a separate package in my scratch directory, the 77fd8b6 `stats.py`/`compare.py` from `git show`.
+- Isolated copy from `scripts/probe-copy.sh vt02r6g` (deleted at the end): `verify.sh all` and the five mutations.
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| T1 | Traces from `compared/test5/{stella,GENE}/{t,Q}` of the pinned h5, units, tgrad 3 / ngrad 1 in provenance | two `test_T1_*`: pass | My own h5py read: stella 1441 raw, 1433 after dedup; GENE 1106. A recursive diff of `artifacts/transport.json` at 77fd8b6 against HEAD finds 7 differing paths, all `windows[i].stationarityDetail`: traces, units and provenance are unchanged | PASS |
+| T2 | Edge-interpolated means reproduce 2.242 (stella 1500–1900) and 2.474 (GENE 1500–1893.765) | two `test_T2_*`: pass | My segment integrator gives 2.2421269 and 2.4738618; both fixtures `matches: true`. Every window mean is unchanged against 77fd8b6 (JSON diff) and old and new `window_stats` agree exactly on all 7 archive rows | PASS |
+| T3 | Coverage, mean, autocorrelation-corrected stderr, stationarity, claim gate per window | six `test_T3_*`: pass (two new for D-025). 5 of 5 mutations of `stats.py` red | P1: 9900 white-noise windows with 8–40 in-window samples (uniform and irregular times): N_eff above N − 1 in 0 (`sampling_error` and `half_split_test`), stderr below s/√(N−1) in 0, floored `n_eff_lower` off the M = 3 formula in 0. The gate opened 0 times below 34 samples (77fd8b6: 1519 of 7800) and opens from 34 on, matching the analytic bound (N−1)/(1+√(14/N)) = 19.38 at 33, 20.10 at 34. 156 adversarial patterns (alternating, period 3/4, random walk, step) with 8–33 samples: no claim. P2: half-split false rejection on white noise 2.6–5.2 % for N = 12–200, t statistic bit-identical to 77fd8b6 in 18000 of 18000. P3: AR(1) N = 2000 and N = 1000, 200 seeds each: every row bit-identical to 77fd8b6, claims 193 and 186 unchanged, coverage 0.935. Archive: no window floored, all `stationary` null, all claims false | PASS (minors m1, m2) |
+| T4 | Reduced Modal 5.79 on 300–400 against archive means; 2.55 / 2.68 fixtures; sample-span 2.674 note | `test_T4_*`: pass | My means 2.5545375 → 2.55 and 2.6750657 → 2.68, equal to `reducedModalRun.archive`; "2.674" is in a fixture note; 5.79 is `prd-reported` with computed null. Unchanged against 77fd8b6 | PASS |
+| T5 | `gx_to_archive` = (t·√2, Q/(2√2)); raises unless identical references are asserted | `test_T5_*`: pass | [0, 1, 100], [1, 2, 8] give exactly t·√2 and Q/(2√2). Refuses False, None, 1, 'yes' and np.True_ with ValueError. `units.py` unchanged | PASS |
+| T6 | `compare_window` returns verdict, delta and combined uncertainty, and "no claim" when uncovered or non-stationary | three `test_T6_*` and the new `test_L11_a_sparse_live_trace_never_claims_…`: pass | P5: a sparse white-noise new trace (12–33 in-window samples, 200 seeds each) against an archive that passes its gate at the same mean: 1400 of 1400 "no claim" (77fd8b6: 425 "agree"). 100 dense AR(1) pairs: verdict, delta, combined stderr, df and both CIs bit-identical to 77fd8b6. Real archive stella vs GENE on 200–300, 300–400, 1500–1893.765 and 1500–1900: "no claim", Δ equal to my integrator (−0.2333 on 1500–1893.765), identical to 77fd8b6 | PASS |
+| T7 | Triangular 2.22 over 1200–1500, `rawTraceStatus: unverified`, no triangular trace | `test_T7_*`: pass | `triangular` is 2.22, [1200, 1500], `unverified`; the only trace tube is `bean` | PASS |
+| T8 | Plotly overlay of stella and GENE bean traces, shared unit-labelled axes, bands 200–300 / 300–400 / 1500–1900 | four T8 tests: pass | No renderer file changed since 77fd8b6 (run 5 probed it); traces and windows in the artifact are unchanged (JSON diff) | PASS |
+| T9 | Window table: mean ± stderr, coverage, stationarity, explicit claim allowed / not allowed per row | three T9 tests, FF-15, FF-2: pass | The renderer reads N_eff, approximate, indicative and the claim reason out of `stationarityDetail` (`model.ts:57-74`). Its regexes, run in Python on the old and new detail strings, give equal fields on 7 of 7 rows; only the "Method:" text gained the D-025 clause | PASS |
+| T10 | Discrepancy card: 5.79 vs archive values with delta; fixture rows claimed vs computed with ✓/✗ | three T10 tests, FF-3, FB-3: pass | Fixtures, `reducedModalRun` and archive means unchanged (JSON diff); renderer unchanged | PASS |
+| T11 | Triangular card separate from the bean plot, labelled published mean, raw trace unverified | two T11 tests: pass | `triangular` unchanged (JSON diff); renderer unchanged | PASS |
+| T12 | GX samples overlay in archive units with a LIVE label only when the live API reports them | eleven T12 tests: pass | Renderer and `contracts/` unchanged since 77fd8b6; `units.py` unchanged (T5 probe) | PASS |
+| T13 | Live comparison (D-024) only for a fresh, valid `live` snapshot carrying `comparison`; claim pill only with flag and agree | fifteen T13 tests: pass; the 17 backend `test_L11_*` tests: pass | Renderer unchanged since 77fd8b6 (five T13 mutations red in run 5). The backend numbers it renders now come from the floored statistics: P5 shows a sparse live-like trace never reaches "agree", so the view cannot be fed a claim from such a trace | PASS |
+
+### Real output
+ANSI colour codes are removed. Commands ran through `scripts/dev.sh` in WSL from small scripts in my scratch directory. Lines left out are marked `...`; every line shown is verbatim.
+
+#### Gates: `verify.sh all` in the isolated copy (HEAD 8a85c67, clean tree copied)
+```
+HEAD 8a85c67
+### git status --short (whole tree)
+(end status)
+copy: /home/qqbot/.cache/labyrinth-probes/vt02r6g
+start 2026-11-21T01:10:34Z
+━━━ [boundary:self-test] $ python3 scripts/check_boundaries.py --self-test
+boundary self-test: OK (134 violations caught, 25 clean files passed, 3 OS flavours agree)
+━━━ [boundary:scan] $ python3 scripts/check_boundaries.py
+boundary: OK (169 files scanned)
+━━━ [docs:handoff] $ python3 scripts/check_docs.py
+DOCS WARNING: tasks/00-scaffold/TASK.md: no .git in this probe copy - whether the verdict (commit 3faed3a) is current was NOT checked
+  ... (same warning for 01, 03, 04, 05, 06, 07, 08, 09)
+docs: OK (10 task folders)
+71 passed in 9.44s
+All checks passed!
+350 passed in 45.34s
+━━━ [artifacts:schema] $ python3 scripts/validate_artifacts.py
+artifacts: schema-valid
+━━━ [artifacts:fresh] $ python3 scripts/validate_artifacts.py --check-fresh
+artifacts: fresh (byte-identical rebuild)
+ Test Files  30 passed (30)
+      Tests  1370 passed (1370)
+✓ built in 1.90s
+━━━ verify.sh summary (scope: all)
+  PASS  boundary:self-test (0s)
+  PASS  boundary:scan (0s)
+  PASS  docs:handoff (0s)
+  PASS  scripts:tests (10s)
+  PASS  main:lint (0s)
+  PASS  main:tests (42s)
+  PASS  artifacts:schema (0s)
+  PASS  artifacts:fresh (1s)
+  PASS  renderer:typecheck (13s)
+  PASS  renderer:tests (58s)
+  PASS  renderer:build (3s)
+verify.sh: all stages passed.
+verify.sh all exit=0 end 2026-11-21T01:12:41Z
+```
+
+#### Tree state and targeted tests (shared tree, read-only)
+```
+HEAD 8a85c67
+### git status --short (owned + test + artifact paths)
+(end status)
+### git diff --stat 77fd8b6 HEAD -- owned paths
+ main/labyrinth_main/features/transport/stats.py | 50 ++++++++++++++++++-------
+ 1 file changed, 36 insertions(+), 14 deletions(-)
+(end diff)
+$ python3 -m pytest -v -p no:cacheprovider main/tests/test_transport.py
+main/tests/test_transport.py::test_T1_traces_read_from_pinned_h5_with_units_and_gradients PASSED [  6%]
+main/tests/test_transport.py::test_T1_divergent_restart_is_refused_not_silently_dropped PASSED [ 12%]
+main/tests/test_transport.py::test_T2_time_weighted_means_reproduce_fixtures PASSED [ 18%]
+main/tests/test_transport.py::test_T2_window_mean_equals_analytic_integral_for_piecewise_linear_Q PASSED [ 25%]
+main/tests/test_transport.py::test_T3_window_stats_coverage_stderr_stationarity_and_claim_gate PASSED [ 31%]
+main/tests/test_transport.py::test_T3_edge_hole_window_not_covered PASSED [ 37%]
+main/tests/test_transport.py::test_T3_claim_gate_and_stderr_calibration_monte_carlo PASSED [ 43%]
+main/tests/test_transport.py::test_T3_n_eff_never_exceeds_the_samples_in_the_window_so_a_sparse_trace_cannot_claim PASSED [ 50%]
+main/tests/test_transport.py::test_T3_half_split_keeps_its_level_on_short_white_noise PASSED [ 56%]
+main/tests/test_transport.py::test_T3_stationarity_false_rejection_rate_at_small_n PASSED [ 62%]
+main/tests/test_transport.py::test_T4_reduced_modal_run_against_archive_and_fixtures PASSED [ 68%]
+main/tests/test_transport.py::test_T5_gx_to_archive_converts_and_refuses_without_identical_references PASSED [ 75%]
+main/tests/test_transport.py::test_T6_compare_window_tost_verdicts_and_no_claim PASSED [ 81%]
+main/tests/test_transport.py::test_T6_compare_window_dedups_repeats_and_refuses_divergent PASSED [ 87%]
+main/tests/test_transport.py::test_T6_null_false_disagree_rate_near_nominal PASSED [ 93%]
+main/tests/test_transport.py::test_T7_triangular_published_mean_only PASSED [100%]
+============================== 16 passed in 5.34s ==============================
+exit=0
+$ python3 -m pytest -v -p no:cacheprovider main/tests/test_live_gx.py -k "L11"
+...
+main/tests/test_live_gx.py::test_L11_n_eff_gate_an_autocorrelated_live_trace_below_20_effective_samples_has_no_claim PASSED [ 23%]
+main/tests/test_live_gx.py::test_L11_a_sparse_live_trace_never_claims_agreement_even_against_an_archive_at_its_mean PASSED [ 29%]
+main/tests/test_live_gx.py::test_L11_injected_archive_agree_and_disagree_only_agree_opens_the_claim PASSED [ 35%]
+...
+====================== 17 passed, 214 deselected in 4.36s ======================
+exit=0
+$ npm --prefix renderer run -s test -- src/features/transport
+ ✓ src/features/transport/lazyLoad.test.ts (2 tests) 620ms
+ ✓ src/features/transport/TransportView.test.tsx (45 tests) 3259ms
+ Test Files  2 passed (2)
+      Tests  47 passed (47)
+exit=0
+$ python3 scripts/check_boundaries.py
+boundary: OK (169 files scanned)
+exit=0
+```
+I read the two new T3 tests and the new L11 test. They assert literal bounds against the sample count (`err.n_eff <= n - 1`, `st.n_eff <= n - 1`, `stderr >= s/sqrt(n-1)`), the exact M = 3 Madras–Sokal value for the alternating case, `saturated_claim_allowed is False` on every sparse seed, a false-rejection window of 0.025–0.075, and the unfloored AR(1) N = 2000 claim. None is tautological; each was red under at least one mutation below.
+
+#### Independent probe (`probe.sh` / `probe.py`: my own generators and seeds; 77fd8b6 code extracted with `git show`)
+```
+old compare.py identical to HEAD: yes
+
+== P1 (T3) N_eff vs in-window samples and the claim gate, white noise, n = 8..40 in-window samples, 300 reps per n
+    even reps: uniform grid with one bracketing sample each side; odd reps: irregular (uniform-random) times
+windows=9900 floored(corrected path)=4077
+N_eff > in-window N-1: sampling_error 0, half_split_test 0; stderr < s/sqrt(N-1): 0; floored n_eff_lower != (N-1)/(1+sqrt(2(2max(lag,3)+1)/N)): 0
+max N_eff/(N-1): new 1.0000  old(77fd8b6) 2224.77
+gate opened per n (new / old): 8:0/7, 9:0/9, 10:0/26, 11:0/16, 12:0/21, 13:0/27, 14:0/43, 15:0/36, 16:0/30, 17:0/44, 18:0/54, 19:0/55, 20:0/56, 21:0/59, 22:0/65, 23:0/60, 24:0/73, 25:0/75, 26:0/90, 27:0/75, 28:0/86, 29:0/99, 30:0/92, 31:0/108, 32:0/98, 33:0/115, 34:106/113, 35:102/109, 36:112/112, 37:125/124, 38:140/140, 39:131/131, 40:136/136
+gate opened with < 34 in-window samples: new 0 / old 1519 (of 7800)
+analytic max N_eff_lower = (N-1)/(1+sqrt(14/N)): N=32:18.66, N=33:19.38, N=34:20.10, N=35:20.83
+adversarial patterns (alternating, period 3/4, tiny noise, random walk, step) n=8..33: 156 windows, claims or N_eff>N-1: 0
+
+== P2 (T3) half-split false-rejection rate on white noise (raw test decision), 2000 reps per n, seed 777
+n= 12: reject new 0.052  old 0.069  decided 0.861  t_stat identical to 77fd8b6 2000/2000  N_eff>N-1 0
+n= 16: reject new 0.051  old 0.061  decided 0.919  t_stat identical to 77fd8b6 2000/2000  N_eff>N-1 0
+n= 20: reject new 0.052  old 0.062  decided 0.958  t_stat identical to 77fd8b6 2000/2000  N_eff>N-1 0
+n= 25: reject new 0.026  old 0.029  decided 0.972  t_stat identical to 77fd8b6 2000/2000  N_eff>N-1 0
+n= 30: reject new 0.038  old 0.042  decided 0.987  t_stat identical to 77fd8b6 2000/2000  N_eff>N-1 0
+n= 40: reject new 0.040  old 0.042  decided 0.994  t_stat identical to 77fd8b6 2000/2000  N_eff>N-1 0
+n= 60: reject new 0.035  old 0.036  decided 0.999  t_stat identical to 77fd8b6 2000/2000  N_eff>N-1 0
+n=100: reject new 0.044  old 0.045  decided 1.000  t_stat identical to 77fd8b6 2000/2000  N_eff>N-1 0
+n=200: reject new 0.046  old 0.046  decided 1.000  t_stat identical to 77fd8b6 2000/2000  N_eff>N-1 0
+
+== P3 (T3) large N: new vs 77fd8b6 window_stats on identical data
+AR(1) phi=0.8 N=2000: identical rows 200/200, floored 0, claims new 193 old 193, max stderr increase 0.00%, t-interval coverage 0.935
+AR(1) phi=0.5 N=1000: identical rows 200/200, floored 0, claims new 186 old 186, max stderr increase 0.00%, t-interval coverage 0.935
+white noise N=1000: identical rows 94/200, floored 106, claims new 185 old 185, max stderr increase 16.17%, t-interval coverage 0.940
+
+== P4 (T1 T2 T4 T7) archive artifact: 77fd8b6 vs HEAD, own h5 read and integrator
+differing JSON paths: 7
+    .windows[0].stationarityDetail
+    .windows[1].stationarityDetail
+    .windows[2].stationarityDetail
+    .windows[3].stationarityDetail
+    .windows[4].stationarityDetail
+    .windows[5].stationarityDetail
+    .windows[6].stationarityDetail
+renderer-parsed detail fields (N_eff, approximate, indicative, claim reason, not-finite reason) equal: 7/7; 'raised to the floor' in any archive detail: False
+T1 stella: raw 1441 dedup 1433
+T1 GENE: raw 1106 dedup 1106
+T2/T3 stella-bean [200,300] mine=2.715518 artifact=2.715518 stderr=None stationary=None claim=False floored=False new==77fd8b6 stats True
+T2/T3 stella-bean [300,400] mine=2.5545375 artifact=2.554537 stderr=None stationary=None claim=False floored=False new==77fd8b6 stats True
+T2/T3 stella-bean [1500,1900] mine=2.2421269 artifact=2.242127 stderr=0.01922 stationary=None claim=False floored=False new==77fd8b6 stats True
+T2/T3 gene-bean   [200,300] mine=2.9260284 artifact=2.926028 stderr=0.0352 stationary=None claim=False floored=False new==77fd8b6 stats True
+T2/T3 gene-bean   [300,400] mine=2.6750657 artifact=2.675066 stderr=0.02076 stationary=None claim=False floored=False new==77fd8b6 stats True
+T2/T3 gene-bean   [1500,1900] mine=None artifact=None stderr=None stationary=None claim=False floored=False new==77fd8b6 stats True
+T2/T3 gene-bean   [1500,1893.77] mine=2.4738618 artifact=2.473862 stderr=0.01657 stationary=None claim=False floored=False new==77fd8b6 stats True
+T2/T4 fixture stella-bean-1500-1900: claimed 2.242 computed 2.242127 matches True
+T2/T4 fixture gene-bean-1500-1893.765: claimed 2.474 computed 2.473862 matches True
+T2/T4 fixture stella-bean-300-400: claimed 2.55 computed 2.554537 matches True
+T2/T4 fixture gene-bean-300-400: claimed 2.68 computed 2.675066 matches True
+T2/T4 fixture reduced-modal-stella-300-400: claimed 5.79 computed None matches None
+T2/T4 fixture triangular-published-1200-1500: claimed 2.22 computed None matches None
+T4 reducedModalRun 5.79 [300.0, 400.0] {'GENE': 2.675066, 'stella': 2.554537} prd-reported; 2.674 in a note: True
+T7 triangular 2.22 [1200.0, 1500.0] unverified; trace tubes ['bean']
+T5 [0.0, 1.4142135623730951, 141.4213562373095] [0.35355339059327373, 0.7071067811865475, 2.82842712474619] expected t*sqrt2 [0.0, 1.4142135623730951, 141.4213562373095] Q/(2sqrt2) [0.35355339059327373, 0.7071067811865475, 2.82842712474619]
+T5 refused False
+T5 refused None
+T5 refused 1
+T5 refused 'yes'
+T5 refused np.True_
+
+== P5 (T6) compare_window: sparse white-noise new trace vs an archive that passes its gate at the same mean
+archive 300-400 gate: True
+n=12 in-window: new {'no claim': 200}  old(77fd8b6) {'no claim': 172, 'agree': 28}
+n=14 in-window: new {'no claim': 200}  old(77fd8b6) {'no claim': 169, 'agree': 31}
+n=16 in-window: new {'no claim': 200}  old(77fd8b6) {'agree': 35, 'no claim': 165}
+n=20 in-window: new {'no claim': 200}  old(77fd8b6) {'no claim': 147, 'agree': 53}
+n=25 in-window: new {'no claim': 200}  old(77fd8b6) {'agree': 77, 'no claim': 123}
+n=30 in-window: new {'no claim': 200}  old(77fd8b6) {'agree': 97, 'no claim': 103}
+n=33 in-window: new {'no claim': 200}  old(77fd8b6) {'agree': 104, 'no claim': 96}
+
+== P5 (T6) dense traces and the real archive: new vs 77fd8b6 compare_window
+AR(1) N=2000, 100 pairs (every third shifted +0.4): identical verdict/delta/stderr/df/CIs 100/100; verdicts {'no claim': 10, 'inconclusive': 61, 'disagree': 23, 'agree': 6}
+stella vs GENE (200, 300): verdict no claim delta -0.21051041253535674 own delta -0.21051041253535674 combinedStderr None | 77fd8b6 identical: True | reason: new trace not shown stationary on 200-300; archive trace not shown stationary on 200-300
+stella vs GENE (300, 400): verdict no claim delta -0.12052822418706866 own delta -0.12052822418706866 combinedStderr None | 77fd8b6 identical: True | reason: new trace not shown stationary on 300-400; archive trace not shown stationary on 300-400
+stella vs GENE (1500, 1893.765): verdict no claim delta -0.23332867363608845 own delta -0.23332867363608845 combinedStderr 0.026343331312566134 | 77fd8b6 identical: True | reason: new trace not shown stationary on 1500-1893.765; archive trace not shown stationary on 150
+stella vs GENE (1500, 1900): verdict no claim delta None own delta None combinedStderr None | 77fd8b6 identical: True | reason: new trace not shown stationary on 1500-1900; archive trace does not cover 1500-1900
+probe exit=0
+```
+What changed in the artifact's detail text (two of the seven rows shown; `detail_diff.py`):
+```
+windows[0] stella-bean [200.0, 300.0]:
+   insert: -[] +[no usable ]
+   replace: -[ did] +[, corrected or uncorrected:]
+   replace: -[, corrected or uncorrected] +[d, or not positive]
+   insert: -[] +[tau_int floored at 1/2 sample (D-025: N_eff never exceeds the samples in the window), ]
+windows[2] stella-bean [1500.0, 1900.0]:
+   insert: -[] +[tau_int floored at 1/2 sample (D-025: N_eff never exceeds the samples in the window), ]
+```
+
+#### Mutations (`mutate.py`, isolated copy; `test_transport.py` plus the new L11 test after each; `stats.py` restored after each)
+```
+baseline in copy:
+16 passed in 4.47s
+=== M1_no_floor_corrected_path: exit=1 RED | 2 failed, 15 passed in 3.86s
+    red: FAILED main/tests/test_transport.py::test_T3_n_eff_never_exceeds_the_samples_in_the_window_so_a_sparse_trace_cannot_claim
+    red: FAILED main/tests/test_live_gx.py::test_L11_a_sparse_live_trace_never_claims_agreement_even_against_an_archive_at_its_mean
+=== M2_floored_bound_uses_raw_lag: exit=1 RED | 1 failed, 16 passed in 5.78s
+    red: FAILED main/tests/test_transport.py::test_T3_n_eff_never_exceeds_the_samples_in_the_window_so_a_sparse_trace_cannot_claim
+=== M3_half_split_se_floored: exit=1 RED | 1 failed, 16 passed in 5.49s
+    red: FAILED main/tests/test_transport.py::test_T3_half_split_keeps_its_level_on_short_white_noise
+=== M4_half_split_n_eff_uncapped: exit=1 RED | 2 failed, 15 passed in 3.63s
+    red: FAILED main/tests/test_transport.py::test_T3_n_eff_never_exceeds_the_samples_in_the_window_so_a_sparse_trace_cannot_claim
+    red: FAILED main/tests/test_transport.py::test_T3_half_split_keeps_its_level_on_short_white_noise
+=== M5_no_floor_uncorrected_fallback: exit=1 RED | 2 failed, 15 passed in 3.98s
+    red: FAILED main/tests/test_transport.py::test_T3_n_eff_never_exceeds_the_samples_in_the_window_so_a_sparse_trace_cannot_claim
+    red: FAILED main/tests/test_live_gx.py::test_L11_a_sparse_live_trace_never_claims_agreement_even_against_an_archive_at_its_mean
+### restored copy byte-identical to the shared tree: True
+```
+What each mutation changed in `main/labyrinth_main/features/transport/stats.py`:
+- M1, line 405: the floor in the bias-corrected path removed.
+- M2, line 412: a floored τ uses the raw convergence lag in the Madras–Sokal bound instead of M = 3.
+- M3, after line 457: the half-split τ floored at ½ sample (widens its se).
+- M4, line 465: the cap of the half-split N_eff at N − 1 removed.
+- M5, line 399: the floor in the uncorrected fallback removed.
+
+#### End state
+```
+probe copy removed
+HEAD 8a85c67
+### git status --short (whole tree)
+(end status)
+```
+
+### Findings
+**Honesty check.**
+- The four archive PRD means still reproduce at printed precision (2.242, 2.474, 2.55, 2.68). 5.79 and 2.22 remain PRD-reported with computed null, so no mismatch is hidden. No archive number, fixture or verdict changed against 77fd8b6: only the seven `stationarityDetail` strings, and the fields the renderer parses out of them are equal.
+
+**D-025 claims confirmed.**
+- N_eff never exceeds the in-window samples (0 of 9900 white-noise windows, uniform and irregular sampling; max N_eff/(N − 1) = 1.0000, against 2224.77 at 77fd8b6), and the stderr is never below s/√(N − 1).
+- The gate cannot open below 34 in-window samples for any data: with τ ≥ ½ and M ≥ 3 the largest possible N_eff at the τ upper bound is (N − 1)/(1 + √(14/N)) = 19.38 at N = 33. Empirically 0 of 7800 white-noise windows and 0 of 156 adversarial windows (77fd8b6: 1519 of 7800). From 34 samples the gate opens as before.
+- The half-split keeps its unfloored se (t statistic bit-identical to 77fd8b6 in 18000 of 18000 windows) and its level stays at or below about 5 %.
+- Positively correlated large-N windows are bit-identical to 77fd8b6 (400 of 400 rows), so the calibration is unchanged.
+- `compare_window` never gives "agree" for a sparse trace (0 of 1400, against 425 at 77fd8b6), and dense results are identical.
+
+**Minor findings (none blocks):**
+- **m1, documentation precision.** `decision.md:262` says "Large-N behaviour is unchanged". That holds for positively correlated traces. White-noise windows still hit the floor at large N: at N = 1000 the floor bound in 106 of 200 seeds and raised the stderr by up to 16.17 % against 77fd8b6, with claims unchanged (185 of 185) and t-interval coverage 0.940. This is the conservative direction and expected from a floor at the true white-noise value. One clause in D-025 ("unchanged where τ is clearly above ½ sample; white-noise windows can get a slightly larger stderr") would make the record exact.
+- **m2, test range.** `test_T3_half_split_keeps_its_level_on_short_white_noise` (`main/tests/test_transport.py:237-252`) checks the level only at N = 40–60. At N = 12–30 my probe measured 2.6–5.2 % (N = 25: 2.6 %, already 2.9 % at 77fd8b6, so not introduced by D-025). Windows that short are always indicative and serialised as `null`, so this does not reach a verdict.
+- **n3.** The limit D-025 leaves open (positively correlated sparse traces can open the gate below 20 true effective samples) is outside this change and was not re-measured.
+- **n4.** `verify.sh all` ran in the probe copy, which has no `.git`, so the docs gate printed "no .git in this probe copy" warnings for the other tasks' currency check.
+
+**Not checked in this run (kept short at the owner's request):** a real-browser render or screenshots (the renderer is unchanged since run 5), and a real GX run (no credentials or network used).
+
+**Why PASS.**
+- `verify.sh all` exits 0 on an isolated copy of the clean 8a85c67 tree.
+- All 16 backend transport tests, the 17 L11 tests and the 47 transport frontend tests pass on the shared tree.
+- My probes agree with the D-025 claims, the h5 and the 77fd8b6 numbers; five of five mutations of the D-025 code go red.
+
+Verdict: PASS

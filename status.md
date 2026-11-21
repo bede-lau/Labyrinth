@@ -7,7 +7,7 @@
 
 ## Current state
 
-**Nine of ten tasks are `DONE`; 02 is VERIFYING for D-025 (τ_int floor) until its verifier re-runs.** 02, 06 and 09 were reopened for D-024 (the PRD's live comparison, cross-RX-2) and re-verified at `77fd8b6` (`Verdict: PASS`
+**All ten tasks are `DONE`.** 02 was re-verified at `8a85c67` for D-025 (τ_int floor). 02, 06 and 09 were reopened for D-024 (the PRD's live comparison, cross-RX-2) and re-verified at `77fd8b6` (`Verdict: PASS`
 each; reviewer APPROVE). The other seven are verified at `3faed3a`. Before D-024 each had a final external-verifier run at commit `3faed3a` ending in `Verdict: PASS`, with a `PASS` row for every outcome
 (`tasks/<NN>/VERIFY.md`), and the code passed the 2026-11-20 review round with all six areas approved. `scripts/check_docs.py` enforces this (D-022): any
 later change to a task's owned files reopens it until a verifier runs again. `verify.sh all` at `3faed3a`: exit 0, 11/11 stages — boundary self-test
@@ -17,7 +17,7 @@ later change to a task's owned files reopens it until a verifier runs again. `ve
 |---|---|---|---|
 | 00 | scaffold, boundary, gates | DONE | `3faed3a` |
 | 01 | geometry | DONE (acceptance-129 BLOCKED by design, D-007) | `3faed3a` |
-| 02 | transport | VERIFYING (D-025: τ_int floor, F4-1) | was `77fd8b6` |
+| 02 | transport | DONE (T13 live comparison D-024; τ_int floor D-025) | `8a85c67` |
 | 03 | forecast | DONE (PRD MAE mismatch shown, D-016) | `3faed3a` |
 | 04 | budget | DONE | `3faed3a` |
 | 05 | spatial | DONE (PRD-reported/blocked: no checkpoints in repo) | `3faed3a` |
@@ -33,7 +33,10 @@ in a separate session in this checkout and commits locally; push it only after i
 - **Live comparison (cross-RX-2) closed by D-024** (commit `77fd8b6`, DONE commit after it; both local, **not pushed** — ask the owner): live-status
   `comparison` (schema, `live_gx/comparison.py`, orchestrator snapshot, Check transport "Live comparison" panel, live-panel summary line, `liveContract.ts`
   validator); docs and TASK.md outcomes T13 / L11. With the committed archive every live verdict is "no claim" (D-017) — by design.
-- **F4-1 fixed by D-025 (in flight):** the Sokal τ_int could fall below half a sample, so N_eff exceeded the in-window sample count and 12–25
+- **Flaky under load (watch):** one Stop-hook `verify.sh all` run on 2026-11-21 failed a single renderer `toHaveTextContent` assertion (after the A3
+  shell tests) while a verifier was running its own suites; renderer code was unchanged since `77fd8b6`, and two immediate re-runs passed 1370/1370.
+  The failing test was not identified (the hook keeps no log).
+- **F4-1 fixed by D-025** (commit `8a85c67`, 02 re-verified PASS run 6, DONE; local, **not pushed**): the Sokal τ_int could fall below half a sample, so N_eff exceeded the in-window sample count and 12–25
   white-noise samples opened the claim gate (13–38 of 200 seeds; a sparse live trace could claim "agree"). `transport/stats.py` now floors τ_int at
   ½ sample in `sampling_error` (N_eff ≤ N − 1; τ ≤ 0 floored too; M = 3 in the upper bound); `half_split_test` only caps its reported N_eff, its se
   stays unfloored (review R1: a floored se loosened the test to ≈ 1 % false rejection). No archive number changes (only `stationarityDetail` text).

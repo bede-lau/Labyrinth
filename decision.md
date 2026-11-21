@@ -259,7 +259,9 @@ A floored estimate is named in the window's detail text ("raised to the floor of
 traces whose true N_eff exceeds N are treated conservatively; heat-flux turbulence gives no reason to credit that.
 **Consequences.** No archive number, fixture or verdict changes (every archive estimate is above the floor): only text in the seven
 `stationarityDetail` strings of `transport.json` changes (METHOD clause; "no usable full-window Sokal tau … not converged, or not positive").
-Large-N behaviour is unchanged (the AR(1) N = 2000 calibration test is not floored and still claims). Tests: `test_T3_n_eff_never_exceeds_…`
+Positively correlated large-N traces are unchanged (the AR(1) N = 1000 / 2000 rows are bit-identical; the calibration test still claims).
+Large-N white noise hits the floor in about half of the seeds (N = 1000: 106 of 200), raising its stderr by up to 16 %, the safe direction; its
+claims (185 of 185) and coverage (0.940) are unchanged (02 verifier run 6). Tests: `test_T3_n_eff_never_exceeds_…`
 (1000 white-noise windows of 12–25 samples, the alternating case, the M = 3 bound), `test_T3_half_split_keeps_its_level_on_short_white_noise`
 (3000 windows, false rejection 0.039) and `test_L11_a_sparse_live_trace_never_claims_…`; 7/7 mutants caught. Task 02 is re-verified (its owned
 `transport/stats.py` changed); task 06's owned files are unchanged. Still open (D-017 limit, unchanged): positively correlated sparse traces can
