@@ -12,8 +12,8 @@ interface HeaderBoundaryProps {
 }
 
 /**
- * Around the live-status parts of the header. If they throw, the rest of the page (question, nav,
- * view, legend) stays up and the header says, as an alert, that the session state is unknown.
+ * Around the live-session alert under the header. If it throws, the rest of the page (nav, view,
+ * legend) stays up and the shell says, as an alert, that the session state is unknown.
  */
 export class HeaderBoundary extends Component<HeaderBoundaryProps, { error: Error | null }> {
   state = { error: null as Error | null };

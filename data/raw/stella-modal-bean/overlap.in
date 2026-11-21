@@ -1,0 +1,145 @@
+! Reconstructed nonlinear W7-X bean test 5; not an archived original input.
+! Paper DOI: 10.1017/S0022377822000393 (2022), Tables 1-4 and section 5.1.
+! Target stella commit: 6f60964da55e9c0207b2ed9912d8903440b6d68b.
+! Requires verified high-mirror beta~3% equilibrium as ./wout_test5.nc.
+! Mesh alone requires >63 GiB for seven complex128 distribution arrays.
+! Full tend=1900 is NOT authorized by the $40 pilot budget; use test5_pilot.in.
+! Unpublished choices (seed, velocity limits, dissipation, integrator) are logged
+! in RECONSTRUCTION.md. This deck must not be called an exact paper reproduction.
+
+&geometry_options
+  geometry_option = 'vmec'
+  q_as_x = .false.
+/
+&geometry_vmec
+  vmec_filename = 'wout_test5.nc'
+  torflux = 0.64
+  alpha0 = 0.0
+  zeta_center = 0.0
+  nfield_periods = 5.49355820947536
+  surface_option = 0
+  z_grid_refinement_factor = 1
+  radial_coordinate = 'r'
+  verbose = .true.
+/
+
+&gyrokinetic_terms
+  simulation_domain = 'fluxtube'
+  include_parallel_streaming = .true.
+  include_mirror = .true.
+  include_xdrift = .true.
+  include_ydrift = .true.
+  include_drive = .true.
+  include_nonlinear = .true.
+  include_parallel_nonlinearity = .false.
+  include_electromagnetic = .false.
+/
+&electromagnetic
+  include_apar = .false.
+  include_bpar = .false.
+  beta = 0.0
+/
+&species_options
+  nspec = 1
+  species_option = 'stella'
+/
+&species_parameters_1
+  z = 1.0
+  mass = 1.0
+  dens = 1.0
+  temp = 1.0
+  tprim = 3.0
+  fprim = 1.0
+  type = 'ion'
+/
+&adiabatic_electron_response
+  adiabatic_option = 'field-line-average-term'
+  tite = 1.0
+  nine = 1.0
+/
+
+&kxky_grid_option
+  grid_option = 'box'
+/
+&kxky_grid_box
+  nx = 76
+  ny = 190
+  y0 = 10.0
+  jtwist = 1
+/
+&z_grid
+  nzed = 128
+  nperiod = 1
+  ntubes = 1
+  zed_equal_arc = .false.
+/
+&z_boundary_condition
+  boundary_option = 'linked'
+/
+&velocity_grids
+  nvgrid = 30
+  nmu = 24
+  vpa_max = 3.0
+  vperp_max = 3.0
+  equally_spaced_mu_grid = .false.
+  conservative_wgts_vpa = .false.
+/
+
+&initialise_distribution
+  initialise_distribution_option = 'noise'
+  phiinit = 0.001
+  scale_to_phiinit = .true.
+/
+&initialise_distribution_noise
+  rng_seed = 314159
+  zf_init = 1.0
+  chop_side = .false.
+/
+&time_trace_options
+  tend = -1.0
+  nstep = 3
+  autostop = .false.
+/
+&time_step
+  delt = 0.09
+  delt_max = 0.09
+  delt_option = 'default'
+/
+&numerical_algorithms
+  explicit_algorithm = 'rk3'
+  stream_implicit = .false.
+  mirror_implicit = .true.
+  mirror_semi_lagrange = .true.
+  split_parallel_dynamics = .true.
+/
+&numerical_upwinding_for_derivatives
+  zed_upwind = 0.02
+  vpa_upwind = 0.02
+  time_upwind = 0.02
+/
+&dissipation_and_collisions_options
+  include_collisions = .false.
+  hyper_dissipation = .false.
+  vnew_ref = 0.0
+/
+&diagnostics
+  nwrite = 1
+  navg = 1
+  nsave = -1
+  save_for_restart = .false.
+  write_all_time_traces = .false.
+/
+&diagnostics_fluxes
+  flux_norm = .false.
+  write_fluxes_vs_time = .true.
+  write_fluxes_kxky = .false.
+  write_fluxes_kxkyz = .false.
+/
+&diagnostics_potential
+  write_phi2_vs_time = .true.
+  write_phi_vs_kxkyz = .false.
+/
+&parallelisation
+  xyzs_layout = 'yxzs'
+  vms_layout = 'vms'
+/

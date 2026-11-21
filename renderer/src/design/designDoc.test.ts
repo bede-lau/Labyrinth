@@ -351,20 +351,16 @@ describe('§5 names what the store, the header and the live panel actually draw'
     expect(rowOf('idle')).toMatch(/no workers listed/);
   });
 
-  test('the header’s words, and its own Terminate when the panel failed to render (`viewFailed`)', () => {
+  test('the header exposes termination directly while a session is active or may be billing', () => {
     for (const w of [
       'Check the Modal dashboard until both workers are confirmed stopped.',
-      'Open Advance plasma to send Terminate',
-      'Use Terminate in the Advance plasma panel below.',
-      'The Advance plasma panel failed to render; Terminate from here.',
+      'Modal session active',
       'Terminate confirmed:',
       'Terminate not confirmed:',
     ]) {
       expect(flat(header), `ModeIndicator.tsx prints ${w}`).toContain(w);
       expect(s(), `§5 quotes ${w}`).toContain(w);
     }
-    expect(header).toMatch(/\bviewFailed\b/);
-    expect(s()).toContain('(`viewFailed`)');
     // The Terminate control reads the same in the header and in the panel.
     for (const w of ['Retry terminate', 'Terminating… (send again)']) {
       expect(header, `ModeIndicator.tsx: ${w}`).toMatch(literal(w));

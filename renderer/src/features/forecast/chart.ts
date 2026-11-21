@@ -1,5 +1,6 @@
-// The forecast replay chart (D-026, F7): heat flux against time, Predicted and Actual, each drawn as a step
-// held over its 50-unit window. Pure: state in, Plotly spec out (tested without Plotly or the DOM).
+// The forecast chart (D-026, F7), in its two metrics (the owner's toggle): heat flux against time, Predicted and
+// Actual, and the absolute error |predicted − actual| of both forecasters. Every line is a step held over its
+// 50-unit window. Pure: state in, Plotly spec out (tested without Plotly or the DOM).
 import {
   FORECAST_LABEL,
   axisTitle,
@@ -14,12 +15,16 @@ import {
   windowShape,
   type ForecastLine,
   type PlotLayout,
+  type SeriesStyle,
   type ThemeName,
 } from '../../design';
 import {
   FLUX_UNIT,
+  FORECASTERS,
+  FORECASTER_LABEL,
   TIME_UNIT,
   nextAction,
+  plottedErrors,
   plottedWindows,
   stepLine,
   type ForecastArtifact,
@@ -29,6 +34,9 @@ import {
 } from './model';
 
 export type PlotTrace = Record<string, unknown>;
+
+/** The chart's two views (the owner's "Comparison metric" toggle). */
+export type ChartMetric = 'flux' | 'error';
 
 /** A run of the chart's visible caption: plain text, or a unit the adapter typesets with `Unit` (DZ3-8). */
 export type CaptionPart = string | { unit: string };
@@ -53,6 +61,7 @@ export interface ForecastChartSpec {
 }
 
 const MEAN_DP = 3;
+const ERR_DP = 4;
 
 /** What each line is, in words (hover text, summary, accessible name). */
 export function lineMeaning(line: ForecastLine, f: Forecaster): string {
@@ -67,6 +76,8 @@ const NOTHING_YET = { x: [null], y: [null], mid: [true], window: [null] };
 
 /** Smallest flux span shown (Q_gB,i), so one value does not fill the axis with identical tick labels. */
 const MIN_SPAN = 0.1;
+/** Smallest absolute-error axis shown (Q_gB,i). */
+const MIN_ERR_TOP = 0.01;
 
 /**
  * The flux axis range, from the drawn values only (it never hints at a hidden one): their min–max, at least
@@ -81,8 +92,28 @@ export function fluxRange(drawn: readonly number[]): [number, number] {
   return [Math.min(lo, mid - span / 2) - 0.1 * span, Math.max(hi, mid + span / 2) + 0.25 * span];
 }
 
-function trace(line: ForecastLine, ws: readonly PlottedWindow[], f: Forecaster, theme: ThemeName): PlotTrace {
-  const style = forecastStyle(line, theme);
+/**
+ * The absolute-error axis range: from 0 to a quarter above the largest drawn |e| (room for the current-window
+ * label), at least MIN_ERR_TOP. From the drawn values only, like `fluxRange`; [0, 1] while nothing is drawn.
+ */
+export function absErrorRange(drawn: readonly number[]): [number, number] {
+  if (drawn.length === 0) return [0, 1];
+  return [0, Math.max(...drawn, MIN_ERR_TOP) * 1.25];
+}
+
+/**
+ * Style of a forecaster's absolute-error line. Both are errors of a forecast, so both take Predicted's token
+ * colour at full opacity (≥ 3:1 on the plot, never a series colour they are not): the forecaster drawn as
+ * Predicted keeps Predicted's dashed line and downward triangle, the other is dotted with squares.
+ */
+export function errorLineStyle(fc: Forecaster, selected: Forecaster, theme: ThemeName): SeriesStyle {
+  const p = forecastStyle('predicted', theme);
+  const name = FORECASTER_LABEL[fc];
+  return fc === selected ? { ...p, name } : { name, line: { ...p.line, dash: 'dot' }, marker: { ...p.marker, symbol: 'square' } };
+}
+
+/** One step line as a Plotly trace: the style's line, one marker per window at its midpoint, hover text. */
+function stepTrace(style: SeriesStyle, ws: readonly PlottedWindow[], hover: string, dp: number): PlotTrace {
   const pts = ws.length > 0 ? stepLine(ws) : NOTHING_YET;
   return {
     type: 'scatter',
@@ -92,7 +123,7 @@ function trace(line: ForecastLine, ws: readonly PlottedWindow[], f: Forecaster, 
     y: pts.y,
     connectgaps: false,
     line: style.line,
-    // One marker per window, at its midpoint: the line's shape (dash) and the marker both tell the two apart.
+    // One marker per window, at its midpoint: the line's shape (dash) and the marker both tell the lines apart.
     // Opacity is explicit: with per-point sizes Plotly would default to a bubble chart's 0.7.
     marker: {
       ...style.marker,
@@ -101,39 +132,52 @@ function trace(line: ForecastLine, ws: readonly PlottedWindow[], f: Forecaster, 
       line: { ...style.marker.line, width: pts.mid.map((m) => (m ? style.marker.line.width : 0)) },
     },
     customdata: pts.window,
-    hovertemplate: `${style.name} (${lineMeaning(line, f)}), t %{customdata}: %{y:.${MEAN_DP}f}<extra></extra>`,
+    hovertemplate: `${hover}, t %{customdata}: %{y:.${dp}f}<extra></extra>`,
     showlegend: true,
   };
 }
 
-const list = (ws: readonly PlottedWindow[]) => ws.map((w) => `${formatWindow(w.window)} ${formatNumber(w.value, MEAN_DP)}`).join(', ');
+function trace(line: ForecastLine, ws: readonly PlottedWindow[], f: Forecaster, theme: ThemeName): PlotTrace {
+  const style = forecastStyle(line, theme);
+  return stepTrace(style, ws, `${style.name} (${lineMeaning(line, f)})`, MEAN_DP);
+}
 
-/**
- * The chart for replay state `s` with forecaster `f` as Predicted. Both traces are always present (so the
- * legend names both lines), but each holds only the windows `plottedWindows` allows: nothing (one null point) before Predict,
- * the forecast after Predict, the observed mean only after Reveal. The time axis spans the replay's windows
- * (known in advance); the flux axis is set from the plotted values only (`fluxRange`), so it never hints at a hidden one.
- */
-export function forecastChartSpec(a: ForecastArtifact, s: ReplayState, f: Forecaster, theme: ThemeName): ForecastChartSpec {
+const list = (ws: readonly PlottedWindow[], dp: number) =>
+  ws.map((w) => `${formatWindow(w.window)} ${formatNumber(w.value, dp)}`).join(', ');
+
+/** The time axis (the replay's windows, known in advance) and the current window, shared by both metrics. */
+function frame(a: ForecastArtifact, s: ReplayState) {
   const n = a.steps.length;
   const t0 = a.steps[0]?.window[0] ?? a.initWindow[1];
   const t1 = a.steps[n - 1]?.window[1] ?? t0;
-  const { predicted, actual } = plottedWindows(a.steps, s, f);
-  const empty = predicted.length === 0 && actual.length === 0;
   const current = nextAction(s, n) === 'done' ? null : a.steps[s.index];
-  const t = themes[theme];
+  return { n, t0, t1, span: formatWindow([t0, t1]), current };
+}
 
-  const layout = plotLayout(theme, {
-    height: 320,
+/** Layout shared by both metrics: time axis, the current-window band, closest-point hover, an empty-state note. */
+function layoutFor(
+  a: ForecastArtifact,
+  s: ReplayState,
+  theme: ThemeName,
+  yTitle: string,
+  yRange: [number, number],
+  tickformat: string,
+  emptyNote: string | null,
+): PlotLayout {
+  const { t0, t1, current } = frame(a, s);
+  const t = themes[theme];
+  return plotLayout(theme, {
     showlegend: true,
+    // Each window's value is a step (three points): the closest point, not every point at one time.
+    hovermode: 'closest',
     xaxis: { title: { text: axisTitle('Time t', TIME_UNIT) }, range: [t0, t1] },
     yaxis: {
-      title: { text: axisTitle('Ion heat flux Q_i', FLUX_UNIT) },
-      range: fluxRange([...predicted, ...actual].map((w) => w.value)),
-      ...(empty ? { showticklabels: false } : { tickformat: '.2f' }),
+      title: { text: axisTitle(yTitle, FLUX_UNIT) },
+      range: yRange,
+      ...(emptyNote ? { showticklabels: false } : { tickformat }),
     },
     shapes: current ? [windowShape(current.window, theme, 'current window')] : [],
-    annotations: empty
+    annotations: emptyNote
       ? [
           {
             xref: 'paper',
@@ -141,15 +185,37 @@ export function forecastChartSpec(a: ForecastArtifact, s: ReplayState, f: Foreca
             x: 0.5,
             y: 0.5,
             showarrow: false,
-            // Two lines, so it is no wider than before on a phone.
-            text: 'Nothing plotted yet: Predict draws the first forecast,<br>Run to end draws all windows',
+            text: emptyNote,
             font: { family: font.sans, size: typeScale.sm[0], color: t.color.textMuted },
           },
         ]
       : [],
   });
+}
 
-  const span = formatWindow([t0, t1]);
+/**
+ * Heat flux for replay state `s` with forecaster `f` as Predicted. Both traces are always present (so the
+ * legend names both lines), but each holds only the windows `plottedWindows` allows: nothing (one null point) before Predict,
+ * the forecast after Predict, the observed mean only after Reveal. The time axis spans the replay's windows
+ * (known in advance); the flux axis is set from the plotted values only (`fluxRange`), so it never hints at a hidden one.
+ * The overview (every saved window) is the complete state (`completeState`).
+ */
+export function forecastChartSpec(a: ForecastArtifact, s: ReplayState, f: Forecaster, theme: ThemeName): ForecastChartSpec {
+  const { n, span } = frame(a, s);
+  const { predicted, actual } = plottedWindows(a.steps, s, f);
+  const empty = predicted.length === 0 && actual.length === 0;
+
+  const layout = layoutFor(
+    a,
+    s,
+    theme,
+    'Ion heat flux Q_i',
+    fluxRange([...predicted, ...actual].map((w) => w.value)),
+    '.2f',
+    // Two lines, so it is no wider than before on a phone.
+    empty ? 'Nothing plotted yet: Predict draws the first forecast,<br>Run to end draws all windows' : null,
+  );
+
   // The accessible name and description speak units as words (spokenUnit: "Q gB,i"), as the statistics' names
   // do; the visible caption typesets them (DZ3-8). Never raw "_" markup in either (FC-R5).
   const label =
@@ -163,9 +229,9 @@ export function forecastChartSpec(a: ForecastArtifact, s: ReplayState, f: Foreca
           `${FORECAST_LABEL.actual} (${lineMeaning('actual', f)}) after Reveal; Run to end does both for all ${n} windows from ${span}, in that order.`,
       ]
     : [
-        `${FORECAST_LABEL.predicted} (${lineMeaning('predicted', f)}), ${predicted.length} of ${n} windows: ${list(predicted)}. ` +
+        `${FORECAST_LABEL.predicted} (${lineMeaning('predicted', f)}), ${predicted.length} of ${n} windows: ${list(predicted, MEAN_DP)}. ` +
           (actual.length > 0
-            ? `${FORECAST_LABEL.actual} (${lineMeaning('actual', f)}), ${actual.length} of ${n} windows: ${list(actual)}. `
+            ? `${FORECAST_LABEL.actual} (${lineMeaning('actual', f)}), ${actual.length} of ${n} windows: ${list(actual, MEAN_DP)}. `
             : `${FORECAST_LABEL.actual} (${lineMeaning('actual', f)}): none revealed yet. `) +
           (actual.length < n ? 'Later windows are not plotted until they are predicted or revealed. ' : '') +
           'Heat flux in ',
@@ -180,4 +246,56 @@ export function forecastChartSpec(a: ForecastArtifact, s: ReplayState, f: Foreca
     summary: spokenCaption(caption),
     caption,
   };
+}
+
+/**
+ * The owner's absolute-error view for replay state `s`: |predicted − actual| of both forecasters (persistence,
+ * then frozen), each window's error drawn only once the window is revealed (`plottedErrors`), held over the
+ * window like the heat flux. `f`, the forecaster drawn as Predicted, keeps Predicted's line style.
+ */
+export function errorChartSpec(a: ForecastArtifact, s: ReplayState, f: Forecaster, theme: ThemeName): ForecastChartSpec {
+  const { n, span } = frame(a, s);
+  const errors = plottedErrors(a.steps, s);
+  const shown = errors.persistence.length;
+  const empty = shown === 0;
+
+  const layout = layoutFor(
+    a,
+    s,
+    theme,
+    'Absolute error |predicted − actual|',
+    absErrorRange(FORECASTERS.flatMap((fc) => errors[fc].map((w) => w.value))),
+    '.3f',
+    empty ? 'Reveal a window to see its error' : null,
+  );
+
+  const label =
+    `Chart: absolute error, predicted minus actual, in ${spokenUnit(FLUX_UNIT)} against time t in ${spokenUnit(TIME_UNIT)}, ${span}, ` +
+    `of the persistence and frozen forecasts for the stella bean trace, each held over its ${formatNumber(a.windowWidth, 0)}-unit window`;
+
+  const caption: CaptionPart[] = empty
+    ? [`Nothing plotted yet. A window's absolute errors appear after its Reveal; Run to end does all ${n} windows from ${span}, in order.`]
+    : [
+        'Absolute error |predicted − actual| per window. ' +
+          FORECASTERS.map((fc) => `${FORECASTER_LABEL[fc]}, ${shown} of ${n} windows: ${list(errors[fc], ERR_DP)}. `).join('') +
+          (shown < n ? 'Later windows are not plotted until they are revealed. ' : '') +
+          'Absolute error in ',
+        { unit: FLUX_UNIT },
+        '.',
+      ];
+
+  return {
+    data: FORECASTERS.map((fc) =>
+      stepTrace(errorLineStyle(fc, f, theme), errors[fc], `${FORECASTER_LABEL[fc]} |predicted − actual|`, ERR_DP),
+    ),
+    layout,
+    label,
+    summary: spokenCaption(caption),
+    caption,
+  };
+}
+
+/** The spec of `metric` (the owner's toggle) for state `s`. */
+export function chartSpec(metric: ChartMetric, a: ForecastArtifact, s: ReplayState, f: Forecaster, theme: ThemeName): ForecastChartSpec {
+  return metric === 'flux' ? forecastChartSpec(a, s, f, theme) : errorChartSpec(a, s, f, theme);
 }

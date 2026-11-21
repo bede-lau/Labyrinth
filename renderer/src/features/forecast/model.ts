@@ -83,6 +83,14 @@ export interface ReplayState {
 
 export const INITIAL: ReplayState = { index: 0, phase: 'ready' };
 
+/**
+ * The state with every window predicted, revealed and scored: what the step button reaches at the end, and what
+ * the overview (every saved window, before or after a step-through replay) shows.
+ */
+export function completeState(nSteps: number): ReplayState {
+  return { index: Math.max(0, nSteps), phase: 'ready' };
+}
+
 export function advance(s: ReplayState, nSteps: number): ReplayState {
   if (s.index >= nSteps) return s;
   if (s.phase === 'ready') return { index: s.index, phase: 'predicted' };
@@ -306,6 +314,26 @@ export function plottedWindows(
     if (v.observed) actual.push({ window: st.window, value: st.observed });
   });
   return { predicted, actual };
+}
+
+/** The artifact field holding each forecaster's per-window absolute error |e_k|. */
+export const ABS_ERROR_FIELD: Record<Forecaster, 'absErrPersistence' | 'absErrFrozen'> = {
+  persistence: 'absErrPersistence',
+  frozen: 'absErrFrozen',
+};
+
+/**
+ * What the absolute-error chart may draw in replay state `s`: each forecaster's |e_k| (the artifact's absErr
+ * fields, the values the MAE averages) for every window already revealed. A window's error needs its observed
+ * mean, so it is absent until the Reveal, like the observed mean itself.
+ */
+export function plottedErrors(steps: readonly ForecastStep[], s: ReplayState): Record<Forecaster, PlottedWindow[]> {
+  const out: Record<Forecaster, PlottedWindow[]> = { persistence: [], frozen: [] };
+  steps.forEach((st, i) => {
+    if (!visibility(s, i).observed) return;
+    for (const f of FORECASTERS) out[f].push({ window: st.window, value: st[ABS_ERROR_FIELD[f]] });
+  });
+  return out;
 }
 
 /** Points of a step line, ready for a Plotly scatter trace. */

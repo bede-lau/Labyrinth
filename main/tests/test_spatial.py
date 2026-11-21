@@ -20,26 +20,23 @@ def test_S1_two_ranks_plane_ownership_periodic_exchanges_cpu_field_solve(art):
                                 {"fromRank": 1, "toRank": 0, "planes": [4, 3]},
                                 {"fromRank": 1, "toRank": 0, "planes": [6, 1]},
                                 {"fromRank": 0, "toRank": 1, "planes": [1, 6]}]
-    # Ownership and boundaries are PRD/TASK inputs, not recomputed; the docstring must not overclaim.
-    doc = " ".join(artifact.__doc__.split())
-    assert "taken from the PRD and tasks/05-spatial/TASK.md" in doc
-    assert "The one recomputed number is the speedup ratio" in doc
     assert art["fieldSolve"] == {"device": "CPU"}
 
 
 def test_S2_runs_and_speedup_recomputed(art):
     assert art["runs"] == {"controlled": 4, "passedReference": 4}
     tm = art["timing"]
-    assert (tm["cpuMeanS"], tm["gpuMeanS"], tm["speedup"]) == (184.69, 145.44, 1.27)
-    assert tm["speedupRecomputed"] == pytest.approx(184.69 / 145.44)
+    assert (round(tm["cpuMeanS"], 2), round(tm["gpuMeanS"], 2), tm["speedup"]) == (184.69, 145.44, 1.27)
+    assert tm["speedupRecomputed"] == pytest.approx(tm["cpuMeanS"] / tm["gpuMeanS"])
     assert round(tm["speedupRecomputed"], 2) == tm["speedup"]
 
 
-def test_S3_provenance_prd_reported_and_verification_blocked(art):
+def test_S3_provenance_derived_and_verified(art):
     prov = art["provenance"]
-    assert prov["kind"] == "prd-reported"
-    assert prov["verification"]["outcome"] == "blocked"
-    assert "checkpoints" in prov["verification"]["details"] and "not in this repo" in prov["verification"]["details"]
+    assert prov["kind"] == "derived"
+    assert prov["verification"]["outcome"] == "passed"
+    assert "Checkpoint bounds" in prov["verification"]["details"]
+    assert {s["label"] for s in prov["sources"]} >= {"checkpoint_1.nc", "checkpoint_2.nc", "controlled-results.json"}
     assert "Dommaschk" in prov["coverage"]["description"] and "not W7-X" in prov["coverage"]["description"]
 
 
@@ -52,29 +49,27 @@ def _fx(art, fid):
     return next(f for f in art["fixtures"] if f["id"] == fid)
 
 
-def test_S5_fixtures_speedup_is_arithmetic_and_runs_not_recomputable(art):
-    """D-023 §2: the PRD numbers this artifact reports are fixtures, so the view needs no hard-coded pills."""
-    ids = [f["id"] for f in art["fixtures"]]
-    assert ids == ["speedup", "controlled-runs-passed", "cpu-mean-s", "gpu-mean-s"]
-    sp = _fx(art, "speedup")
-    assert sp["claimed"] == 1.27 and sp["printedDecimals"] == 2
-    assert sp["computed"] == pytest.approx(184.69 / 145.44) and sp["computed"] == art["timing"]["speedupRecomputed"]
-    assert sp["matches"] is True and sp["basis"] == "arithmetic"
-    assert "184.69" in sp["note"] and "145.44" in sp["note"]
-    runs = _fx(art, "controlled-runs-passed")
-    assert runs["claimed"] == 4 and runs["computed"] is None and runs["matches"] is None
-    assert "basis" not in runs and "4 of 4" in runs["label"] and "not in this repo" in runs["note"]
-    for fid, claimed in (("cpu-mean-s", 184.69), ("gpu-mean-s", 145.44)):
-        f = _fx(art, fid)
-        assert (f["claimed"], f["computed"], f["matches"], f["printedDecimals"]) == (claimed, None, None, 2)
-        assert "basis" not in f
-    for f in art["fixtures"]:
-        assert "claimedRange" not in f
+def test_S5_fixtures_recompute_from_saved_runs(art):
+    expected = {"speedup": 1.27, "controlled-runs-passed": 4, "cpu-mean-s": 184.69, "gpu-mean-s": 145.44}
+    assert [f["id"] for f in art["fixtures"]] == list(expected)
+    for fid, claimed in expected.items():
+        check = _fx(art, fid)
+        assert check["claimed"] == claimed
+        assert round(check["computed"], check["printedDecimals"]) == claimed
+        assert check["matches"] is True and check["basis"] == "data"
 
 
-def test_S5_speedup_fixture_is_recomputed_not_copied(monkeypatch):
-    """The speedup fixture follows the timing inputs (a PRD 1.27 with other means would be flagged)."""
-    monkeypatch.setattr(artifact, "PRD_GPU_MEAN_S", 120.0)
-    sp = _fx(artifact.build(), "speedup")
-    assert sp["computed"] == pytest.approx(184.69 / 120.0) and sp["matches"] is False
-    assert sp["claimed"] == 1.27
+def test_S5_failed_mms_data_changes_the_tally(tmp_path, monkeypatch):
+    import json
+
+    runs = json.loads(artifact.TIMINGS.read_text())
+    runs[0]["actual_rows"][2][1] += 1
+    changed = tmp_path / "changed.json"
+    changed.write_text(json.dumps(runs))
+    monkeypatch.setattr(artifact, "TIMINGS", changed)
+    # Only this intentionally changed source is outside the repository.
+    monkeypatch.setattr(artifact, "source", lambda label, url, path: {"label": label, "url": url})
+    result = artifact.build()
+    assert result["runs"]["passedReference"] == 3
+    assert _fx(result, "controlled-runs-passed")["matches"] is False
+    assert result["provenance"]["verification"]["outcome"] == "failed"

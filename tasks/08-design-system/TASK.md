@@ -17,6 +17,6 @@ design-lead (`renderer/src/design/`)
 | D1–D6 | `renderer/src/design/**/*.test.ts(x)` (D6 tests named `D6 …`) |
 
 ## Status
-IN-PROGRESS
+VERIFYING
 
-Reopened 2026-11-21 for the owner's requirement (D-027: heat and field ramps, diverter colour, `model` status). Previously DONE: verified at commit 3faed3a (tasks/08-design-system/VERIFY.md, `Verdict: PASS`, external verifier, 2026-11-20).
+Also carries the owner's 2026-11-21 local design changes (bbf2fc6). Reopened 2026-11-21 for the owner's requirement (D-027: heat and field ramps, diverter colour, `model` status). Previously DONE: verified at commit 3faed3a (tasks/08-design-system/VERIFY.md, `Verdict: PASS`, external verifier, 2026-11-20).

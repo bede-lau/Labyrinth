@@ -316,7 +316,7 @@ def test_float64_failure_fails_the_tracer_validation(tmp_path, monkeypatch):
     assert "every zeta and bmag within half a unit in the last printed place" in prov["details"]
     assert f"max |error| <= {f64['maxAbsError']:g}, max rel <= {f64['maxRelError']:g}, OUTSIDE tolerance 1e-10" \
         in prov["details"]
-    assert a["validation"]["acceptance129"]["outcome"] == "blocked"
+    assert a["validation"]["acceptance129"]["outcome"] == "passed"
 
 
 _REAL_COMPARE_OUT_NC = stella_reference.compare_out_nc
@@ -548,17 +548,15 @@ def test_surface_and_bean_outboard_midplane():
 
 
 # ---- G6 --------------------------------------------------------------------
-def test_acceptance129_is_blocked_not_passed():
+def test_acceptance129_matches_saved_modal_bean_samples():
     a = built()
     acc = a["validation"]["acceptance129"]
-    assert acc["outcome"] == "blocked"
-    assert "129" in acc["details"] and "D-007" in acc["details"]
-    assert "not in this repo" in acc["details"]
+    assert acc["outcome"] == "passed"
+    assert "129 saved Modal stella samples at rho 0.8" in acc["details"]
     prov = a["provenance"]
     assert prov["kind"] == "derived"
-    # the overall badge must never read "passed" while the PRD acceptance is blocked
-    assert prov["verification"]["outcome"] != "passed"
-    assert prov["verification"]["outcome"] == "blocked"
+    assert prov["verification"]["outcome"] == "passed"
+    assert any(s["path"].endswith("stella-modal-bean/overlap.geometry") for s in prov["sources"])
     details = prov["verification"]["details"]
     assert "Tracer validated vs stella rho 0.7: passed" in details
     # BE-DATA-1/5: the prose states the float64 verdict and prints the same published bounds as float64Reference
@@ -568,11 +566,14 @@ def test_acceptance129_is_blocked_not_passed():
     assert "OUTSIDE" not in details and "FAILED" not in details
 
 
-def test_acceptance129_schema_rejects_passed():
-    """D-023 §3: the contract itself, not only this backend, forbids acceptance129 other than blocked (D-007)."""
+def test_acceptance129_schema_checks_outcome_and_shape():
     v = _validator()
     assert v.is_valid(built())
-    for outcome in ("passed", "failed", "not-applicable", "BLOCKED", None):
+    for outcome in ("passed", "failed", "blocked"):
+        a = json.loads(json.dumps(built()))
+        a["validation"]["acceptance129"]["outcome"] = outcome
+        assert v.is_valid(a)
+    for outcome in ("not-applicable", "BLOCKED", None):
         a = json.loads(json.dumps(built()))
         a["validation"]["acceptance129"]["outcome"] = outcome
         assert not v.is_valid(a), outcome

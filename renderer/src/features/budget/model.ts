@@ -40,7 +40,7 @@ export interface BudgetArtifact {
   schemaVersion: 1;
   ceilingUsd: number;
   postedUsd: number;
-  /** The PRD's plan: GPU time only. */
+  /** The PRD's plan: Includes GPU, CPU and RAM. */
   plannedUsd: number;
   remainingAfterPlanUsd: number;
   scenarios: BudgetScenario[];
@@ -173,8 +173,8 @@ export function guardPlanStale(guard: GuardView | null, plan: GuardPlan): boolea
   return guard !== null && Math.round(guard.slotEstimateUsd * 100) !== Math.round(plan.slotEstimateUsd * 100);
 }
 
-/** The two plans are never merged: the PRD's counts GPU time only, the guard's adds its allowances. */
-export const PRD_PLAN_LABEL = 'PRD GPU-only plan';
+/** The two plans are never merged: the PRD prices allocated resources, and the guard adds allowances. */
+export const PRD_PLAN_LABEL = 'PRD base estimate';
 export const GUARD_PLAN_LABEL = 'Guard plan';
 
 export interface PlanCheck {

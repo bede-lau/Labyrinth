@@ -25,6 +25,6 @@ Frontend:
 | F4–F5, F7–F8 | `renderer/src/features/forecast/*.test.tsx` (tests for F7 and F8 named `F7 …`, `F8 …`) |
 
 ## Status
-IN-PROGRESS
+VERIFYING
 
-Reopened 2026-11-21 for the owner's requirement (D-026: predicted vs actual chart, MSE). Previously DONE: verified at commit 3faed3a (tasks/03-forecast/VERIFY.md, `Verdict: PASS`, external verifier, 2026-11-20).
+Merged 2026-11-21: the owner's local graph redesign (bbf2fc6: the overview graphs all eight windows; replay reveals archived observations on request; the saved artifact retains its claimed and computed scores) combined with D-026 (predicted vs actual, MSE / RMSE / ranges). Reopened 2026-11-21 for the owner's requirement (D-026: predicted vs actual chart, MSE). Previously DONE: verified at commit 3faed3a (tasks/03-forecast/VERIFY.md, `Verdict: PASS`, external verifier, 2026-11-20).

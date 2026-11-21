@@ -225,9 +225,10 @@ class ModalBackend:
                                f"Modal-enforced startup + execution bound {planned} s of {self.function_name}")
         import modal
 
-        from .gx_input import RESUME_FILE, build_inputs
+        from .gx_input import RESUME_FILE, Resolution, build_inputs
 
-        input_toml = build_inputs(restart_from={tube: RESUME_FILE} if checkpoint else None)[tube]
+        resolution = Resolution(max_steps=400) if self.kind == "rehearsal" else None
+        input_toml = build_inputs(restart_from={tube: RESUME_FILE} if checkpoint else None, res=resolution)[tube]
         h = ModalHandle(key=f"{self.run_id}/{tube}")
         fn = bounded(lambda: modal.Function.from_name(APP_NAME, self.function_name), "Function.from_name")
         if self._stop_requested:  # the stop arrived during the lookup: nothing has been sent, so send nothing

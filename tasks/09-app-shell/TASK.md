@@ -17,6 +17,6 @@ frontend-engineer (`renderer/src/shell/`, `renderer/src/lib/`)
 | A1–A6 | `renderer/src/shell/*.test.tsx`, `renderer/src/lib/*.test.ts` |
 
 ## Status
-IN-PROGRESS
+VERIFYING
 
-Reopened 2026-11-21 for the owner's requirement (D-027: seventh view, `heatfield` artifact id, `model` kind in the legend). Previously DONE: verified at commit 77fd8b6 (tasks/09-app-shell/VERIFY.md run 3, `Verdict: PASS`, 2026-11-21).
+Also carries the owner's 2026-11-21 local interface update (bbf2fc6: persistent navigation rail, termination reachable from every view). Reopened 2026-11-21 for the owner's requirement (D-027: seventh view, `heatfield` artifact id, `model` kind in the legend). Previously DONE: verified at commit 77fd8b6 (tasks/09-app-shell/VERIFY.md run 3, `Verdict: PASS`, 2026-11-21).

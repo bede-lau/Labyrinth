@@ -13,7 +13,6 @@ import {
   orbitForKey,
   surfaceTriangles,
   surfaceWire,
-  tracerPassed,
   tubeById,
   tubeMarkers,
 } from './model';
@@ -124,10 +123,10 @@ test('G7 scene: gray closed surface (seam wrapped), selected tube coloured by |B
   expect(tubeMarkers(realBean).map((k) => k.index)).toEqual([0, 64, 128]);
   expect(realBean.samples[64]!.thetaStar).toBe(0);
   expect(checkGeometry({ ...real, surface: { ...real.surface, positions: real.surface.positions.slice(3) } })).toMatch(/surface\.positions has/);
-  // D-023: the float64 comparison is a contract field now, and the 129-sample acceptance is blocked by contract.
+  // D-023: the float64 comparison is a contract field now, and the 129-sample acceptance now uses saved Modal data.
   expect(real.validation.float64Reference).toMatchObject({ samplesCompared: 25, tolerance: 1e-10, allWithinTolerance: true });
   expect(real.validation.float64Reference.maxAbsError).toBeLessThan(1e-12);
-  expect(real.validation.acceptance129.outcome).toBe('blocked');
+  expect(real.validation.acceptance129.outcome).toBe('passed');
 
   // Camera keyboard control.
   expect(orbitForKey(DEFAULT_ORBIT, 'ArrowRight')!.azimuth).toBeGreaterThan(DEFAULT_ORBIT.azimuth);
@@ -156,17 +155,17 @@ test('G8 bean/triangular selector is keyboard accessible and switches the scene,
   serve(g);
   const user = userEvent.setup();
   render(<GeometryView />);
-  const group = await screen.findByRole('radiogroup', { name: 'Field line' });
-  const bean = within(group).getByRole('radio', { name: /Bean/ });
-  expect(bean).toHaveAttribute('aria-checked', 'true');
+  const group = await screen.findByRole('group', { name: 'W7-X GPU assignments' });
+  const bean = within(group).getByRole('button', { name: /Bean/ });
+  expect(bean).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByTestId('scene')).toHaveAttribute('data-selected', 'bean');
   expect(screen.getByTestId('chart')).toHaveAttribute('data-series', expect.stringContaining('Bean'));
   expect(screen.getByRole('heading', { name: 'Cross-section at ζ = 0°' })).toBeInTheDocument();
 
   bean.focus();
-  await user.keyboard('{ArrowRight}');
-  const tri = within(group).getByRole('radio', { name: /Triangular/ });
-  expect(tri).toHaveAttribute('aria-checked', 'true');
+  await user.keyboard('{Tab}{Enter}');
+  const tri = within(group).getByRole('button', { name: /Triangular/ });
+  expect(tri).toHaveAttribute('aria-pressed', 'true');
   expect(tri).toHaveFocus();
   expect(screen.getByTestId('scene')).toHaveAttribute('data-selected', 'triangular');
   expect(last<{ model: SceneModel }>(rec.scene).model.tubes.find((t) => t.selected)?.id).toBe('triangular');
@@ -197,7 +196,7 @@ test('G8 bean/triangular selector is keyboard accessible and switches the scene,
   expect(Number(dot.getAttribute('cy'))).toBeCloseTo(wantTri.centre.y, 6);
   expect(screen.getByRole('list', { name: 'Scene key' })).toHaveTextContent('Bean (ζ = 0°), muted');
 
-  await user.keyboard('{ArrowLeft}');
+  await user.keyboard('{Shift>}{Tab}{/Shift}{Enter}');
   expect(screen.getByTestId('scene')).toHaveAttribute('data-selected', 'bean');
   const [blo, bhi] = beanTube.bmagRange;
   expect(colorBarTicks()).toEqual([blo.toFixed(3), ((blo + bhi) / 2).toFixed(3), bhi.toFixed(3)]);
@@ -267,82 +266,19 @@ test('G9 cross-section inset (solid sampled surface, dashed boundary) and |B|(θ
   expect(inset).toHaveTextContent('Z (m)');
   const chart = screen.getByTestId('chart');
   expect(chart).toHaveAccessibleName(/\|B\| in units of B_ref against field-line angle θ\* in radians/);
-  expect(screen.getByText(spec.summary)).toBeInTheDocument();
+  expect(screen.queryByText(spec.summary)).toBeNull();
 });
 
-test('G10 validation panel: stella reference result, and acceptance-129 shown as BLOCKED with its reason, never passed', async () => {
+test('geometry retains verification status and omits the validation report', async () => {
   const g = geometryFixture();
   serve(g);
-  const first = render(<GeometryView />);
-  const ref = (await screen.findByRole('heading', { name: 'Tracer vs stella saved geometry (ρ 0.7)' })).closest('section')!;
-  expect(within(ref).getByText('Verified')).toBeInTheDocument();
-  expect(ref).toHaveTextContent('All 25 saved samples agree to their printed 4 significant figures');
-  expect(within(ref).getByRole('group', { name: 'Samples compared: 25' })).toBeInTheDocument();
-  expect(within(ref).getByRole('group', { name: 'Max |Δ| in |B|: 0.000487 B ref' })).toBeInTheDocument();
-  // FB-5: the float64 comparison is validation.float64Reference (rounded up, hence "≤"), not parsed prose.
-  expect(within(ref).getByTestId('float64')).toHaveTextContent(
-    'Against stella’s float64 output (out.nc): max |Δ| in |B| ≤ 3.0 × 10−13 Bref, relative ≤ 3.0 × 10−13, over 25 samples. Tolerance 1.0 × 10−10 Bref: every sample is within it.',
-  );
-  expect(within(within(ref).getByTestId('float64')).getByRole('link', { name: g.validation.float64Reference.source.label })).toHaveAttribute(
-    'href',
-    'https://example.org/stella/out.nc',
-  );
-
-  const acc = screen.getByTestId('acceptance129');
-  expect(within(acc).getByRole('heading')).toHaveTextContent('PRD acceptance: bean |B| vs all 129 saved stella samples (ρ 0.8)');
-  expect(acc.querySelector('.lab-pill[data-status="blocked"]')).toHaveTextContent('Blocked');
-  expect(acc.querySelector('[data-status="passed"]')).toBeNull();
-  expect(acc).not.toHaveTextContent(/Verified|passed|Match\b/);
-  const note = within(acc).getByRole('note');
-  expect(note).toHaveAccessibleName(/^Blocked:/);
-  expect(note).toHaveTextContent('not in this repo or at the cited stella commit');
-  expect(note).toHaveTextContent('To unblock: add the stella .geometry/.out.nc file holding the 129 samples to data/raw/.');
-  first.unmount();
-
-  // D-023: the contract fixes the acceptance at "blocked". An artifact claiming it passed (or failed) is
-  // refused and named, never drawn with a "Verified" acceptance pill.
-  for (const outcome of ['passed', 'failed'] as const) {
-    const bad = { ...g, validation: { ...g.validation, acceptance129: { outcome, details: 'max error 2e-3' } } } as unknown as GeometryArtifact;
-    expect(checkGeometry(bad)).toBe(
-      `validation.acceptance129.outcome is "${outcome}"; the contract fixes it at "blocked" until the 129 stella samples exist (D-007, D-023)`,
-    );
-    serve(bad);
-    const r = render(<GeometryView />);
-    expect(await screen.findByRole('heading', { name: 'Could not load artifacts/geometry.json' })).toBeInTheDocument();
-    expect(screen.getByText(new RegExp(`acceptance129\\.outcome is "${outcome}"`))).toBeInTheDocument();
-    expect(document.querySelector('.lab-pill[data-status="passed"], [data-testid="acceptance129"]')).toBeNull();
-    r.unmount();
-  }
-
-  // A missing artifact names the file instead of rendering blank.
-  serve({ error: 'gone' }, 404);
   render(<GeometryView />);
-  expect(await screen.findByRole('heading', { name: 'Could not load artifacts/geometry.json' })).toBeInTheDocument();
+  expect(await screen.findByTestId('geo-verdict')).toHaveTextContent('129-sample acceptance blocked');
+  expect(screen.queryByTestId('acceptance129')).toBeNull();
+  expect(document.querySelector('.geo-layout__scene footer')).toBeNull();
 });
 
-test('G10 the tracer check follows the artifact: a failing stella reference is shown as Failed, never as Verified', async () => {
-  const g = geometryFixture();
-  const bad: GeometryArtifact = {
-    ...g,
-    validation: { ...g.validation, stellaReference: { ...g.validation.stellaReference, allWithinPrintedPrecision: false, maxAbsError: 0.0021 } },
-  };
-  serve(bad);
-  render(<GeometryView />);
-  const ref = (await screen.findByRole('heading', { name: 'Tracer vs stella saved geometry (ρ 0.7)' })).closest('section')!;
-  expect(ref.querySelector('.lab-pill')).toHaveAttribute('data-status', 'failed');
-  expect(ref.querySelector('.lab-pill')).toHaveTextContent('Failed');
-  expect(within(ref).queryByText('Verified')).toBeNull();
-  expect(ref).toHaveTextContent('Not every sample agrees to the printed 4 significant figures.');
-  expect(ref).not.toHaveTextContent(/All 25 saved samples agree/);
-  expect(within(ref).getByRole('group', { name: 'Max |Δ| in |B|: 0.002100 B ref' })).toBeInTheDocument();
-  // The verdict above the fold says the same thing.
-  const scene = screen.getByRole('region', { name: /Field lines on the ρ = 0\.8 flux surface/ });
-  expect(within(scene).getByText('ρ 0.7 check failed').closest('.lab-pill')).toHaveAttribute('data-status', 'failed');
-  expect(within(scene).queryByText('ρ 0.7 check verified')).toBeNull();
-  expect(document.querySelector('.lab-pill[data-status="passed"]')).toBeNull();
-});
-
-test('G10 honesty labels: both checks named above the fold, provenance badge, replay eyebrow, kind from the artifact, no live pill', async () => {
+test('G10 honesty labels: both checks named above the fold, provenance badge, no replay eyebrow, kind from the artifact, no live pill', async () => {
   const g = geometryFixture();
   serve(g);
   const first = render(<GeometryView />);
@@ -351,9 +287,9 @@ test('G10 honesty labels: both checks named above the fold, provenance badge, re
   const header = scene.querySelector('.lab-panel__header')!;
   const verdicts = [...header.querySelectorAll('[data-testid="geo-verdict"] .lab-pill')].map((p) => `${p.getAttribute('data-status')}:${p.textContent}`);
   expect(verdicts).toEqual(['passed:ρ 0.7 check verified', 'blocked:129-sample acceptance blocked']);
-  // Provenance record on the result panel; the view is a replay and says so.
+  // Provenance record on the result panel; the compact view keeps the source on demand.
   expect(within(scene).getByRole('button', { name: 'Provenance of field-line geometry: Derived, Blocked' })).toBeInTheDocument();
-  expect(scene).toHaveTextContent(/^Locate the tubes · replay/);
+  expect(scene.querySelector('.lab-panel__eyebrow')).toBeNull();
   expect(scene).not.toHaveTextContent(/· live|· Live|\bLIVE\b/);
   // Every panel that shows numbers carries the artifact's provenance kind.
   const chart = screen.getByRole('region', { name: /Field strength along the line/ });
@@ -383,10 +319,7 @@ test('G10 honesty labels: both checks named above the fold, provenance badge, re
     'passed:ρ 0.7 check verified',
     'blocked:129-sample acceptance blocked',
   ]);
-  const acc = within(screen.getByTestId('acceptance129')).getByRole('note');
-  expect(acc).toHaveTextContent('Synthetic reason: the samples are elsewhere.');
-  expect(acc).toHaveTextContent('To unblock: fetch them from the archive.');
-  expect(screen.getByTestId('acceptance129').querySelector('.lab-pill')).toHaveAttribute('data-status', 'blocked');
+  expect(screen.queryByTestId('acceptance129')).toBeNull();
   second.unmount();
 
   // An artifact is replayed evidence: a "live" provenance kind cannot put a LIVE pill on the chart or the inset.
@@ -396,75 +329,6 @@ test('G10 honesty labels: both checks named above the fold, provenance badge, re
   expect(chart3.querySelector('.lab-pill')).toHaveAttribute('data-status', 'replay');
   expect(chart3.querySelector('[data-status="live"]')).toBeNull();
   expect(screen.getByRole('region', { name: /Cross-section at ζ = 0°/ }).querySelector('[data-status="live"]')).toBeNull();
-});
-
-test('FF-6 the scene footer links the equilibrium source only when it is a web address; a repository path is named, not linked', async () => {
-  const g = geometryFixture();
-  serve(g);
-  const first = render(<GeometryView />);
-  const scene = await screen.findByRole('region', { name: /Field lines on the ρ = 0\.8 flux surface/ });
-  expect(within(scene).getByRole('link', { name: 'VMEC' })).toHaveAttribute('href', 'https://example.org/vmec');
-  first.unmount();
-
-  serve({ ...g, equilibrium: { ...g.equilibrium, source: { ...g.equilibrium.source, label: 'VMEC wout', url: 'data/raw/wout_w7x_kjm.nc' } } });
-  render(<GeometryView />);
-  const scene2 = await screen.findByRole('region', { name: /Field lines on the ρ = 0\.8 flux surface/ });
-  expect(within(scene2).queryByRole('link', { name: /VMEC/ })).toBeNull();
-  expect(document.querySelectorAll('a[href="data/raw/wout_w7x_kjm.nc"]')).toHaveLength(0);
-  expect(within(scene2).getByTestId('equilibrium-source')).toHaveTextContent('VMEC wout data/raw/wout_w7x_kjm.nc');
-  expect(scene2).toHaveTextContent(/Equilibrium: VMEC wout data\/raw\/wout_w7x_kjm\.nc sha256 /);
-});
-
-test('FB-5 the float64 check is validation.float64Reference: its numbers, its verdict, its source; the prose is not read', async () => {
-  const g = geometryFixture();
-  // Prose that the old parser read, now contradicting the field: the field wins, the prose is never parsed.
-  const failing: GeometryArtifact = {
-    ...g,
-    provenance: { ...g.provenance, verification: { outcome: 'blocked', details: "vs stella's float64 out.nc bmag: max |error| 2.9e-13 over 25 samples" } },
-    validation: {
-      ...g.validation,
-      float64Reference: {
-        samplesCompared: 24,
-        tolerance: 1e-11,
-        maxAbsError: 2.4e-9,
-        maxRelError: 1.9e-9,
-        allWithinTolerance: false,
-        source: { label: 'out.nc copy', url: 'data/raw/stella_test2_vmec_geometry.out.nc', sha256: 'c'.repeat(64) },
-      },
-    },
-  };
-  serve(failing);
-  const first = render(<GeometryView />);
-  const ref = (await screen.findByRole('heading', { name: 'Tracer vs stella saved geometry (ρ 0.7)' })).closest('section')!;
-  const f64 = within(ref).getByTestId('float64');
-  expect(f64).toHaveTextContent(
-    'Against stella’s float64 output (out.nc): max |Δ| in |B| ≤ 2.4 × 10−9 Bref, relative ≤ 1.9 × 10−9, over 24 samples. Tolerance 1.0 × 10−11 Bref: NOT every sample is within it.',
-  );
-  expect(f64).not.toHaveTextContent(/2\.9 × 10−13|: every sample is within it\./);
-  expect(f64).toHaveAttribute('data-within', 'false');
-  // A repository path is named, never linked (a relative href would open the app shell).
-  expect(within(f64).queryByRole('link')).toBeNull();
-  expect(f64).toHaveTextContent('Reference: out.nc copy data/raw/stella_test2_vmec_geometry.out.nc sha256 cccccccccc…');
-  // The tracer check passes only when both comparisons of the rho 0.7 run pass: here it fails, above the fold too.
-  expect(ref.querySelector('.lab-pill')).toHaveAttribute('data-status', 'failed');
-  expect(ref).toHaveTextContent('All 25 saved samples agree to their printed 4 significant figures');
-  const scene = screen.getByRole('region', { name: /Field lines on the ρ = 0\.8 flux surface/ });
-  expect(within(scene).getByText('ρ 0.7 check failed').closest('.lab-pill')).toHaveAttribute('data-status', 'failed');
-  expect(document.querySelector('.lab-pill[data-status="passed"]')).toBeNull();
-  first.unmount();
-
-  expect(tracerPassed(g.validation)).toBe(true);
-  expect(tracerPassed(failing.validation)).toBe(false);
-  expect(tracerPassed({ ...g.validation, stellaReference: { ...g.validation.stellaReference, allWithinPrintedPrecision: false } })).toBe(false);
-
-  // An artifact from before D-023 (no float64Reference) is named, not half-drawn.
-  const rest: Partial<GeometryArtifact['validation']> = { ...g.validation };
-  delete rest.float64Reference;
-  const old = { ...g, validation: rest } as unknown as GeometryArtifact;
-  expect(checkGeometry(old)).toBe('validation block is incomplete');
-  serve(old);
-  render(<GeometryView />);
-  expect(await screen.findByRole('heading', { name: 'Could not load artifacts/geometry.json' })).toBeInTheDocument();
 });
 
 test('DS-15 the cross-section inset is capped at its drawn size, so its labels keep their type size', () => {

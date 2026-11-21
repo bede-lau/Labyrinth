@@ -63,8 +63,7 @@ export interface GeometryArtifact {
       allWithinTolerance: boolean;
       source: Source;
     };
-    /** Always "blocked" by contract (D-023) until the 129 stella samples exist (D-007). */
-    acceptance129: { outcome: 'blocked'; details: string };
+    acceptance129: { outcome: 'passed' | 'failed' | 'blocked'; details: string };
   };
   provenance: Provenance;
 }
@@ -82,9 +81,7 @@ export function checkGeometry(g: GeometryArtifact): string | null {
   }
   const v = g.validation;
   if (!v?.acceptance129 || !v.stellaReference || !v.float64Reference) return 'validation block is incomplete';
-  // The contract fixes the 129-sample acceptance at "blocked" (D-023): an artifact claiming anything else
-  // is refused here rather than shown, so no hand-edited file can display that acceptance as passed.
-  if ((v.acceptance129.outcome as string) !== 'blocked')
-    return `validation.acceptance129.outcome is "${String(v.acceptance129.outcome)}"; the contract fixes it at "blocked" until the 129 stella samples exist (D-007, D-023)`;
+  if (!['passed', 'failed', 'blocked'].includes(v.acceptance129.outcome))
+    return `validation.acceptance129.outcome is "${String(v.acceptance129.outcome)}"; expected passed, failed or blocked`;
   return null;
 }

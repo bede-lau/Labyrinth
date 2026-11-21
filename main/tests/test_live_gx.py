@@ -730,9 +730,11 @@ def test_L8_gx_input_generation_for_both_tubes():
         assert "UNREHEARSED" in text and f"GPU {gpu}" in text
         cfg = tomllib.loads(text)
         geo = cfg["Geometry"]
-        assert geo["geo_option"] == "vmec" and geo["torflux"] == 0.64 and geo["npol"] == 1.0
+        assert geo["geo_option"] == "vmec_c" and geo["file_tag"] == tube and geo["torflux"] == 0.64 and geo["npol"] == 1.0
         assert "nperiod" not in cfg["Dimensions"]  # one field-line-length parameter only
-        assert geo["alpha"] == pytest.approx(-iota * math.radians(zeta_deg))
+        assert geo["zeta_center"] == pytest.approx(math.radians(zeta_deg))
+        assert geo["alpha"] == pytest.approx(-iota * geo["zeta_center"])
+        assert "nstep" not in cfg["Time"]
         assert cfg["species"]["tprim"] == [tprim] and cfg["species"]["fprim"] == [fprim]
         assert cfg["Physics"]["nonlinear_mode"] is True
         assert (cfg["Dimensions"]["nlaguerre"], cfg["Dimensions"]["nhermite"]) == (4, 8)
@@ -741,6 +743,9 @@ def test_L8_gx_input_generation_for_both_tubes():
     resumed = tomllib.loads(gx_input.build_inputs(restart_from={"bean": gx_input.RESUME_FILE})["bean"])["Restart"]
     assert resumed["restart"] is True and resumed["restart_from_file"] == gx_input.RESUME_FILE
     assert resumed["restart_to_file"] != resumed["restart_from_file"]
+    assert resumed["append_on_restart"] is False
+    limited = gx_input.build_inputs(res=gx_input.Resolution(max_steps=400))
+    assert all(tomllib.loads(deck)["Time"]["nstep"] == 400 for deck in limited.values())
     with pytest.raises(ValueError):
         gx_input.render("bean", iota=iota, tprim=3.0, fprim=1.0, vmec_file="w", restart_from="x/a.nc", restart_to="a.nc")
     assert gx_input.IDENTICAL_REFERENCES is True
@@ -1733,7 +1738,7 @@ def test_L6_stop_bound_holds_on_a_virtual_clock_when_every_modal_call_takes_its_
     attempt failing after its full bound, the hard timeout firing in the same step — and the session never
     runs a second terminate round."""
     bound, per_call, planned = service.WORST_CASE_STOP_S, modal_backend.CALL_TIMEOUT_S, guard.planned_call_s("live")
-    monkeypatch.setattr(gx_input, "build_inputs", lambda restart_from=None: {tube: "# not under test\n" for _, tube in orchestrator.TUBES})
+    monkeypatch.setattr(gx_input, "build_inputs", lambda restart_from=None, res=None: {tube: "# not under test\n" for _, tube in orchestrator.TUBES})
     launches = len(orchestrator.TUBES) * modal_backend.LAUNCH_CALLS * per_call   # 80 s: both spawns answered
     poll_round = len(orchestrator.TUBES) * modal_backend.POLL_CALLS * per_call + service.POLL_INTERVAL_S
     edges = {k * per_call for k in range(int(launches / per_call) + 1)}
@@ -2066,7 +2071,7 @@ def matrix(monkeypatch, qualified_template, tmp_path):
         stubs.append(stub)
         real = modal_backend.bounded
         monkeypatch.setitem(sys.modules, "modal", stub.module)
-        monkeypatch.setattr(gx_input, "build_inputs", lambda restart_from=None: {tube: "# not under test\n" for _, tube in orchestrator.TUBES})
+        monkeypatch.setattr(gx_input, "build_inputs", lambda restart_from=None, res=None: {tube: "# not under test\n" for _, tube in orchestrator.TUBES})
         monkeypatch.setattr(modal_backend, "bounded", lambda fn, what, timeout_s=None: real(fn, what, 30.0))
         monkeypatch.setattr(modal_backend, "CALL_TIMEOUT_S", 0.05 if stub.gated else 30.0)
         monkeypatch.setattr(modal_backend, "LATE_CANCEL_BACKOFF_S", (0.0,) * (LATE_ATTEMPTS - 1))

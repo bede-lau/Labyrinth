@@ -14,7 +14,7 @@ const STATIC = [
 test('F7 the forecast chart loads Plotly lazily: import() in its adapter, no static import anywhere in the feature', () => {
   const src = (f: string) => readFileSync(resolve(__dirname, f), 'utf8');
   expect(src('PlotlyChart.tsx')).toMatch(/\bimport\(\s*['"]plotly\.js-dist-min['"]\s*\)/);
-  for (const f of ['PlotlyChart.tsx', 'ForecastView.tsx', 'chart.ts', 'model.ts'])
+  for (const f of ['PlotlyChart.tsx', 'ForecastChart.tsx', 'ForecastView.tsx', 'chart.ts', 'model.ts'])
     for (const re of STATIC) expect(src(f), `${f}: ${re}`).not.toMatch(re);
   // The guard can fail.
   expect(`import Plotly from 'plotly.js-dist-min';`).toMatch(STATIC[0]!);
