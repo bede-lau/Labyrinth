@@ -51,6 +51,7 @@ class Resolution:
     nlaguerre: int = 4
     y0: float = 20.0
     t_max_raw: float = 2000.0
+    max_steps: int | None = None   # rehearsal stops naturally and writes a complete restart
     nwrite: int = 100
     nsave: int = 200   # small: a restart file exists even when the guard's deadline stops GX early
 
@@ -102,16 +103,17 @@ def render(tube: str, *, iota: float, tprim: float, fprim: float, vmec_file: str
                         "nhermite": res.nhermite, "nlaguerre": res.nlaguerre, "nspecies": 1}),
         ("Domain", {"y0": res.y0, "boundary": "linked"}),
         ("Physics", {"beta": 0.0, "nonlinear_mode": True}),
-        ("Time", {"t_max": res.t_max_raw, "scheme": "rk3", "cfl": 0.9}),
+        ("Time", {"t_max": res.t_max_raw, "scheme": "rk3", "cfl": 0.9,
+                  **({"nstep": res.max_steps} if res.max_steps is not None else {})}),
         ("Initialization", {"ikpar_init": 0, "init_field": "density", "init_amp": 1.0e-3,
                             "init_electrons_only": False}),
-        ("Geometry", {"geo_option": "vmec", "vmec_file": vmec_file, "torflux": TORFLUX, "npol": 1.0,
-                      "alpha": alpha}),
+        ("Geometry", {"geo_option": "vmec_c", "file_tag": tube, "vmec_file": vmec_file, "torflux": TORFLUX, "npol": 1.0,
+                      "zeta_center": spec.zeta_center, "alpha": alpha}),
         ("species", {"z": [1.0], "mass": [1.0], "dens": [1.0], "temp": [1.0], "tprim": [tprim],
                      "fprim": [fprim], "vnewk": [0.0], "type": ["ion"]}),
         ("Boltzmann", {"add_Boltzmann_species": True, "Boltzmann_type": "electrons", "tau_fac": 1.0}),
         ("Dissipation", {"closure_model": "none", "hypercollisions": True, "hyper": True, "D_hyper": 0.05}),
-        ("Restart", {"restart": restart_from is not None, "save_for_restart": True, "nsave": res.nsave,
+        ("Restart", {"restart": restart_from is not None, "save_for_restart": True, "append_on_restart": False, "nsave": res.nsave,
                      "restart_to_file": restart_to, **({"restart_from_file": restart_from} if restart_from else {})}),
         ("Diagnostics", {"nwrite": res.nwrite, "fluxes": True, "fields": False, "moments": False}),
     ]

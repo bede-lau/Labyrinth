@@ -114,3 +114,31 @@
 .lg-scrub input { flex: 1; accent-color: var(--lab-color-accent); min-width: 8rem; }
 .lg-play__stats { display: flex; flex-wrap: wrap; gap: var(--lab-space-4) var(--lab-space-8); }
 
+
+/* Control column and replay instrument share a row only when both have useful working width. */
+@media (min-width: 1280px) {
+  .lg-view[data-split='true'] {
+    display: grid; grid-template-columns: minmax(19rem, 0.9fr) minmax(0, 1.65fr); align-items: start;
+  }
+}
+.lg-plan { margin: var(--lab-space-4) 0; }
+.lg-plan figcaption { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: var(--lab-space-2); margin-bottom: var(--lab-space-2); font-size: var(--lab-font-size-sm); font-weight: var(--lab-font-weight-semibold); }
+.lg-plan figcaption a { font-size: var(--lab-font-size-xs); font-weight: var(--lab-font-weight-medium); text-underline-offset: 0.2em; }
+.lg-plan__lanes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); background: var(--lab-color-surface-sunken); border: 1px solid var(--lab-color-border); border-radius: var(--lab-radius-md); }
+.lg-plan__lane { display: grid; align-content: end; justify-items: center; padding: var(--lab-space-2); gap: var(--lab-space-1); }
+.lg-plan__lane + .lg-plan__lane { border-inline-start: 1px solid var(--lab-color-border); }
+.lg-plan__lane svg { width: 100%; max-width: 12rem; height: auto; fill: none; }
+.lg-plan__mesh { stroke: var(--lab-color-border-strong); stroke-width: 0.45; opacity: 0.58; }
+.lg-plan__line { stroke: var(--lab-series-bean); stroke-width: 1.65; stroke-linejoin: round; stroke-linecap: round; }
+.lg-plan__lane[data-tube='triangular'] .lg-plan__line { stroke: var(--lab-series-triangular); }
+.lg-plan__gpu { font: var(--lab-font-size-xs)/var(--lab-line-height-xs) var(--lab-font-mono); color: var(--lab-color-text-muted); }
+.lg-plan__lane strong { font-size: var(--lab-font-size-sm); font-weight: var(--lab-font-weight-semibold); }
+.lg-play__controls { padding-block: var(--lab-space-3); border-block: 1px solid var(--lab-color-border); }
+.lg-play__stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr)); gap: var(--lab-space-3); }
+.lg-play__stats .lab-stat__number { font-size: var(--lab-font-size-2xl); }
+
+.lg-play__stats { border-top: 1px solid var(--lab-color-border); padding-top: var(--lab-space-3); }
+@media (max-width: 760px) {
+  .lg-view .lab-panel__meta { margin-left: 0; justify-content: flex-start; }
+  .lg-scrub { order: 1; flex-basis: 100%; }
+}

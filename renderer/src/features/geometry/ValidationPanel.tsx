@@ -87,9 +87,10 @@ export function ValidationPanel({ g }: { g: GeometryArtifact }) {
           <StatusPill status={VERIFICATION_STATUS[acc.outcome]} />
         </div>
         <Callout
-          tone="blocked"
-          title="Not checked: the 129 saved samples are not available"
-          action={unblock ? <span><strong>To unblock:</strong> {unblock}</span> : undefined}
+          tone={acc.outcome === 'blocked' ? 'blocked' : acc.outcome === 'failed' ? 'warn' : 'info'}
+          title={acc.outcome === 'passed' ? 'All 129 bean samples verified' : acc.outcome === 'failed'
+            ? 'Bean comparison failed' : 'The 129-sample comparison is blocked'}
+          action={acc.outcome === 'blocked' && unblock ? <span><strong>To unblock:</strong> {unblock}</span> : undefined}
         >
           <p>{reason}</p>
         </Callout>

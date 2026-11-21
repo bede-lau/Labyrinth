@@ -1,48 +1,46 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { VERIFICATION_STATUS } from '../design';
-import { App, DECISION_QUESTION } from './App';
-import { modeView } from './ModeIndicator';
+import { App } from './App';
 import { ROUTES, routeDef } from './routes';
-import type { LiveState, LiveStatus } from '../lib/liveStatus';
+import type { LiveStatus } from '../lib/liveStatus';
 
-// The shell is tested on its own: each view is replaced by a marker so the shell's routing,
-// mode indicator and header are what is exercised (the views have their own tests).
-// `boom` lets one test make a view throw while rendering; the budget marker also reads the shared
-// live status the way a real view does (useLiveStatus), to prove there is one poller for all.
-const boom = vi.hoisted(() => ({ advance: false, transport: false }));
+// The shell is tested on its own: each view is replaced by a marker so the shell's routing, the live-session bar
+// and the legend are what is exercised (the views have their own tests). `boom` lets a test make a view throw while
+// rendering; the forecast marker also reads the shared live status the way a real view does (useLiveStatus), to
+// prove there is one poller for all and to show the store's state where the shell itself prints nothing (replay).
+const boom = vi.hoisted(() => ({ spatial: false, heat: false }));
 vi.mock('../features/geometry/GeometryView', () => ({ GeometryView: () => <p>view:locate</p> }));
-vi.mock('../features/live-gx/LiveView', () => ({
-  LiveView: () => {
-    if (boom.advance) throw new Error('phases[0].workers is undefined');
-    return <p>view:advance</p>;
-  },
-}));
-vi.mock('../features/transport/TransportView', () => ({
-  TransportView: () => {
-    if (boom.transport) throw new Error('windows[0].mean is undefined');
-    return <p>view:transport</p>;
-  },
-}));
-vi.mock('../features/forecast/ForecastView', () => ({ ForecastView: () => <p>view:forecast</p> }));
-vi.mock('../features/spatial/SpatialView', () => ({ SpatialView: () => <p>view:spatial</p> }));
-vi.mock('../features/heatfield/HeatFieldView', () => ({ HeatFieldView: () => <p>view:heat</p> }));
-vi.mock('../features/budget/BudgetView', async () => {
+vi.mock('../features/forecast/ForecastView', async () => {
   const { useLiveStatus } = await import('../lib/liveStatus');
   return {
-    BudgetView: () => {
+    ForecastView: () => {
       const s = useLiveStatus(5000);
       return (
         <>
-          <p>view:budget</p>
-          <p data-testid="view-live-probe">{s.status === 'ready' ? `ready:${s.data.mode}` : s.status}</p>
+          <p>view:forecast</p>
+          <p data-testid="view-live-probe">
+            {s.status === 'ready' ? `ready:${s.data.mode}` : s.status === 'unreachable' ? `unreachable:${s.cause}` : s.status}
+          </p>
         </>
       );
     },
   };
 });
+vi.mock('../features/spatial/SpatialView', () => ({
+  SpatialView: () => {
+    if (boom.spatial) throw new Error('runs[0].ranks is undefined');
+    return <p>view:spatial</p>;
+  },
+}));
+vi.mock('../features/heatfield/HeatFieldView', () => ({
+  HeatFieldView: () => {
+    if (boom.heat) throw new Error('surfaces[8].B is undefined');
+    return <p>view:heat</p>;
+  },
+}));
 
 const status = (mode: LiveStatus['mode'], extra: Partial<LiveStatus> = {}): LiveStatus => ({
   schemaVersion: 1,
@@ -66,23 +64,61 @@ const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200
 const serveStatus = (body: unknown) => stubFetch((url) => (url === '/api/live/status' ? json(body) : new Response('', { status: 404 })));
 const statusCalls = (f: ReturnType<typeof stubFetch>) => f.mock.calls.filter((c) => String(c[0]) === '/api/live/status').length;
 
-const banner = () => screen.getByRole('banner');
-const modeBox = () => screen.getByRole('status', { name: /^Mode:/ });
 const navLinks = () => within(screen.getByRole('navigation', { name: 'Views' })).getAllByRole('link');
-const headerPills = () => [...banner().querySelectorAll<HTMLElement>('.shell-mode .lab-pill')].map((p) => `${p.dataset.status}:${p.textContent}`);
+const navLabels = () => navLinks().map((l) => l.querySelector('.shell-nav__label')?.textContent);
+/** The owner's live-session bar under the header: "Modal session active" with Terminate (launching or live, no danger). */
+const sessionBar = () => screen.queryByText('Modal session active');
+const probe = () => screen.getByTestId('view-live-probe');
+const legend = () => screen.getByRole('region', { name: 'Provenance legend' });
+const legendToggle = () => within(legend()).getByRole('button', { name: 'Provenance legend' });
+async function openLegend(user = userEvent.setup()) {
+  const toggle = legendToggle();
+  if (toggle.getAttribute('aria-expanded') !== 'true') await user.click(toggle);
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  return legend();
+}
 
 beforeEach(() => {
   history.replaceState(null, '', '/');
-  boom.advance = false;
-  boom.transport = false;
+  boom.spatial = false;
+  boom.heat = false;
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
 });
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
-test('A1 navigation reaches all seven views by keyboard and the URL hash names the view', async () => {
-  stubFetch(() => new Response('not found', { status: 404 }));
+// --------------------------------------------------------------------------------------------- A1 navigation
+
+test.each(['advance', 'transport', 'budget', 'unknown'])('retired or unknown route %s opens geometry', async route => {
+  history.replaceState(null, '', '#/' + route);
+  render(<App />);
+  await waitFor(() => expect(location.hash).toBe('#/locate'));
+  expect(screen.getByRole('heading', {level: 1})).toHaveTextContent('Locate the tubes');
+  expect(screen.queryByRole('contentinfo')).toBeNull();
+  expect(screen.queryByText('Replay · $0')).toBeNull();
+});
+
+test('A1 four keyboard-accessible views, current page and route announcements', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  const links = within(screen.getByRole('navigation', {name: 'Views'})).getAllByRole('link');
+  expect(navLabels()).toEqual(['Locate the tubes', 'Forecast replay', 'Spatial parallelism', 'Heat & field']);
+  for (const [i, route] of ROUTES.entries()) {
+    links[i]!.focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(links[i]).toHaveAttribute('aria-current', 'page'));
+    expect(links[i]).toHaveFocus();
+    expect(screen.getByRole('main')).toHaveAccessibleName(route.label);
+  }
+  screen.getByRole('main').focus();
+  act(() => { location.hash = '#/forecast'; });
+  await waitFor(() => expect(screen.getByTestId('route-announcer')).toHaveTextContent('Forecast replay view'));
+  expect(screen.getByRole('main')).toHaveFocus();
+});
+
+test('A1 navigation reaches all four views by keyboard and the URL hash names the view; Heat & field names its source', async () => {
   const user = userEvent.setup();
   render(<App />);
 
@@ -90,33 +126,19 @@ test('A1 navigation reaches all seven views by keyboard and the URL hash names t
   expect(location.hash).toBe('#/locate');
   expect(screen.getByText('view:locate')).toBeInTheDocument();
 
-  const nav = screen.getByRole('navigation', { name: 'Views' });
-  const links = within(nav).getAllByRole('link');
-  expect(links.map((l) => l.querySelector('.shell-nav__label')?.textContent)).toEqual([
-    'Locate the tubes',
-    'Advance plasma',
-    'Check transport',
-    'Forecast replay',
-    'Spatial parallelism',
-    'Budget',
-    'Heat & field',
-  ]);
+  const links = navLinks();
+  expect(links.map((l) => l.getAttribute('href'))).toEqual(['#/locate', '#/forecast', '#/spatial', '#/heat']);
   expect(links.map((l) => l.getAttribute('href'))).toEqual(ROUTES.map((r) => `#/${r.id}`));
   expect(links[0]).toHaveAttribute('aria-current', 'page');
-  // How each view's data arrives: Heat & field is an illustrative model, never "replay" or a GX run.
-  expect(links.map((l) => l.querySelector('.shell-nav__source')?.textContent)).toEqual([
-    'replay',
-    'GX run · gated',
-    'replay',
-    'replay',
-    'replay',
-    'replay',
-    'illustrative model',
-  ]);
+  // How a view's data arrives: replay is the app's default and is not repeated; Heat & field is an illustrative model
+  // (D-027), never "replay" or a GX run, and says so in its link (part of its accessible name).
+  expect(links.map((l) => l.querySelector('.shell-nav__source')?.textContent ?? null)).toEqual([null, null, null, 'illustrative model']);
+  expect(links[3]).toHaveAccessibleName('Heat & field illustrative model');
+  expect(links[3]).not.toHaveTextContent(/replay|GX run/i);
   expect(routeDef('heat')).toEqual({ id: 'heat', label: 'Heat & field', source: 'model', files: ['artifacts/heatfield.json'] });
   expect(ROUTES.at(-1)?.id).toBe('heat');
 
-  // Keyboard: Tab past the skip link and header controls to the nav, then through each link + Enter.
+  // Keyboard: Tab past the skip link to the nav, then through each link + Enter.
   for (let n = 0; n < 6 && document.activeElement !== links[0]; n++) await user.tab();
   for (const [i, r] of ROUTES.entries()) {
     if (i > 0) await user.tab();
@@ -127,6 +149,7 @@ test('A1 navigation reaches all seven views by keyboard and the URL hash names t
     expect(links[i]).toHaveAttribute('aria-current', 'page');
     expect(links.filter((l) => l.getAttribute('aria-current') === 'page')).toHaveLength(1);
     expect(screen.getByRole('main')).toHaveAccessibleName(r.label);
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(r.label);
     expect(document.title).toBe(`${r.label} · Labyrinth`);
   }
 
@@ -135,6 +158,10 @@ test('A1 navigation reaches all seven views by keyboard and the URL hash names t
     location.hash = '#/forecast';
   });
   await waitFor(() => expect(screen.getByText('view:forecast')).toBeInTheDocument());
+  act(() => {
+    location.hash = '#/heat';
+  });
+  await waitFor(() => expect(screen.getByText('view:heat')).toBeInTheDocument());
 
   // Unknown hash falls back to the default view and rewrites the URL.
   act(() => {
@@ -145,7 +172,6 @@ test('A1 navigation reaches all seven views by keyboard and the URL hash names t
 });
 
 test('A1 a route change is announced and moves focus to the view, unless the keyboard is in the nav (FE-12)', async () => {
-  stubFetch(() => new Response('not found', { status: 404 }));
   const user = userEvent.setup();
   render(<App pollMs={60_000} />);
   const main = screen.getByRole('main');
@@ -166,25 +192,24 @@ test('A1 a route change is announced and moves focus to the view, unless the key
 
   // Keyboard on a nav link: the announcement is made and focus stays on the link (Tab continues along the nav).
   const links = navLinks();
-  links[5]!.focus();
+  links[3]!.focus();
   await user.keyboard('{Enter}');
-  await waitFor(() => expect(announcer).toHaveTextContent('Budget view'));
-  expect(screen.getByText('view:budget')).toBeInTheDocument();
-  expect(links[5]).toHaveFocus();
+  await waitFor(() => expect(announcer).toHaveTextContent('Heat & field view'));
+  expect(screen.getByText('view:heat')).toBeInTheDocument();
+  expect(links[3]).toHaveFocus();
 });
 
 test('DS-5 the active nav tab is centred inside the nav scroller (the page is never scrolled) and hidden edges are flagged', async () => {
-  stubFetch(() => new Response('not found', { status: 404 }));
   const scrollIntoView = vi.fn();
   Element.prototype.scrollIntoView = scrollIntoView;
   render(<App pollMs={60_000} />);
   const scroller = screen.getByRole('navigation', { name: 'Views' }).querySelector<HTMLElement>('.shell-nav__scroll')!;
   expect(scroller).not.toBeNull();
   const links = navLinks();
-  // A 390 px phone: seven 122 px tabs (854 px) inside a 390 px scroller.
-  Object.defineProperty(scroller, 'clientWidth', { configurable: true, value: 390 });
-  Object.defineProperty(scroller, 'scrollWidth', { configurable: true, value: 854 });
-  scroller.getBoundingClientRect = () => ({ left: 0, width: 390 }) as DOMRect;
+  // A nav squeezed between the wordmark and the theme switch: four 122 px tabs (488 px) inside a 300 px scroller.
+  Object.defineProperty(scroller, 'clientWidth', { configurable: true, value: 300 });
+  Object.defineProperty(scroller, 'scrollWidth', { configurable: true, value: 488 });
+  scroller.getBoundingClientRect = () => ({ left: 0, width: 300 }) as DOMRect;
   links.forEach((l, i) => {
     l.getBoundingClientRect = () => ({ left: i * 122 - scroller.scrollLeft, width: 122 }) as DOMRect;
   });
@@ -196,19 +221,19 @@ test('DS-5 the active nav tab is centred inside the nav scroller (the page is ne
     await waitFor(() => expect(screen.getByText(`view:${id}`)).toBeInTheDocument());
   };
   // The edge cue is state set from the scroll effect: it lands one render after the view (waited for, not raced).
-  await go('transport'); // tab 2: centre = 244 − (390 − 122) / 2
-  expect(scroller.scrollLeft).toBe(110);
+  await go('forecast'); // tab 1: centre = 122 − (300 − 122) / 2
+  expect(scroller.scrollLeft).toBe(33);
   await waitFor(() => expect(scroller).toHaveAttribute('data-fade', 'both'));
-  await go('budget'); // tab 5 of 7: centre = 610 − 134 = 476, clamped to the end (854 − 390)
-  expect(scroller.scrollLeft).toBe(464);
-  await go('heat'); // last tab: clamped to the end, only the start is hidden
-  expect(scroller.scrollLeft).toBe(464);
+  await go('spatial'); // tab 2: 244 − 89
+  expect(scroller.scrollLeft).toBe(155);
+  await go('heat'); // last tab: 366 − 89 = 277, clamped to the end (488 − 300); only the start is hidden
+  expect(scroller.scrollLeft).toBe(188);
   await waitFor(() => expect(scroller).toHaveAttribute('data-fade', 'start'));
   await go('locate'); // first tab: back at 0, only the end is hidden
   expect(scroller.scrollLeft).toBe(0);
   await waitFor(() => expect(scroller).toHaveAttribute('data-fade', 'end'));
   // A manual swipe updates the edge cue as well.
-  scroller.scrollLeft = 200;
+  scroller.scrollLeft = 100;
   act(() => {
     scroller.dispatchEvent(new Event('scroll'));
   });
@@ -217,52 +242,47 @@ test('DS-5 the active nav tab is centred inside the nav scroller (the page is ne
   delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView; // jsdom has none: leave it as it was
 });
 
-test('A2 global mode: REPLAY ($0) unless /api/live/status reports live; no backend => full replay', async () => {
-  // No backend: every request fails.
+// --------------------------------------------------------------------------------------------- A2 global mode
+
+test('A2 no backend reachable: the app runs fully in replay, with no session bar, no alert and nothing marked live', async () => {
+  history.replaceState(null, '', '#/forecast');
   const f = stubFetch(() => Promise.reject(new TypeError('Failed to fetch')));
-  const { unmount } = render(<App pollMs={60_000} />);
-  const mode = screen.getByRole('status', { name: /^Mode:/ });
-  expect(within(mode).getByText('Replay · $0')).toBeInTheDocument();
-  await waitFor(() => expect(mode).toHaveTextContent(/No live backend reachable/));
+  render(<App pollMs={60_000} />);
+  await waitFor(() => expect(probe()).toHaveTextContent('unreachable:network'));
   expect(f).toHaveBeenCalledWith('/api/live/status', expect.anything());
+  expect(sessionBar()).toBeNull();
+  expect(screen.queryByRole('alert')).toBeNull();
   expect(document.querySelector('[data-status="live"]')).toBeNull();
-  expect(screen.getByRole('banner').textContent).not.toMatch(/LIVE/);
-  expect(within(banner()).queryByRole('alert')).toBeNull();
-  // Replay still works: the view renders.
-  expect(screen.getByText('view:locate')).toBeInTheDocument();
-  unmount();
+  // (The legend may name LIVE to explain why it draws none; the header and the view never claim it.)
+  expect(screen.getByRole('banner').textContent).not.toMatch(/\bLIVE\b/);
+  expect(screen.getByRole('main').textContent).not.toMatch(/\bLIVE\b/);
+  // Replay still works: the view and the whole nav render.
+  expect(screen.getByText('view:forecast')).toBeInTheDocument();
+  expect(navLinks()).toHaveLength(ROUTES.length);
+});
 
-  // Backend reports live: the only path to the LIVE indicator.
-  stubFetch((url) => (url === '/api/live/status' ? json(status('live')) : new Response('', { status: 404 })));
-  const live = render(<App pollMs={60_000} />);
-  await waitFor(() => expect(screen.getByText('LIVE · GPU 0 / GPU 1')).toBeInTheDocument());
-  expect(document.querySelector('.shell-mode [data-status="live"]')).not.toBeNull();
-  expect(within(banner()).queryByRole('alert')).toBeNull(); // a healthy live session is not an alert
-  live.unmount();
+const SESSION_CASES = ROUTES.flatMap((r) => (['launching', 'live'] as const).map((mode) => [mode, r.id] as const));
 
-  // The mapping for every mode (DESIGN.md §5).
-  const ready = (m: LiveStatus['mode'], extra: Partial<LiveStatus> = {}): LiveState => ({ status: 'ready', data: status(m, extra) });
-  const pills = (s: LiveState) => modeView(s).pills.map((p) => `${p.status}:${p.text}`);
-  expect(pills({ status: 'connecting' })).toEqual(['replay:Replay · $0']);
-  expect(pills({ status: 'unreachable', message: 'x' })).toEqual(['replay:Replay · $0']);
-  expect(pills(ready('unavailable'))).toEqual(['replay:Replay · $0']);
-  expect(pills(ready('idle'))).toEqual(['replay:Replay · $0']);
-  expect(pills(ready('terminated'))).toEqual(['replay:Replay · $0']);
-  expect(pills(ready('launching'))).toEqual(['rehearsal:Launching…']);
-  expect(pills(ready('live'))).toEqual(['live:LIVE · GPU 0 / GPU 1']);
-  for (const m of ['unavailable', 'idle', 'launching', 'fallback', 'terminated'] as const) {
-    expect(modeView(ready(m)).pills.some((p) => p.status === 'live')).toBe(false);
-  }
+test.each(SESSION_CASES)('A2 a %s session shows "Modal session active" with Terminate on #/%s, never an alert, "Replay" or a zero price', async (mode, route) => {
+  history.replaceState(null, '', `#/${route}`);
+  serveStatus(status(mode));
+  render(<App pollMs={60_000} />);
+  const bar = await screen.findByText('Modal session active');
+  expect(bar).toHaveAttribute('role', 'status');
+  expect(within(bar).getByRole('button', { name: 'Terminate' })).toBeEnabled();
+  expect(bar.textContent).not.toMatch(/\$0|Replay/);
+  expect(screen.queryByRole('alert')).toBeNull(); // a healthy session is not an alert
+  expect(screen.getByText(`view:${route}`)).toBeInTheDocument();
+});
 
-  // Fallback: the first pill is the backend's own cause; "Playing saved run" needs a saved run to exist.
-  const saved = { active: true, label: 'Worker failed — playing saved GX run rehearsal-0123456789ab', savedRunId: 'rehearsal-0123456789ab' };
-  expect(pills(ready('fallback', { qualified: true, fallback: saved }))).toEqual(['failed:Worker failed', 'replay:Playing saved run']);
-  expect(pills(ready('fallback'))).toEqual(['failed:Worker failed', 'replay:Replay · $0']); // savedRunId: null
-  expect(pills(ready('fallback', { qualified: false, fallback: saved }))).toEqual(['failed:Worker failed', 'replay:Replay · $0']);
-  const timeout = { active: true, label: 'Hard timeout reached — playing saved GX run rehearsal-0123456789ab', savedRunId: 'rehearsal-0123456789ab' };
-  expect(pills(ready('fallback', { qualified: true, fallback: timeout }))).toEqual(['failed:Hard timeout reached', 'replay:Playing saved run']);
-  const timeoutNoRun = { active: true, label: 'Hard timeout reached. No qualified GX rehearsal recorded — showing archived stella/GENE evidence', savedRunId: null };
-  expect(pills(ready('fallback', { fallback: timeoutNoRun }))).toEqual(['failed:Hard timeout reached', 'replay:Replay · $0']);
+test.each(['idle', 'unavailable', 'terminated', 'fallback'] as const)('A2 mode %s with no danger shows no session bar and no alert', async (mode) => {
+  history.replaceState(null, '', '#/forecast');
+  serveStatus(status(mode));
+  render(<App pollMs={60_000} />);
+  await waitFor(() => expect(probe()).toHaveTextContent(`ready:${mode}`));
+  expect(sessionBar()).toBeNull();
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(document.querySelector('[data-status="live"]')).toBeNull();
 });
 
 const TERM_REASONS = {
@@ -276,29 +296,28 @@ const DANGER_CASES = MODES.flatMap((mode, i) =>
   (Object.keys(TERM_REASONS) as (keyof typeof TERM_REASONS)[]).map((marker, j) => [mode, marker, ROUTES[(i + j) % ROUTES.length]!.id] as const),
 );
 
+test('A2 the danger cases cover every route', () => {
+  expect(new Set(DANGER_CASES.map((c) => c[2]))).toEqual(new Set(ROUTES.map((r) => r.id)));
+});
+
 test.each(DANGER_CASES)(
-  'A2 danger: mode %s with %s in the reason is a loud alert on #/%s, never a plain LIVE or Replay pill',
+  'A2 danger: mode %s with %s in the reason is a loud alert with Terminate on #/%s, never a session bar, "Replay" or a zero price',
   async (mode, marker, route) => {
     history.replaceState(null, '', `#/${route}`);
     serveStatus(status(mode, { reason: TERM_REASONS[marker] }));
     render(<App pollMs={60_000} />);
-    const alert = await within(banner()).findByRole('alert');
+    const alert = await screen.findByRole('alert', { name: `Danger: ${marker} — GPUs may still be billing` });
     // FA-1: the design system's danger primitive, spoken as a danger, quoting the backend's own words in full.
-    expect(alert).toHaveAccessibleName(`Danger: ${marker} — GPUs may still be billing`);
     expect(alert).toHaveClass('lab-alert');
     expect(alert).toHaveAttribute('data-status', 'billing-risk');
     expect(alert.querySelector('.lab-alert__reason')?.textContent).toBe(TERM_REASONS[marker]);
+    expect(alert).toHaveTextContent('Check the Modal dashboard until both workers are confirmed stopped.');
     expect(screen.getByText(`view:${route}`)).toBeInTheDocument();
-    // The indicator leads with the billing-risk pill naming the marker; "Replay · $0" would be a false comfort.
-    const pills = headerPills();
-    expect(pills[0]).toBe(`billing-risk:${marker}`);
-    expect(pills.some((p) => p.startsWith('replay:'))).toBe(false);
-    expect(`${modeBox().textContent} ${alert.textContent}`).not.toMatch(/\$0|Replay/);
-    expect(pills.filter((p) => p.startsWith('live:'))).toHaveLength(mode === 'live' ? 1 : 0);
-    expect(modeBox()).toHaveAccessibleName(new RegExp(`^Mode: ${marker}`));
-    // From any other view the alert links to the Terminate control.
-    const link = within(alert).queryByRole('link', { name: /Advance plasma/ });
-    expect(link?.getAttribute('href') ?? null).toBe(route === 'advance' ? null : '#/advance');
+    // Terminate is right there, on every route (the owner's redesign): "Retry" after a failed stop.
+    expect(within(alert).getByRole('button', { name: marker === 'TERMINATE FAILED' ? 'Retry terminate' : 'Terminate' })).toBeEnabled();
+    expect(alert.textContent).not.toMatch(/\$0|Replay/);
+    // The danger wins over the healthy-session bar.
+    expect(sessionBar()).toBeNull();
   },
 );
 
@@ -310,13 +329,12 @@ test('A2 danger: the marker is found anywhere in the reason, in any letter case'
     }),
   );
   const a = render(<App pollMs={60_000} />);
-  expect(await within(banner()).findByRole('alert')).toHaveTextContent('TERMINATE FAILED — GPUs may still be billing');
-  expect(headerPills()[0]).toBe('billing-risk:TERMINATE FAILED');
+  expect(await screen.findByRole('alert')).toHaveTextContent('TERMINATE FAILED — GPUs may still be billing');
   a.unmount();
 
   serveStatus(status('terminated', { reason: 'Stopped; termination pending for GPU 1 (cancel queued).' }));
   render(<App pollMs={60_000} />);
-  expect(await within(banner()).findByRole('alert')).toHaveTextContent('TERMINATION PENDING — GPUs may still be billing');
+  expect(await screen.findByRole('alert')).toHaveTextContent('TERMINATION PENDING — GPUs may still be billing');
 });
 
 // FA-1 / FA-2: the round-6 stop states, in the backend's words (orchestrator.py:61-62, :320-333; modal_backend.py:183),
@@ -327,42 +345,41 @@ const ROUND6_STATES = [
     'fallback',
     "TERMINATE FAILED — check Modal dashboard; GPUs may still be billing: GPU 0 (bean) kill switch raised, stop not confirmed: the spawn failed client-side (ConnectionError: reset) after it may have reached Modal, there is no call to cancel and a worker that started stops only when it reads the switch. GPU 0 (bean) worker failed: launch failed client-side (ConnectionError: reset) and a worker may have started; there is no call to cancel, only the run's kill switch can stop it.",
     'TERMINATE FAILED — GPUs may still be billing',
-    ['billing-risk:TERMINATE FAILED', 'failed:Worker failed'],
+    'Retry terminate',
   ],
   [
     'a requested stop while live',
     'live',
     'Stop requested; terminating workers — not confirmed yet. Both workers launched; streaming GX output (live).',
     'STOP NOT CONFIRMED — GPUs may still be billing',
-    ['billing-risk:Stop not confirmed', 'live:LIVE · GPU 0 / GPU 1'],
+    'Terminate',
   ],
   [
     'a requested stop while launching',
     'launching',
     'Stop requested; terminating workers — not confirmed yet. Launching GX workers (live); hard timeout 1500 s.',
     'STOP NOT CONFIRMED — GPUs may still be billing',
-    ['billing-risk:Stop not confirmed', 'rehearsal:Launching…'],
+    'Terminate',
   ],
 ] as const;
-const ROUND6_CASES = ROUND6_STATES.flatMap(([name, mode, reason, title, pills]) =>
-  ROUTES.map((r) => [name, r.id, mode, reason, title, pills] as const),
+const ROUND6_CASES = ROUND6_STATES.flatMap(([name, mode, reason, title, button]) =>
+  ROUTES.map((r) => [name, r.id, mode, reason, title, button] as const),
 );
 
-test.each(ROUND6_CASES)('A2 FA-1 %s is the billing-risk alert on #/%s', async (_name, route, mode, reason, title, pills) => {
+test.each(ROUND6_CASES)('A2 FA-1 %s is the billing-risk alert on #/%s', async (_name, route, mode, reason, title, button) => {
   history.replaceState(null, '', `#/${route}`);
   serveStatus(status(mode, { reason }));
   render(<App pollMs={60_000} />);
-  const alert = await within(banner()).findByRole('alert', { name: `Danger: ${title}` });
+  const alert = await screen.findByRole('alert', { name: `Danger: ${title}` });
   expect(alert).toHaveAttribute('data-status', 'billing-risk');
   expect(alert.querySelector('.lab-alert__reason')?.textContent).toBe(reason);
-  expect(headerPills()).toEqual([...pills]);
-  expect(`${modeBox().textContent} ${alert.textContent}`).not.toMatch(/\$0|Replay|terminated\./);
-  expect(modeBox()).toHaveAttribute('data-danger', mode === 'fallback' ? 'terminate-failed' : 'stop-unconfirmed');
-  const link = within(alert).queryByRole('link', { name: 'Open Advance plasma to send Terminate' });
-  expect(link?.getAttribute('href') ?? null).toBe(route === 'advance' ? null : '#/advance');
+  expect(alert.textContent).not.toMatch(/\$0|Replay|terminated\./);
+  expect(within(alert).getByRole('button', { name: button })).toBeEnabled();
+  expect(sessionBar()).toBeNull();
+  expect(screen.getByText(`view:${route}`)).toBeInTheDocument();
 });
 
-test('A2 LIVE is not sticky: when a live session stops answering, the header says the session state is unknown', async () => {
+test('A2 a live session is not sticky: when it stops answering, the alert says the session state is unknown', async () => {
   let answer: LiveStatus | null = status('live', { reason: 'Both workers launched; streaming GX output (live).' });
   stubFetch((url) => {
     if (url !== '/api/live/status') return new Response('', { status: 404 });
@@ -370,24 +387,25 @@ test('A2 LIVE is not sticky: when a live session stops answering, the header say
     return json(answer);
   });
   render(<App pollMs={30} />);
-  await waitFor(() => expect(screen.getByText('LIVE · GPU 0 / GPU 1')).toBeInTheDocument());
+  await waitFor(() => expect(sessionBar()).not.toBeNull());
   answer = null;
-  const alert = await within(banner()).findByRole('alert');
+  const alert = await screen.findByRole('alert');
   expect(alert).toHaveTextContent(/CONNECTION LOST — session state unknown/);
   expect(alert).toHaveTextContent('The live API stopped answering (Failed to fetch)'); // from the failed poll itself
   expect(alert).toHaveTextContent(/mode "live"/);
   expect(alert).toHaveTextContent('GPUs may still be billing');
-  expect(document.querySelector('[data-status="live"]')).toBeNull();
-  expect(headerPills()).toEqual(['billing-risk:Connection lost']);
   expect(alert).toHaveAccessibleName('Danger: CONNECTION LOST — session state unknown');
-  expect(`${modeBox().textContent} ${alert.textContent}`).not.toMatch(/\$0|Replay/);
-  // The backend answers again with a clean idle status: the alert goes away.
+  expect(within(alert).getByRole('button', { name: 'Terminate' })).toBeEnabled();
+  expect(alert.textContent).not.toMatch(/\$0|Replay/);
+  expect(sessionBar()).toBeNull();
+  // The backend answers again with a clean idle status: the alert goes away and nothing is left behind.
   answer = status('idle');
-  await waitFor(() => expect(within(banner()).queryByRole('alert')).toBeNull());
-  expect(headerPills()).toEqual(['replay:Replay · $0']);
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  expect(sessionBar()).toBeNull();
 });
 
 test('A2 an idle backend that goes away is plain replay, not an alert', async () => {
+  history.replaceState(null, '', '#/forecast');
   let up = true;
   stubFetch((url) => {
     if (url !== '/api/live/status') return new Response('', { status: 404 });
@@ -395,11 +413,11 @@ test('A2 an idle backend that goes away is plain replay, not an alert', async ()
     return json(status('idle'));
   });
   render(<App pollMs={30} />);
-  await waitFor(() => expect(modeBox()).toHaveTextContent('reason for idle'));
+  await waitFor(() => expect(probe()).toHaveTextContent('ready:idle'));
   up = false;
-  await waitFor(() => expect(modeBox()).toHaveTextContent(/No live backend reachable/));
-  expect(within(banner()).queryByRole('alert')).toBeNull();
-  expect(headerPills()).toEqual(['replay:Replay · $0']);
+  await waitFor(() => expect(probe()).toHaveTextContent('unreachable:http'));
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(sessionBar()).toBeNull();
 });
 
 test('A2 a partial or malformed status body never blanks the page: it is rejected and the app stays in replay', async () => {
@@ -412,52 +430,58 @@ test('A2 a partial or malformed status body never blanks the page: it is rejecte
     { ...status('fallback'), fallback: null },
   ];
   for (const body of bodies) {
+    history.replaceState(null, '', '#/forecast');
     serveStatus(body);
     const r = render(<App pollMs={60_000} />);
-    await waitFor(() => expect(modeBox()).toHaveTextContent(/invalid status/));
-    expect(headerPills()).toEqual(['replay:Replay · $0']);
+    await waitFor(() => expect(probe()).toHaveTextContent('unreachable:invalid'));
+    // A rejected "live" body never claims a session.
+    expect(sessionBar()).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(document.querySelector('[data-status="live"]')).toBeNull();
-    expect(navLinks()).toHaveLength(7);
-    expect(screen.getByText('view:locate')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(DECISION_QUESTION);
+    expect(navLinks()).toHaveLength(ROUTES.length);
+    expect(screen.getByText('view:forecast')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Forecast replay');
+    expect(legend()).toBeInTheDocument();
     r.unmount();
   }
 });
 
-test('FE-5 the header and the views read one shared status store: one poller, one answer for all', async () => {
-  history.replaceState(null, '', '#/budget');
-  const f = serveStatus(status('idle', { reason: 'Qualified. Launch requires explicit confirmation of the slot cost.' }));
+test('FE-5 the session bar and the views read one shared status store: one poller, one answer for all', async () => {
+  history.replaceState(null, '', '#/forecast');
+  const f = serveStatus(status('live', { reason: 'Both workers launched; streaming GX output (live).' }));
   render(<App pollMs={60_000} />);
-  await waitFor(() => expect(modeBox()).toHaveTextContent('Qualified.'));
+  await waitFor(() => expect(sessionBar()).not.toBeNull());
   // The view got the same snapshot at the same time, from the same single request.
-  expect(screen.getByTestId('view-live-probe')).toHaveTextContent('ready:idle');
+  expect(probe()).toHaveTextContent('ready:live');
   expect(statusCalls(f)).toBe(1);
   // Changing the view does not start another poller or drop the state.
   act(() => {
-    location.hash = '#/spatial';
+    location.hash = '#/heat';
   });
-  await waitFor(() => expect(screen.getByText('view:spatial')).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText('view:heat')).toBeInTheDocument());
+  expect(sessionBar()).not.toBeNull();
   act(() => {
-    location.hash = '#/budget';
+    location.hash = '#/forecast';
   });
-  await waitFor(() => expect(screen.getByTestId('view-live-probe')).toHaveTextContent('ready:idle'));
+  await waitFor(() => expect(probe()).toHaveTextContent('ready:live'));
   expect(statusCalls(f)).toBe(1);
 });
 
+// --------------------------------------------------------------------------------------------- A3 view failures
+
 test('A3 a view that throws shows the named error panel inside the shell, and navigating away recovers', async () => {
-  stubFetch(() => new Response('not found', { status: 404 }));
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  boom.transport = true;
-  boom.advance = true;
-  history.replaceState(null, '', '#/transport');
+  boom.heat = true;
+  boom.spatial = true;
+  history.replaceState(null, '', '#/heat');
   render(<App pollMs={60_000} />);
-  expect(screen.getByRole('heading', { name: 'Could not load artifacts/transport.json' })).toBeInTheDocument();
-  expect(screen.getByText('windows[0].mean is undefined')).toBeInTheDocument();
-  // The shell survives: header, nav and legend are still there.
-  expect(navLinks()).toHaveLength(7);
-  expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(DECISION_QUESTION);
-  expect(screen.getByRole('region', { name: 'Provenance legend' })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Could not load artifacts/heatfield.json' })).toBeInTheDocument();
+  expect(screen.getByText('surfaces[8].B is undefined')).toBeInTheDocument();
+  // The shell survives: nav, view title and legend are still there.
+  expect(navLinks()).toHaveLength(ROUTES.length);
+  expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Heat & field');
+  expect(legend()).toBeInTheDocument();
 
   // The boundary is per route: the next view renders instead of the stale error.
   act(() => {
@@ -466,17 +490,20 @@ test('A3 a view that throws shows the named error panel inside the shell, and na
   await waitFor(() => expect(screen.getByText('view:forecast')).toBeInTheDocument());
   expect(screen.queryByRole('heading', { name: /^Could not load/ })).toBeNull();
 
-  // Advance plasma reads the live API and artifacts/transport.json: its panel names both.
   act(() => {
-    location.hash = '#/advance';
+    location.hash = '#/spatial';
   });
-  await waitFor(() =>
-    expect(screen.getByRole('heading', { name: 'Could not load /api/live/status, artifacts/transport.json' })).toBeInTheDocument(),
-  );
-  expect(routeDef('advance').files).toEqual(['/api/live/status', 'artifacts/transport.json']);
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Could not load artifacts/spatial.json' })).toBeInTheDocument());
+  // Every route names the file its view reads.
+  expect(ROUTES.map((r) => [r.id, r.files])).toEqual([
+    ['locate', ['artifacts/geometry.json']],
+    ['forecast', ['artifacts/forecast.json']],
+    ['spatial', ['artifacts/spatial.json']],
+    ['heat', ['artifacts/heatfield.json']],
+  ]);
 });
 
-test('FE2-1 when Advance plasma itself fails to render during a billing risk, the header alert carries a working Terminate', async () => {
+test('FE2-1 a view that fails to render during a billing risk leaves the Terminate above it working', async () => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
   const user = userEvent.setup();
@@ -494,24 +521,14 @@ test('FE2-1 when Advance plasma itself fails to render during a billing risk, th
       return url === '/api/live/status' ? json(status('fallback', { reason })) : new Response('', { status: 404 });
     }),
   );
-  // The app header (the error panel below has a <header> of its own, so not found by the banner role).
-  const header = () => document.querySelector<HTMLElement>('header.shell-header')!;
-  // Healthy view: the header points at the panel's control and has none of its own.
-  history.replaceState(null, '', '#/advance');
-  const healthy = render(<App pollMs={60_000} />);
-  const pointer = await within(header()).findByRole('alert');
-  expect(pointer).toHaveTextContent('Use Terminate in the Advance plasma panel below.');
-  expect(within(pointer).queryByRole('button')).toBeNull();
-  healthy.unmount();
-
-  // The view throws: the panel below is an error panel, so the header must not promise it; it offers Terminate itself.
-  boom.advance = true;
+  boom.heat = true;
+  history.replaceState(null, '', '#/heat');
   render(<App pollMs={60_000} />);
-  const alert = await within(header()).findByRole('alert');
-  expect(screen.getByRole('heading', { name: 'Could not load /api/live/status, artifacts/transport.json' })).toBeInTheDocument();
-  expect(alert).not.toHaveTextContent(/panel below/);
+  const alert = await screen.findByRole('alert', { name: 'Danger: TERMINATE FAILED — GPUs may still be billing' });
+  expect(screen.getByRole('heading', { name: 'Could not load artifacts/heatfield.json' })).toBeInTheDocument();
+  // The alert sits above the view, outside it: the failed view cannot take the control away.
+  expect(screen.getByRole('main').contains(alert)).toBe(false);
   const retry = within(alert).getByRole('button', { name: 'Retry terminate' });
-  expect(retry).toBeEnabled();
   await user.click(retry);
   await waitFor(() => expect(posts).toEqual(['/api/live/terminate']));
   expect(await within(alert).findByRole('status', { name: 'Terminate answer' })).toHaveTextContent(`Terminate not confirmed: ${reason}`);
@@ -519,47 +536,80 @@ test('FE2-1 when Advance plasma itself fails to render during a billing risk, th
   // A confirmed stop whose status is clean ends the danger: the alert goes.
   terminateAnswer = { code: 200, body: { ok: true, reason: 'Workers terminated.', status: status('idle') } };
   await user.click(within(alert).getByRole('button', { name: 'Retry terminate' }));
-  await waitFor(() => expect(within(header()).queryByRole('alert')).toBeNull());
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
   expect(posts).toHaveLength(2);
-  expect([...header().querySelectorAll<HTMLElement>('.shell-mode .lab-pill')].map((p) => `${p.dataset.status}:${p.textContent}`)).toEqual(['replay:Replay · $0']);
+  expect(sessionBar()).toBeNull();
 });
 
-test('A4 header states the user decision and a global provenance legend is shown', () => {
-  stubFetch(() => new Response('', { status: 404 }));
+// --------------------------------------------------------------------------------------------- A4 / A6 legend
+
+test('A4 a global provenance legend sits under every view: collapsed, opened by keyboard, never a page footer', async () => {
+  const user = userEvent.setup();
   render(<App pollMs={60_000} />);
-  expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-    'Is this W7-X heat-flux estimate accurate enough to justify a longer simulation?',
-  );
-  expect(DECISION_QUESTION).toBe('Is this W7-X heat-flux estimate accurate enough to justify a longer simulation?');
-  const legend = screen.getByRole('region', { name: 'Provenance legend' });
+  // On every route, after the view (DOM order) and outside it.
+  for (const r of ROUTES) {
+    act(() => {
+      location.hash = `#/${r.id}`;
+    });
+    await waitFor(() => expect(screen.getByText(`view:${r.id}`)).toBeInTheDocument());
+    const main = screen.getByRole('main');
+    expect(main.contains(legend())).toBe(false);
+    expect(main.compareDocumentPosition(legend()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  }
+  expect(screen.queryByRole('contentinfo')).toBeNull();
+  expect(screen.getByRole('heading', { level: 2, name: 'Provenance legend' })).toBeInTheDocument();
+
+  // Collapsed: only the heading and its toggle show.
+  const toggle = legendToggle();
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  const body = document.getElementById(toggle.getAttribute('aria-controls')!)!;
+  expect(body).not.toBeVisible();
+  expect(within(legend()).queryByRole('heading', { name: 'Where a number comes from' })).toBeNull();
+
+  // Keyboard: focus the toggle, Enter opens, Space closes, Enter opens again.
+  toggle.focus();
+  await user.keyboard('{Enter}');
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  expect(body).toBeVisible();
+  await user.keyboard(' ');
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await user.keyboard('{Enter}');
   for (const label of ['Replay', 'Archive', 'Derived', 'PRD-reported', 'Rehearsal', 'Model', 'Verified', 'Unverified', 'Blocked', 'Mismatch', 'Failed']) {
-    expect(within(legend).getByText(label, { selector: '.lab-pill__text' })).toBeInTheDocument();
+    expect(within(legend()).getByText(label, { selector: '.lab-pill__text' })).toBeInTheDocument();
   }
   // Every pill is explained in words, and the legend never draws a LIVE pill.
-  expect(within(legend).getByText('Stated in PRD.md; no underlying data in this repo.')).toBeInTheDocument();
-  expect(legend.querySelector('[data-status="live"]')).toBeNull();
+  expect(within(legend()).getByText('Stated in PRD.md; no underlying data in this repo.')).toBeInTheDocument();
+  expect(legend().querySelector('[data-status="live"]')).toBeNull();
+
+  // It stays open across a route change (it is not part of the view).
+  act(() => {
+    location.hash = '#/forecast';
+  });
+  await waitFor(() => expect(screen.getByText('view:forecast')).toBeInTheDocument());
+  expect(legendToggle()).toHaveAttribute('aria-expanded', 'true');
 });
 
-test('A4 the legend explains every provenance kind and verification outcome defined in contracts/common.schema.json', () => {
+test('A4 the legend explains every provenance kind and verification outcome defined in contracts/common.schema.json', async () => {
   const defs = JSON.parse(readFileSync(resolve(__dirname, '../../../contracts/common.schema.json'), 'utf8')).$defs;
   const kinds: string[] = defs.provenance.properties.kind.enum;
   const outcomes: (keyof typeof VERIFICATION_STATUS)[] = defs.verification.properties.outcome.enum;
   expect(kinds).toEqual(expect.arrayContaining(['archive', 'derived', 'prd-reported', 'live', 'rehearsal', 'model']));
   expect(outcomes).toEqual(expect.arrayContaining(['passed', 'failed', 'blocked', 'not-applicable']));
 
-  stubFetch(() => new Response('', { status: 404 }));
   render(<App pollMs={60_000} />);
-  const legend = screen.getByRole('region', { name: 'Provenance legend' });
+  const box = await openLegend();
   const explained = (statusKind: string) => {
-    const pill = legend.querySelector(`dt [data-status="${statusKind}"]`);
+    const pill = box.querySelector(`dt [data-status="${statusKind}"]`);
     return pill?.closest('.shell-legend__item')?.querySelector('dd')?.textContent?.trim() ?? null;
   };
   // Every kind except `live` has a pill with a sentence; `live` is described in words and never drawn.
   for (const kind of kinds.filter((k) => k !== 'live')) {
     expect(explained(kind), `kind ${kind}`).toMatch(/\w+ \w+/);
   }
-  expect(legend.querySelector('[data-status="live"]')).toBeNull();
-  expect(legend).toHaveTextContent(/LIVE indicator appears in the header only while the live backend reports/);
+  expect(box.querySelector('[data-status="live"]')).toBeNull();
+  // The words for `live` match the owner's redesign: no LIVE pill in the header, a session bar with Terminate instead.
+  expect(box).toHaveTextContent(/None of these views shows live GX output, so no LIVE pill is drawn here/);
+  expect(box).toHaveTextContent(/the bar under the header says so and offers Terminate/);
   // Every outcome, through the design system's own outcome -> status mapping.
   for (const outcome of outcomes) {
     expect(explained(VERIFICATION_STATUS[outcome]), `outcome ${outcome}`).toMatch(/\w+ \w+/);
@@ -567,16 +617,16 @@ test('A4 the legend explains every provenance kind and verification outcome defi
   expect(explained('not-applicable')).toBe('No verification applies.');
 });
 
-test('A6 the legend explains the model kind (D-027) next to the other kinds, read from the schema enum', () => {
+test('A6 the legend explains the model kind (D-027) next to the other kinds, read from the schema enum', async () => {
   const defs = JSON.parse(readFileSync(resolve(__dirname, '../../../contracts/common.schema.json'), 'utf8')).$defs;
   const kinds: string[] = defs.provenance.properties.kind.enum;
   expect(kinds).toContain('model');
 
-  stubFetch(() => new Response('', { status: 404 }));
+  history.replaceState(null, '', '#/heat');
   render(<App pollMs={60_000} />);
-  const legend = screen.getByRole('region', { name: 'Provenance legend' });
+  const box = await openLegend();
   // The model kind sits in the same group as every other provenance kind of the schema (`live` is described in words).
-  const sources = within(legend).getByRole('heading', { name: 'Where a number comes from' }).closest('.shell-legend__group') as HTMLElement;
+  const sources = within(box).getByRole('heading', { name: 'Where a number comes from' }).closest('.shell-legend__group') as HTMLElement;
   const drawn = [...sources.querySelectorAll<HTMLElement>('dt [data-status]')].map((p) => p.dataset.status);
   expect(drawn).toEqual(expect.arrayContaining(kinds.filter((k) => k !== 'live')));
   // Explained in words, beside its pill.
@@ -586,6 +636,6 @@ test('A6 the legend explains the model kind (D-027) next to the other kinds, rea
     /Illustrative model output: parameters chosen for illustration, not fitted to measurements/,
   );
   // Not in the verification group: a model number is not a check outcome.
-  const checks = within(legend).getByRole('heading', { name: 'How far it is checked' }).closest('.shell-legend__group') as HTMLElement;
+  const checks = within(box).getByRole('heading', { name: 'How far it is checked' }).closest('.shell-legend__group') as HTMLElement;
   expect(checks.querySelector('[data-status="model"]')).toBeNull();
 });

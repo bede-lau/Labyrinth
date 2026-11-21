@@ -38,7 +38,7 @@ export interface PlotlyChartProps {
  * A unit inside running text: typeset for the eye (Q with subscript gB,i) and hidden from assistive technology,
  * which reads the spoken copy beside it ("Q gB,i") instead of the run-together "QgB,i".
  */
-function CaptionUnit({ unit }: { unit: string }) {
+export function CaptionUnit({ unit }: { unit: string }) {
   return (
     <>
       <span aria-hidden="true">

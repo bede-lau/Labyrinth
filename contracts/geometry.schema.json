@@ -128,10 +128,10 @@
           }
         },
         "acceptance129": {
-          "description": "PRD acceptance: bean |B| agrees with all 129 saved stella samples at rho=0.8. Always blocked until those samples exist (D-007, D-023); unblocking is a schema change with its own decision entry.",
+          "description": "PRD acceptance: bean |B| agrees with all 129 saved stella samples at rho=0.8. Outcome of comparing against the saved Modal stella geometry. Blocked is available for earlier artifacts.",
           "$ref": "common.schema.json#/$defs/verification",
           "type": "object",
-          "properties": { "outcome": { "const": "blocked" } }
+          "properties": { "outcome": { "enum": ["passed", "failed", "blocked"] } }
         }
       }
     },

@@ -247,18 +247,11 @@ status…" where "Replay · $0" would be.
 
 **Where the Alert sits, and what it carries.**
 
-* **Header, every route** (`ModeAlert` in `shell/ModeIndicator.tsx`): one Alert for the store's
-  danger, with the title and reason above and the body "Check the Modal dashboard until both workers
-  are confirmed stopped." Its action is the link "Open Advance plasma to send Terminate"; on
-  `#/advance`, where the button is just below, it is a line of text instead: "Use Terminate in the
-  Advance plasma panel below." When the Advance plasma view itself failed to render (`viewFailed`),
-  that control is gone, so the header carries a Terminate of its own: "The Advance plasma panel
-  failed to render; Terminate from here." with a button that reads like the panel's, then the answer
-  as a status line, "Terminate confirmed: …" or "Terminate not confirmed: …". It sends the same
-  request and applies the same confirmation rule as the panel (`sendTerminate()`). The header's copy
-  is meant to be `compact`, which keeps every part and exists so that copy does not push a phone's
-  page below the fold (the full layout stood about 370px tall at 390px); see "Not yet in the app".
-* **Live panel** (`#/advance`): one full-size Alert per danger, worst first. The first carries the
+* **Header, every route** (`ModeAlert` in `shell/ModeIndicator.tsx`). The idle header shows navigation
+  and theme controls. An active or launching session adds "Modal session active" and a Terminate button.
+  A billing alert quotes the backend reason and adds "Check the Modal dashboard until both workers are confirmed stopped."
+  Its Terminate button calls `sendTerminate()` and shows "Terminate confirmed: …" or "Terminate not confirmed: …".
+* **Live panel component** (retired from navigation): one full-size Alert per danger, worst first. The first carries the
   Terminate button: "Terminate", "Retry terminate" after a failed stop, "Terminating… (send again)"
   while a request is out. Besides the store's dangers it shows two that only this page knows:
 

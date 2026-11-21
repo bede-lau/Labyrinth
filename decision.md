@@ -338,6 +338,15 @@ illustration of the loop, not a validated magnetic correction.
    replay panel moves above the final scores (DOM order); a one-line pointer at the top of the replay keeps the PRD MAE mismatch visible.
 **Consequences.** MODEL.md, tasks 03 and 08 wording updated; no artifact values change except the text fields named above.
 
+## D-030 · Merge pushed to main before its review and verifiers, at the owner's request (2026-11-21)
+**Context.** The owner chose "Combine both, merge": the owner's redesign bbf2fc6 plus branch `heat-field`. While the two frontend engineers were finishing
+the forecast and shell conflict resolution, the owner said: "wrap up and push and commit the code anyways others will take over and write the handover
+file". At that point every conflict was resolved and `verify.sh all` passed apart from one gate self-test that flaked once (it passed alone and on a rerun).
+**Decision.** Commit the merge and push it to `main` as is. Not done: the one review of the merge resolution, and the verifiers for 00, 01, 03, 04, 05,
+06, 08 and 09 (all VERIFYING). This follows D-019: the commit is labelled, status.md HANDOVER lists exactly what is unverified, and no task is marked
+DONE that was not verified (task 10 was verified at ca1871b; its files are unchanged by the merge).
+**Consequence.** The next maintainer starts from status.md HANDOVER, items 1–3.
+
 ## D-014 · (not adopted) "Wave mode" for the orchestrator's Stop hook
 **Context.** With parallel agents editing one working tree, the Stop hook (`verify.sh all` on the shared tree)
 repeatedly blocked the orchestrator on files it must not touch. A proposal to verify committed HEAD in a clean
@@ -351,3 +360,13 @@ D-014 was never used for a real change. Workaround used: wait in-turn for agents
 **Decision.** Everything was committed, in separate, explicitly labelled commits (verified backends / live GX UNVERIFIED /
 design system pending / frontend WIP UNVERIFIED). `status.md` §2 is the truth about what is verified. No task is marked `DONE`.
 **Consequence.** Do not read the presence of code in `main/` or `renderer/` as verification: check the VERIFY.md and status table.
+
+
+## D-029 · Use the saved local stella and GENE-X verification evidence
+(Written as D-026 on the owner's other machine, commit bbf2fc6. Renumbered at the 2026-11-21 merge because branch `heat-field` had already used D-026..D-028.)
+
+The bundled Modal stella bean geometry and input are the 129-sample reference at ρ 0.8. Recompute the printed-field and toroidal-angle comparison alongside the existing ρ 0.7 checks. The acceptance contract still reads blocked records from earlier replays.
+
+Read the saved checkpoint bounds and traced GPU mapping for the Dommaschk replay. Recompute the means and 39-value reference check for each controlled run. Timing and kernel activity come from separate recorded experiments. Spatial fixture contracts accept both derived and earlier PRD-reported figures.
+
+The budget uses “PRD base estimate” for the GPU, CPU and RAM calculation. The guard estimate includes additional allowances.

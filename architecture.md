@@ -57,7 +57,7 @@ independent reference in one view. Replay costs $0; live GX is gated behind qual
   |B| and λ on the half grid, interpolated to s = ρ² (ρ 0.8 → s 0.64). Field line at fixed
   α = θ* − ιζ; for each ζ solve θ* = θ + λ(s, θ, ζ) for VMEC θ (Newton). Validated against stella's
   saved `EXPECTED_OUTPUT.vmec_geometry.geometry` (ρ 0.7, 25 samples) to printed precision, and its bmag against
-  the same run's float64 `out.nc` to 1e-10 (`validation.float64Reference`). The PRD's 129-sample acceptance is blocked (D-007).
+  the same run's float64 `out.nc` to 1e-10 (`validation.float64Reference`). The PRD’s 129-sample acceptance is recomputed against the saved Modal bean geometry at ρ 0.8 (D-029).
 * **Transport.** Benchmark h5 `compared/test5/{stella,GENE}`. Means are edge-interpolated time integrals on
   closed windows (D-013). Uncertainty is autocorrelation-aware (τ_int floored at ½ sample, so N_eff never exceeds the
   samples in the window, D-025). "Saturated agreement" is only claimed for a covered, stationary window with finite uncertainty and N_eff ≥ 20.

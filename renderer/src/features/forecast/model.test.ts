@@ -6,6 +6,8 @@ import {
   FORECASTERS,
   INITIAL,
   advance,
+  completeState,
+  plottedErrors,
   errorStatDisagreements,
   errorStatPrintDifferences,
   errorStatTolerance,
@@ -232,6 +234,31 @@ test('F7 (DZ-9) runToEndStates is the step button pressed to the end from every 
   expect(runToEndStates(all.at(-1)!, n)).toEqual([]);
   expect(runToEnd(all.at(-1)!, n)).toBe(all.at(-1));
   expect(runToEndStates(INITIAL, 0)).toEqual([]);
+});
+
+test('F7 completeState is where the step button ends (the overview shows it); plottedErrors draws each forecaster’s |e| only for revealed windows', () => {
+  const steps = ARTIFACT.steps;
+  const n = steps.length;
+  let s = INITIAL;
+  for (let k = 0; k < 3 * n; k++) s = advance(s, n);
+  expect(completeState(n)).toEqual(s);
+  expect(nextAction(completeState(n), n)).toBe('done');
+  expect(completeState(0)).toEqual({ index: 0, phase: 'ready' });
+  // The overview: every window of both lines, and every |e|.
+  expect(plottedWindows(steps, completeState(n), 'persistence').actual).toHaveLength(n);
+  const all = plottedErrors(steps, completeState(n));
+  expect(all.persistence.map((w) => w.value)).toEqual(steps.map((st) => st.absErrPersistence));
+  expect(all.frozen.map((w) => w.value)).toEqual(steps.map((st) => st.absErrFrozen));
+  // In a replay a window's |e| needs its observed mean: nothing before its Reveal, exactly the revealed windows after.
+  let t = INITIAL;
+  for (let k = 0; k <= 3 * n; k++, t = advance(t, n)) {
+    const e = plottedErrors(steps, t);
+    const revealed = steps.filter((_, i) => visibility(t, i).observed);
+    expect(e.persistence.map((w) => w.window), `state ${t.index}/${t.phase}`).toEqual(revealed.map((st) => st.window));
+    expect(e.frozen.map((w) => w.value)).toEqual(revealed.map((st) => st.absErrFrozen));
+    expect(e.persistence.length).toBe(plottedWindows(steps, t, 'frozen').actual.length);
+  }
+  expect(plottedErrors(steps, advance(INITIAL, n))).toEqual({ persistence: [], frozen: [] });
 });
 
 test('F7 stepLine holds each value over its window, joins contiguous windows with a riser, and breaks the line at a gap', () => {

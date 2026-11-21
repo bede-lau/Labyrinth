@@ -80,7 +80,24 @@ export function Playback({ kind, label, series, autoPlay, children }: PlaybackPr
             aria-valuetext={`t = ${formatNumber(cursor, 0)} of ${formatNumber(tEnd, 0)}`}
           />
         </label>
+        <button
+          type="button"
+          className="lg-btn"
+          disabled={atEnd}
+          onClick={() => {
+            setPlaying(false);
+            setCursor(tEnd);
+          }}
+        >
+          Show full trace
+        </button>
       </div>
+      <PlotlyChart
+        data={fig.data}
+        layout={fig.layout}
+        ariaLabel={`Replay chart (${kind === 'rehearsal' ? 'saved rehearsal' : 'archived evidence'}, not live): ion heat flux versus time up to the replay clock`}
+        summary={fig.summary}
+      />
       <div className="lg-play__stats">
         <Stat label="Replay clock (not live)" value={cursor} unit={TIME_UNIT} decimals={0} />
         {series.map((s) => {
@@ -105,12 +122,6 @@ export function Playback({ kind, label, series, autoPlay, children }: PlaybackPr
           );
         })}
       </div>
-      <PlotlyChart
-        data={fig.data}
-        layout={fig.layout}
-        ariaLabel={`Replay chart (${kind === 'rehearsal' ? 'saved rehearsal' : 'archived evidence'}, not live): ion heat flux versus time up to the replay clock`}
-        summary={fig.summary}
-      />
       {children}
     </div>
   );

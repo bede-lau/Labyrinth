@@ -380,7 +380,7 @@ def _default_verify_tree(tmp_path):
     for rel in ("scripts/hooks/stop_verify.sh", "scripts/hooks/stop_launcher.py", "scripts/dev.sh"):
         shutil.copy(ROOT / rel, tree / rel)
     (tree / "scripts/verify.sh").write_text(
-        '#!/usr/bin/env bash\nprintf "%s|%s\\n" "$*" "$PWD" >> "$VERIFY_LOG"\nn=$(wc -l < "$VERIFY_LOG")\n'
+        '#!/usr/bin/env bash\nprintf "%s|%s\\n" "$*" "$PWD" >> "$VERIFY_LOG"\nn=$(wc -l < "$VERIFY_LOG" | tr -d "[:space:]")\n'
         'echo "STUB-VERIFY run $n"\nif [ "$n" -ge 2 ]; then exit 0; fi\nexit 2\n')
     return tree
 
@@ -450,6 +450,9 @@ def test_setup_refuses_a_windows_python_that_does_not_run(tmp_path):
     proc.write_text("Linux version 6.6.87.2-microsoft-standard-WSL2\n")
     bindir = tmp_path / "bin"
     bindir.mkdir()
+    uname = bindir / "uname"
+    uname.write_text("#!/bin/sh\ncase $1 in -s) echo Linux;; -m) echo x86_64;; esac\n")
+    uname.chmod(0o755)
     env = {"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(tmp_path), "LABYRINTH_TOOLS": str(tmp_path / "tools"),
            "LABYRINTH_PROC_VERSION": str(proc)}
     r = run(["bash", "scripts/setup-dev.sh"], env=env)
@@ -595,7 +598,8 @@ def test_probe_copy_decides_overlap_before_creating_anything_and_in_any_letter_c
         assert r.returncode == 2 and "is the repo or inside it" in r.stderr, (spelled, r.stderr)
     r = _probe(repo, tmp_path, tmp_path / "FAKEREPO", "x")
     assert r.returncode == 2
-    assert not (tmp_path / "FAKEREPO").exists() and not (tmp_path / "FakeRepo").exists()
+    assert [p.name for p in tmp_path.iterdir() if p.name.casefold() == repo.name.casefold()] == [repo.name]
+    assert not (repo / "tmp").exists() and not (repo / "renderer" / "x").exists()
     # the repo inside the destination, spelled in another case
     r = _probe(repo, tmp_path, tmp_path, "FAKEREPO")
     assert r.returncode == 2 and "refusing" in r.stderr

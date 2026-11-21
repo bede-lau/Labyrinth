@@ -2,15 +2,58 @@
 
 > **Single source of truth for handoff. Read "Current state" first, then `interface.md`, `architecture.md`, `decision.md`.**
 > Last updated: 2026-11-21 by the maintainer's live-comparison session (D-024) (Claude Code in the owner's checkout `D:\Labyrinth`, Windows + WSL).
-> Branch **`heat-field`** (session 4; `main` = `origin/main` `bbf2fc6`, the owner's redesign). Everything below "Current state" is history, newest first.
+> Branch **`main`** (= the session-4 merge of the owner's bbf2fc6 and `heat-field`). Everything below "Current state" is history, newest first.
 > Every command runs inside WSL through `scripts/dev.sh` — CLAUDE.md "Running commands on this machine" (D-020).
 
-## Session 4 result (2026-11-21) — read first: this work is on branch `heat-field`, NOT on `main`
+## HANDOVER — end of session 4 (2026-11-21). Read this first.
+
+**Where things are.** `main` = the merge commit "Merge origin/main (bbf2fc6) into heat-field" (`git log -1 --merges`). It joins:
+- the owner's redesign from another machine (bbf2fc6): nav rail, GENE-X Dommaschk checkpoints, Modal rehearsal, D-029;
+- branch `heat-field`: the owner's requirement of 2026-11-21, D-026..D-028 — Forecast predicted vs actual with MSE / RMSE / range of MSE /
+  range of errors, and the new Heat & field view.
+
+The owner chose "Combine both, merge" and then asked to wrap up and push "anyways" so others can take over (D-030). `origin/heat-field` = 8c919f4,
+the pre-merge state.
+
+**Gate at the merge commit.** `verify.sh all`: every stage passes — boundary, docs, ruff, 378 backend, artifacts schema-valid and byte-fresh,
+typecheck, 40 files / 1720 renderer tests, build.
+- One flake: `scripts/tests/test_gates.py::test_verify_runs_exactly_the_documented_stages_for_each_scope` failed once inside the full run, which was
+  sharing WSL with agents that had just been stopped. It passed alone, and in a full `pytest scripts/tests` rerun (71/71). Watch it.
+- No conflict markers remain. The only CRLF hits are binary files (.nc, .png).
+
+**NOT done — the owner waived these at wrap-up (D-030); do them next, in this order:**
+1. **Review the merge resolution (one reviewer).**
+   - `renderer/src/features/forecast/*`: the engineer combining both designs was stopped just after its forecast tests passed (66/66), before it
+     reported. Read the code and check that the combined view does all of this:
+     - opens on all 8 windows (owner's redesign) with the absolute-error toggle;
+     - shows **Predicted vs Actual (2 lines)** and MSE, RMSE, range of MSE and range of errors equal to `errorStats` (owner's requirement page 4, D-026);
+     - never plots unrevealed observations during a replay;
+     - keeps the PRD MAE claimed-vs-computed mismatch visible (honesty rule).
+   - `renderer/src/shell/*`: the engineer was stopped after reporting shell, lib, design and heatfield green. Check that Heat & field is the 7th rail
+     entry, labelled "illustrative model", and that A6 (`model` in the legend) holds.
+2. **Fix `tasks/03-forecast/TASK.md` F4/F5/F7 wording** to match the combined view (overview first; the owner's note that the separate score panel is
+   superseded; whether "Run to end" and the panel order still apply).
+3. **Verifiers.** Every task in VERIFYING needs a verifier at a commit (D-022):
+   - 00, 01, 04, 05, 06: the owner's local updates (D-029; Modal rehearsal);
+   - 03, 08, 09: both sides plus the merge.
+   **10 is DONE** (verified at ca1871b; the merge did not change its owned files: `artifacts/heatfield.json` is byte-identical). 02 and 07 are DONE.
+4. **Open minors** (non-blocking):
+   - HF-R2: the |B| chart's ~60 Hz Plotly.react has not been profiled in a real browser.
+   - Below 300 px the diverter table scrolls inside its own region.
+   - The Heat & field edge strip (0.65–1.00 keV) and the slice (0.65–3.00 keV) use different scales on purpose; their colour bars say so.
+   - Bundle: plotly 4.65 MB, three 743 kB.
+   - Owner blockers from earlier sessions: see "Current state" below.
+
+**Decision numbers.** The owner's D-026 is renumbered **D-029** (5 doc references); this branch keeps D-026..D-028. D-030 records the wrap-up.
+**Environment.** Windows + WSL; all commands go through `scripts/dev.sh` (CLAUDE.md). Commits use GitHub Desktop's git
+(`%LOCALAPPDATA%\GitHubDesktop\app-*\resources\app\git\cmd\git.exe`).
+
+## Session 4 result before the merge (2026-11-21) — history; the HANDOVER above supersedes it
 
 - **Where it is:** commit `ca1871b` (the build) plus the DONE commit after it, pushed to **`origin/heat-field`**. `origin/main` is `bbf2fc6`.
   The owner pushed that from another machine the same day ("Integrate verified simulation artifacts and redesign Labyrinth replay views": nav rail,
   GENE-X Dommaschk checkpoints, Modal rehearsal qualified, a new Forecast view that opens on all 8 windows with an absolute-error toggle, its
-  own **D-026**). Asked how to combine the two, the owner chose "push mine to a branch, decide later".
+  own **D-026**, renumbered D-029 at the merge). Asked how to combine the two, the owner chose "push mine to a branch, decide later".
 - **Task 10-heat-field: DONE** (verified at `ca1871b`, `Verdict: PASS`).
 - **Tasks 03, 04, 08, 09: IN-PROGRESS on this branch.** They were built, reviewed and gated green, but their verifiers were stopped: any merge
   with `bbf2fc6` changes their owned files, so they need verifying after the merge.
@@ -47,6 +90,16 @@ Then: `verify.sh all` exit 0 → commit `ca1871b` → verifiers started; pushing
 so the 03+04 and 08+09 verifiers were stopped; task 10's verifier finished with PASS.
 
 ## Current state (before session 4)
+
+**Local forecast update (21 November 2026).** Forecast opens on all eight saved windows with heat-flux and absolute-error graphs. The step-through still reveals observations on request. Locate omits the field-strength caption. Task 03 is VERIFYING locally.
+
+**Local three-view redesign (21 November 2026).** Locate the tubes pairs tube selection with the GPU assignments. Forecast and Spatial parallelism complete the public navigation. Spatial separates the saved GENE-X Dommaschk timing comparison, a proposed control loop, and the published W7-X compute example. Termination stays accessible across views when a session is active or termination is uncertain. This interface update ran locally without cloud jobs.
+
+**Local Modal launch qualification (21 November 2026).** The owner’s `labyrinth` profile deployed `labyrinth-gx` with GX commit `3865a53778862e1686f414bf6f416339e24887c9`. The native `vmec_c` input reads the same pinned W7-X equilibrium for the bean and triangular tubes. Rehearsal `rehearsal-a4d206c6b7df` passed initialization, checkpoint continuation, distinct-device and execution-overlap checks in two phases of 400 steps each at the live grid resolution. Earlier attempt `rehearsal-595d25ed7f2f` stopped on a missing dependency in the Python geometry reader. All rehearsal workers stopped. The local API returned qualified and idle, and the browser opened and canceled the real live-slot confirmation. The ledger at handoff showed $8.22 in posted project usage and $9.73 reserved for unposted costs. The local session and its records under `~/.labyrinth` supersede the historical unrehearsed status for this checkout. Saturated heat-flux agreement requires separate evidence.
+
+**Local interface update (21 November 2026).** Desktop navigation now uses a persistent rail. Advance plasma pairs planned GPU assignments drawn from the saved field lines with the archived heat-flux replay and a full-trace control. Browser checks covered all six views at 390, 900 and 1440 pixels, keyboard navigation, both full plotted traces, playback and tube selection. Tasks 06, 08 and 09 are VERIFYING locally.
+
+**Local checkout update (21 November 2026, D-029 — written as D-026 on the owner's machine, renumbered at the merge).** Imported the saved Modal geometry and GENE-X evidence, corrected the budget label, and addressed the macOS tooling failures. The macOS local gate passed all 11 stages and Chromium confirmed the Geometry, Spatial Parallelism and Budget changes. Tasks 00, 01, 04 and 05 are in VERIFYING locally pending the repository's commit-based verification workflow. Historical statuses and results below describe the remote baseline.
 
 **All ten tasks are `DONE`.** 02 was re-verified at `8a85c67` for D-025 (τ_int floor). 02, 06 and 09 were reopened for D-024 (the PRD's live comparison, cross-RX-2) and re-verified at `77fd8b6` (`Verdict: PASS`
 each; reviewer APPROVE). The other seven are verified at `3faed3a`. Before D-024 each had a final external-verifier run at commit `3faed3a` ending in `Verdict: PASS`, with a `PASS` row for every outcome
