@@ -28,6 +28,7 @@ vi.mock('../features/transport/TransportView', () => ({
 }));
 vi.mock('../features/forecast/ForecastView', () => ({ ForecastView: () => <p>view:forecast</p> }));
 vi.mock('../features/spatial/SpatialView', () => ({ SpatialView: () => <p>view:spatial</p> }));
+vi.mock('../features/heatfield/HeatFieldView', () => ({ HeatFieldView: () => <p>view:heat</p> }));
 vi.mock('../features/budget/BudgetView', async () => {
   const { useLiveStatus } = await import('../lib/liveStatus');
   return {
@@ -80,7 +81,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test('A1 navigation reaches all six views by keyboard and the URL hash names the view', async () => {
+test('A1 navigation reaches all seven views by keyboard and the URL hash names the view', async () => {
   stubFetch(() => new Response('not found', { status: 404 }));
   const user = userEvent.setup();
   render(<App />);
@@ -98,9 +99,22 @@ test('A1 navigation reaches all six views by keyboard and the URL hash names the
     'Forecast replay',
     'Spatial parallelism',
     'Budget',
+    'Heat & field',
   ]);
   expect(links.map((l) => l.getAttribute('href'))).toEqual(ROUTES.map((r) => `#/${r.id}`));
   expect(links[0]).toHaveAttribute('aria-current', 'page');
+  // How each view's data arrives: Heat & field is an illustrative model, never "replay" or a GX run.
+  expect(links.map((l) => l.querySelector('.shell-nav__source')?.textContent)).toEqual([
+    'replay',
+    'GX run · gated',
+    'replay',
+    'replay',
+    'replay',
+    'replay',
+    'illustrative model',
+  ]);
+  expect(routeDef('heat')).toEqual({ id: 'heat', label: 'Heat & field', source: 'model', files: ['artifacts/heatfield.json'] });
+  expect(ROUTES.at(-1)?.id).toBe('heat');
 
   // Keyboard: Tab past the skip link and header controls to the nav, then through each link + Enter.
   for (let n = 0; n < 6 && document.activeElement !== links[0]; n++) await user.tab();
@@ -167,9 +181,9 @@ test('DS-5 the active nav tab is centred inside the nav scroller (the page is ne
   const scroller = screen.getByRole('navigation', { name: 'Views' }).querySelector<HTMLElement>('.shell-nav__scroll')!;
   expect(scroller).not.toBeNull();
   const links = navLinks();
-  // A 390 px phone: six 122 px tabs (732 px) inside a 390 px scroller.
+  // A 390 px phone: seven 122 px tabs (854 px) inside a 390 px scroller.
   Object.defineProperty(scroller, 'clientWidth', { configurable: true, value: 390 });
-  Object.defineProperty(scroller, 'scrollWidth', { configurable: true, value: 732 });
+  Object.defineProperty(scroller, 'scrollWidth', { configurable: true, value: 854 });
   scroller.getBoundingClientRect = () => ({ left: 0, width: 390 }) as DOMRect;
   links.forEach((l, i) => {
     l.getBoundingClientRect = () => ({ left: i * 122 - scroller.scrollLeft, width: 122 }) as DOMRect;
@@ -185,8 +199,10 @@ test('DS-5 the active nav tab is centred inside the nav scroller (the page is ne
   await go('transport'); // tab 2: centre = 244 − (390 − 122) / 2
   expect(scroller.scrollLeft).toBe(110);
   await waitFor(() => expect(scroller).toHaveAttribute('data-fade', 'both'));
-  await go('budget'); // last tab: clamped to the end, only the start is hidden
-  expect(scroller.scrollLeft).toBe(342);
+  await go('budget'); // tab 5 of 7: centre = 610 − 134 = 476, clamped to the end (854 − 390)
+  expect(scroller.scrollLeft).toBe(464);
+  await go('heat'); // last tab: clamped to the end, only the start is hidden
+  expect(scroller.scrollLeft).toBe(464);
   await waitFor(() => expect(scroller).toHaveAttribute('data-fade', 'start'));
   await go('locate'); // first tab: back at 0, only the end is hidden
   expect(scroller.scrollLeft).toBe(0);
@@ -401,7 +417,7 @@ test('A2 a partial or malformed status body never blanks the page: it is rejecte
     await waitFor(() => expect(modeBox()).toHaveTextContent(/invalid status/));
     expect(headerPills()).toEqual(['replay:Replay · $0']);
     expect(document.querySelector('[data-status="live"]')).toBeNull();
-    expect(navLinks()).toHaveLength(6);
+    expect(navLinks()).toHaveLength(7);
     expect(screen.getByText('view:locate')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(DECISION_QUESTION);
     r.unmount();
@@ -439,7 +455,7 @@ test('A3 a view that throws shows the named error panel inside the shell, and na
   expect(screen.getByRole('heading', { name: 'Could not load artifacts/transport.json' })).toBeInTheDocument();
   expect(screen.getByText('windows[0].mean is undefined')).toBeInTheDocument();
   // The shell survives: header, nav and legend are still there.
-  expect(navLinks()).toHaveLength(6);
+  expect(navLinks()).toHaveLength(7);
   expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(DECISION_QUESTION);
   expect(screen.getByRole('region', { name: 'Provenance legend' })).toBeInTheDocument();
 
@@ -516,7 +532,7 @@ test('A4 header states the user decision and a global provenance legend is shown
   );
   expect(DECISION_QUESTION).toBe('Is this W7-X heat-flux estimate accurate enough to justify a longer simulation?');
   const legend = screen.getByRole('region', { name: 'Provenance legend' });
-  for (const label of ['Replay', 'Archive', 'Derived', 'PRD-reported', 'Rehearsal', 'Verified', 'Unverified', 'Blocked', 'Mismatch', 'Failed']) {
+  for (const label of ['Replay', 'Archive', 'Derived', 'PRD-reported', 'Rehearsal', 'Model', 'Verified', 'Unverified', 'Blocked', 'Mismatch', 'Failed']) {
     expect(within(legend).getByText(label, { selector: '.lab-pill__text' })).toBeInTheDocument();
   }
   // Every pill is explained in words, and the legend never draws a LIVE pill.
@@ -528,7 +544,7 @@ test('A4 the legend explains every provenance kind and verification outcome defi
   const defs = JSON.parse(readFileSync(resolve(__dirname, '../../../contracts/common.schema.json'), 'utf8')).$defs;
   const kinds: string[] = defs.provenance.properties.kind.enum;
   const outcomes: (keyof typeof VERIFICATION_STATUS)[] = defs.verification.properties.outcome.enum;
-  expect(kinds).toEqual(expect.arrayContaining(['archive', 'derived', 'prd-reported', 'live', 'rehearsal']));
+  expect(kinds).toEqual(expect.arrayContaining(['archive', 'derived', 'prd-reported', 'live', 'rehearsal', 'model']));
   expect(outcomes).toEqual(expect.arrayContaining(['passed', 'failed', 'blocked', 'not-applicable']));
 
   stubFetch(() => new Response('', { status: 404 }));
@@ -549,4 +565,27 @@ test('A4 the legend explains every provenance kind and verification outcome defi
     expect(explained(VERIFICATION_STATUS[outcome]), `outcome ${outcome}`).toMatch(/\w+ \w+/);
   }
   expect(explained('not-applicable')).toBe('No verification applies.');
+});
+
+test('A6 the legend explains the model kind (D-027) next to the other kinds, read from the schema enum', () => {
+  const defs = JSON.parse(readFileSync(resolve(__dirname, '../../../contracts/common.schema.json'), 'utf8')).$defs;
+  const kinds: string[] = defs.provenance.properties.kind.enum;
+  expect(kinds).toContain('model');
+
+  stubFetch(() => new Response('', { status: 404 }));
+  render(<App pollMs={60_000} />);
+  const legend = screen.getByRole('region', { name: 'Provenance legend' });
+  // The model kind sits in the same group as every other provenance kind of the schema (`live` is described in words).
+  const sources = within(legend).getByRole('heading', { name: 'Where a number comes from' }).closest('.shell-legend__group') as HTMLElement;
+  const drawn = [...sources.querySelectorAll<HTMLElement>('dt [data-status]')].map((p) => p.dataset.status);
+  expect(drawn).toEqual(expect.arrayContaining(kinds.filter((k) => k !== 'live')));
+  // Explained in words, beside its pill.
+  const pill = sources.querySelector<HTMLElement>('dt [data-status="model"]')!;
+  expect(pill).toHaveTextContent('Model');
+  expect(pill.closest('.shell-legend__item')!.querySelector('dd')).toHaveTextContent(
+    /Illustrative model output: parameters chosen for illustration, not fitted to measurements/,
+  );
+  // Not in the verification group: a model number is not a check outcome.
+  const checks = within(legend).getByRole('heading', { name: 'How far it is checked' }).closest('.shell-legend__group') as HTMLElement;
+  expect(checks.querySelector('[data-status="model"]')).toBeNull();
 });

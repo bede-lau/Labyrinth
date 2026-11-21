@@ -49,6 +49,7 @@ independent reference in one view. Replay costs $0; live GX is gated behind qual
 | server | — | `server/` | — | `/api/*`, `/artifacts/*` | 07 |
 | design system | — | — | `design/` | — | 08 |
 | shell | — | — | `shell/`, `lib/` | — | 09 |
+| heatfield | Owner requirement 2026-11-21 (D-027): Heat & field | `features/heatfield` | `features/heatfield` | `heatfield.json` (grids, field lines, model, golden) | 10 |
 
 ## Science pipeline (main)
 
@@ -61,7 +62,13 @@ independent reference in one view. Replay costs $0; live GX is gated behind qual
   closed windows (D-013). Uncertainty is autocorrelation-aware (τ_int floored at ½ sample, so N_eff never exceeds the
   samples in the window, D-025). "Saturated agreement" is only claimed for a covered, stationary window with finite uncertainty and N_eff ≥ 20.
 * **Units.** GX raw → archive: t × √2, Q ÷ 2√2, only with identical dimensional references.
-* **Forecast.** Persistence (previous window) vs frozen (initialisation window) on 50-unit windows.
+* **Forecast.** Persistence (previous window) vs frozen (initialisation window) on 50-unit windows; `errorStats` (D-026): MSE, RMSE,
+  min–max of the squared errors and of the signed errors (predicted − actual) per forecaster, shown with the predicted-vs-actual chart.
+* **Heat & field (D-027, `tasks/10-heat-field/MODEL.md`).** Real: R, Z, |B| (T) on ρ = 0…1 (9 surfaces) × 48 θ × 72 φ from the same VMEC reader,
+  eight LCFS field lines from the same tracer. Illustrative (provenance kind `model`, not a W7-X simulation): an explicit edge heat model on the
+  LCFS (diffusion along the field-line pitch and across with D⊥ ∝ (B0/B)², relaxation to a pedestal, Gaussian sinks at four schematic diverters,
+  a coil perturbation that sweeps the strike line, lumped tile temperatures). The Python model is the reference and writes golden checkpoints;
+  the renderer runs a TypeScript port (interactive) that reads every input from the artifact and must reproduce the golden values.
 * **Budget.** PRD figures recomputed in exact decimals (`pricing.py` is the single source of PRD constants); PRD ranges are
   `claimedRange` fixtures, never midpoints; `guardPlan` is priced by calling the live budget guard itself (D-023).
 

@@ -42,6 +42,15 @@ export const STATUS_META: Record<StatusKind, StatusMeta> = {
     description: 'Stated in PRD.md; no underlying data in this repo.',
     dashed: true,
   },
+  // D-027: every number of the Heat & field model (temperatures, heat fluxes, tile temperatures,
+  // predictions) carries this. Dashed: no measurement in this repo backs it.
+  model: {
+    label: 'Model',
+    icon: 'model',
+    description:
+      'Illustrative model output: parameters chosen for illustration, not fitted to measurements; not a measurement or a W7-X simulation.',
+    dashed: true,
+  },
   unverified: {
     label: 'Unverified',
     icon: 'question',

@@ -3,7 +3,7 @@
 // Feature folders define the TS types of their own artifact (mirroring contracts/*.schema.json).
 import { useEffect, useState } from 'react';
 
-export type ArtifactId = 'geometry' | 'transport' | 'forecast' | 'budget' | 'spatial';
+export type ArtifactId = 'geometry' | 'transport' | 'forecast' | 'budget' | 'spatial' | 'heatfield';
 
 export type ArtifactState<T> =
   | { status: 'loading' }

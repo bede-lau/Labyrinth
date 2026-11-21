@@ -128,6 +128,24 @@ const SERIES_SHAPE: Record<SeriesId, { dash: SeriesStyle['line']['dash']; symbol
   triangular: { dash: 'dashdot', symbol: 'triangle-up', width: 2 },
 };
 
+/** The two lines of the forecast chart (D-026): heat flux against time, predicted and actual. */
+export const FORECAST_LINES = ['predicted', 'actual'] as const;
+export type ForecastLine = (typeof FORECAST_LINES)[number];
+
+/** Legend names of the forecast lines, as the owner wrote them. */
+export const FORECAST_LABEL: Record<ForecastLine, string> = { predicted: 'Predicted', actual: 'Actual' };
+
+/**
+ * Actual is the archived stella window mean, so it keeps the stella colour and stella's solid line
+ * and circle (the trace is stella's wherever it is drawn). Predicted is a forecast: its own token
+ * (`plot.predicted`, a vermilion that is ≥ 40 ΔE00 from stella's cobalt in every simulated
+ * dichromacy), a dashed line and a marker no series uses.
+ */
+const FORECAST_SHAPE: Record<ForecastLine, { dash: SeriesStyle['line']['dash']; symbol: string; width: number }> = {
+  predicted: { dash: 'dash', symbol: 'triangle-down', width: 2 },
+  actual: { dash: 'solid', symbol: 'circle', width: 2 },
+};
+
 /** Axis title with its unit (`_x` / `_{..}` become subscripts in both). A unit is mandatory; pass 'dimensionless' when there is none. */
 export function axisTitle(quantity: string, unit: string): string {
   if (!unit.trim()) throw new Error(`axisTitle("${quantity}"): a unit is required (use 'dimensionless')`);
@@ -266,6 +284,22 @@ export function seriesStyle(series: SeriesId, theme: ThemeName): SeriesStyle {
   const shape = SERIES_SHAPE[series];
   return {
     name: SERIES_LABEL[series],
+    line: { color, width: shape.width, dash: shape.dash },
+    marker: { color, symbol: shape.symbol, size: 6, line: { color: t.plot.paper, width: 1 } },
+  };
+}
+
+/**
+ * Line + marker style for a forecast-chart line (D-026), the counterpart of `seriesStyle`:
+ * `forecastStyle('actual', theme)` (stella colour, solid, circles) and `forecastStyle('predicted', theme)`
+ * (`plot.predicted`, dashed, downward triangles). The legend name is in `name`.
+ */
+export function forecastStyle(line: ForecastLine, theme: ThemeName): SeriesStyle {
+  const t = themes[theme];
+  const color = line === 'actual' ? t.series.stella : t.plot.predicted;
+  const shape = FORECAST_SHAPE[line];
+  return {
+    name: FORECAST_LABEL[line],
     line: { color, width: shape.width, dash: shape.dash },
     marker: { color, symbol: shape.symbol, size: 6, line: { color: t.plot.paper, width: 1 } },
   };

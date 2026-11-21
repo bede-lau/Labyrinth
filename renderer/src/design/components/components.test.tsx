@@ -134,6 +134,7 @@ describe('status semantics: every kind is told apart without colour (F2)', () =>
     archive: { label: 'Archive', icon: 'archive' },
     derived: { label: 'Derived', icon: 'derived' },
     'prd-reported': { label: 'PRD-reported', icon: 'quote' },
+    model: { label: 'Model', icon: 'model' },
     unverified: { label: 'Unverified', icon: 'question' },
     passed: { label: 'Verified', icon: 'check' },
     failed: { label: 'Failed', icon: 'alert' },
@@ -385,6 +386,29 @@ describe('ProvenanceBadge', () => {
     const btn = screen.getByRole('button', { name: 'Provenance of stella trace: Archive, Verified' });
     expect(btn).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText('stella 6f60964d')).not.toBeVisible();
+    // Without a caption nothing but the pills (and the chevron) is drawn in the button.
+    expect(btn.querySelector('.lab-prov__caption')).toBeNull();
+  });
+  test('DZ-8 caption: two badges on one panel each show their subject, and each name starts with it (label in name)', () => {
+    render(
+      <>
+        <ProvenanceBadge provenance={{ ...provenance, kind: 'model' }} subject="temperatures, heat fluxes and tile temperatures" caption="Temperatures" />
+        <ProvenanceBadge provenance={{ ...provenance, kind: 'derived' }} subject="geometry and |B|" caption="Geometry and |B|" />
+      </>,
+    );
+    const temps = screen.getByRole('button', { name: 'Temperatures — provenance of temperatures, heat fluxes and tile temperatures: Model, Verified' });
+    const geom = screen.getByRole('button', { name: 'Geometry and |B| — provenance of geometry and |B|: Derived, Verified' });
+    // The caption is visible text inside the button, before the pills.
+    for (const [btn, caption] of [
+      [temps, 'Temperatures'],
+      [geom, 'Geometry and |B|'],
+    ] as const) {
+      const cap = btn.querySelector('.lab-prov__caption');
+      expect(cap).toHaveTextContent(caption);
+      expect(cap).toBeVisible();
+      expect(btn.firstElementChild).toBe(cap);
+      expect(btn.textContent?.startsWith(caption)).toBe(true);
+    }
   });
   test('expands to list solverRevision, units, coverage, runtime, verification and sources', async () => {
     const user = userEvent.setup();
@@ -511,7 +535,7 @@ describe('ProvenanceBadge never draws LIVE from provenance alone', () => {
     expect(liveMarks(container).dot).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Provenance of GX bean run: Live, Verified' })).toBeInTheDocument();
   });
-  test.each(['archive', 'derived', 'prd-reported', 'rehearsal'] as const)(
+  test.each(['archive', 'derived', 'prd-reported', 'rehearsal', 'model'] as const)(
     'the flag cannot turn %s provenance into LIVE',
     (kind) => {
       const { container } = render(<ProvenanceBadge provenance={{ ...provenance, kind }} live />);
@@ -525,7 +549,62 @@ describe('ProvenanceBadge never draws LIVE from provenance alone', () => {
     expect(provenanceStatus('live', true)).toMatchObject({ status: 'live', label: 'Live' });
     expect(provenanceStatus('rehearsal', true)).toMatchObject({ status: 'rehearsal', label: 'Rehearsal' });
     expect(provenanceStatus('archive')).toMatchObject({ status: 'archive', label: 'Archive' });
+    expect(provenanceStatus('model')).toMatchObject({ status: 'model', label: 'Model', icon: 'model' });
     expect(provenanceStatus('live').description).not.toMatch(/live/i);
+  });
+});
+
+// D6 (owner requirement 2026-11-21, D-027): every number of the Heat & field model carries the `model`
+// status. It must say what it is (illustrative, not fitted, not a measurement or a W7-X simulation), be
+// dashed (not backed by data in this repo) and be told apart from every other kind without colour.
+describe('D6 the model status', () => {
+  const DESCRIPTION =
+    'Illustrative model output: parameters chosen for illustration, not fitted to measurements; not a measurement or a W7-X simulation.';
+  test('D6 its label, icon, description and dashed outline', () => {
+    expect(STATUS_KINDS).toContain('model');
+    expect(STATUS_META.model).toEqual({ label: 'Model', icon: 'model', description: DESCRIPTION, dashed: true });
+    // The dashed kinds are exactly the ones no data in this repo backs.
+    expect(STATUS_KINDS.filter((k) => STATUS_META[k].dashed)).toEqual(['prd-reported', 'model', 'unverified']);
+  });
+  test('D6 the pill: visible "Model", the ƒ glyph, the meaning as its title, never the live dot', () => {
+    const { container } = render(<StatusPill status="model" />);
+    const pill = container.querySelector('.lab-pill') as HTMLElement;
+    expect(pill.dataset.status).toBe('model');
+    expect(pill).toHaveTextContent('Model');
+    expect(pill.querySelector('svg')?.getAttribute('data-icon')).toBe('model');
+    expect(pill.getAttribute('title')).toBe(DESCRIPTION);
+    expect(pill.querySelector('.lab-pill__dot')).toBeNull();
+  });
+  test('D6 its glyph is its own drawing (not the Σ of derived nor the quote of PRD-reported)', () => {
+    const drawing = (name: IconName) => {
+      const { container, unmount } = render(<Icon name={name} />);
+      const html = container.querySelector('svg')?.innerHTML ?? '';
+      unmount();
+      return html;
+    };
+    for (const other of ['derived', 'quote', 'question'] as const) expect(drawing('model')).not.toBe(drawing(other));
+  });
+  test.each(THEMES)('D6 %s: its own tokens, a tint of its own and a dashed border distinct from the other dashed kinds', (theme) => {
+    const s = themes[theme].status;
+    expect(Object.keys(s)).toContain('model');
+    for (const other of ['prd-reported', 'unverified', 'blocked', 'billing-risk'] as const) {
+      expect(s.model.fg, other).not.toBe(s[other].fg);
+      expect(s.model.border, other).not.toBe(s[other].border);
+    }
+  });
+  test('D6 a ProvenanceBadge of kind model reads "Model" with its outcome, and its card says what the model is', () => {
+    const record: Provenance = {
+      ...provenance,
+      kind: 'model',
+      solverRevision: 'heatfield model v1',
+      verification: { outcome: 'not-applicable', details: 'Illustrative model, not a W7-X simulation.' },
+      sources: [],
+    };
+    const { container } = render(<ProvenanceBadge provenance={record} subject="tile temperatures" defaultOpen />);
+    const btn = screen.getByRole('button', { name: 'Provenance of tile temperatures: Model, Not applicable' });
+    expect(btn.querySelector('.lab-pill')?.getAttribute('data-status')).toBe('model');
+    expect(screen.getByRole('region', { name: /details/ })).toHaveTextContent(`Model. ${DESCRIPTION}`);
+    expect(container.querySelector('[data-status="live"]')).toBeNull();
   });
 });
 

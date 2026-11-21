@@ -24,7 +24,7 @@ names something that exists.
 1. **Evidence first.** Every number sits with its unit, window, source and verification state.
    Provenance is a first-class element: a compact `ProvenanceBadge` that expands to the full record.
    It is never a footnote.
-2. **Honest states.** Live, billing risk, replay, rehearsal, archive, derived, PRD-reported,
+2. **Honest states.** Live, billing risk, replay, rehearsal, archive, derived, PRD-reported, model,
    unverified, verified, failed, blocked and mismatch each have one consistent treatment, made of
    colour, icon and text. Colour is never the only signal. The live treatment cannot be produced
    from replayed data, and "GPUs may still be billing" is never left to a feature to improvise
@@ -48,15 +48,15 @@ names something that exists.
 | `tokens.css` | **Generated** by `renderTokensCss()`. Regenerate with `npm --prefix renderer run tokens`. `tokens.test.ts` fails if this file drifts from `tokens.ts`. `main.tsx` imports it once. Besides the custom properties it holds the base rules: focus ring, the themed ring for chart modebar buttons, `summary` targets, tabular numbers, reduced motion. |
 | `scripts/gen-tokens-css.mjs` | What `npm run tokens` runs. It writes `tokens.css` and the token reference at the end of this document (§12). |
 | `theme.ts` | `resolveTheme()`, `useResolvedTheme()`, `setThemePreference()`. These follow the same rules as the CSS selectors. |
-| `plotTheme.ts` | Plotly layout, config, series styles, uncertainty bands, window and unsampled shapes, and `axisTitle` (§6). |
-| `sceneTheme.ts` | Three.js colours, the field-line identity colours, the gray surface and the `bmag` colormap (§7). |
+| `plotTheme.ts` | Plotly layout, config, series styles, the forecast chart's Predicted / Actual lines, uncertainty bands, window and unsampled shapes, and `axisTitle` (§6). |
+| `sceneTheme.ts` | Three.js colours, the field-line identity colours, the gray surface, the `bmag` colormap, and for Heat & field the temperature and field-strength colormaps and the diverter colours (§7). |
 | `format.ts` | Number, delta, window and unit formatting (true minus sign, en dash, subscripts). An exact tie rounds to even, as Python's round() does, so a printed value agrees with the artifact flag computed from it. |
 | `status.ts` | Label, icon and meaning for every status, the Alert's treatment, and `provenanceStatus()`, the rule that keeps LIVE out of replayed provenance (§5). |
 | `types.ts` | Structural types for provenance and fixture data (they mirror the contracts; nothing is imported from them). |
 | `components/` | Primitives and `components.css` (§8). |
 | `index.ts` | The public surface (§11). Import from here only. |
 | `color.ts` | Contrast, alpha compositing, CIELAB, CIEDE2000 and CVD simulation, used by the tests and the gallery. |
-| `palette.ts` | The series-palette gates and the measurement they apply to (§4). |
+| `palette.ts` | The series-palette gates, the colormap separation gates and the measurements they apply to (§4, §7). |
 | `contrastPairs.ts` | Every foreground/background pair the system draws, with the minimum it is held to (§10). |
 | `cssRules.ts` | A small CSS reader. The tests use it to pin layout and focus rules that jsdom cannot evaluate, and to list every colour pair the components draw (§10). |
 | `Gallery.tsx` | The review page at `/#gallery` (lazy chunk, not part of the app). |
@@ -189,6 +189,7 @@ own solid fill. No two statuses share a label or an icon (`components.test.tsx` 
 | `archive` | `archive` (box) | Archive | slate-blue tint | Read from a pinned upstream file (sha256) |
 | `derived` | `derived` Σ | Derived | teal tint | Computed by Labyrinth from archives |
 | `prd-reported` | `quote` ❝ | PRD-reported | sand tint, **dashed** outline | Stated in PRD.md, with no data in the repo |
+| `model` | `model` ƒ | Model | plum tint, **dashed** outline | Output of the illustrative Heat & field model (D-027): every temperature, heat flux, tile temperature and prediction it produces. Not a measurement and not a W7-X simulation. |
 | `unverified` | `question` ? | Unverified | neutral, **dashed** outline | Not checked against a reference (for example the raw triangular trace) |
 | `passed` | `check` ✓ | Verified | green tint | Verification passed |
 | `failed` | `alert` (!) | Failed | red tint | The run or the verification failed |
@@ -197,9 +198,22 @@ own solid fill. No two statuses share a label or an icon (`components.test.tsx` 
 | `not-applicable` | `dash` — | Not applicable | neutral | No verification applies |
 
 **Dashed outlines mean the value is not backed by data in this repo.** Because the dash carries that
-meaning, the two dashed outlines are at least 3:1 against every surface and against their own tint.
-An arithmetic-only fixture row (§8) is dashed for the same reason. The billing-risk outline is solid
-and drawn in the pill's text colour; it carries meaning too and is held to the same 3:1.
+meaning, the three dashed outlines (PRD-reported, model, unverified) are at least 3:1 against every
+surface and against their own tint. An arithmetic-only fixture row (§8) is dashed for the same reason.
+The billing-risk outline is solid and drawn in the pill's text colour; it carries meaning too and is
+held to the same 3:1.
+
+**When to use `model`.** The Heat & field view (D-027) runs an illustrative reduced edge-heat model
+whose parameters were chosen for illustration, not fitted to measurements. **Every number that model
+produces carries the `model` status**: the temperatures on the surface and in the cross-section, the
+hover read-out's temperature, each diverter's peak tile temperature and heat flux, the predicted and
+achieved values of the control loop, and the parameter table. Put one `<StatusPill status="model" />`
+beside each such number or group, or a `ProvenanceBadge` for the artifact's `provenance` (kind `model`),
+which reads "Model". Its meaning, as the pill's tooltip and the badge's card print it: "Illustrative
+model output: parameters chosen for illustration, not fitted to measurements; not a measurement or a
+W7-X simulation." The VMEC geometry and |B| are not model output: they are `derived`. While a coil is
+on, the illustrative coil perturbation added to |B| is model output, and the read-out says so beside
+the VMEC value. Never draw a model number with `derived`, `archive` or `live`.
 
 **Mapping the live-status store to the UI.** `useLiveStatus()` in `lib/liveStatus.ts` returns one
 store status (`connecting`, `unreachable` or `ready`); `modePills()` and `liveDanger()` there turn it
@@ -273,7 +287,7 @@ reader hears that danger twice. `designDoc.test.ts` reads both files: this secti
 part done only once the code does it.
 
 **Provenance never produces LIVE by itself.** Provenance `kind` maps to the status of the same name
-for `archive`, `derived`, `prd-reported` and `rehearsal`. Kind `live` is different: a record read
+for `archive`, `derived`, `prd-reported`, `rehearsal` and `model`. Kind `live` is different: a record read
 from an artifact or a saved run says how the numbers were made, not that a worker is running now.
 `ProvenanceBadge` therefore draws kind `live` as **Recorded run** with the replay treatment, and
 draws the live pill only when the caller also passes the `live` prop. That prop may be set only
@@ -327,6 +341,21 @@ treatment, the prefix "Danger:"), used only for the danger rows above.
   edge is drawn over the gray. Never interpolate across it.
 * **Published or claimed means** (triangular 2.22 on 1200–1500) use `meanSegment` in the series style.
   They are never drawn as if they were a trace.
+* **Forecast: Predicted and Actual** (D-026). The forecast chart draws heat flux against time as two
+  lines, `FORECAST_LINES` = `predicted`, `actual`, named by `FORECAST_LABEL` ("Predicted", "Actual",
+  the owner's words). Style each with `forecastStyle(line, theme)`, the counterpart of `seriesStyle`:
+
+  | Line | Legend name | Light | Dark | Line | Marker | Width (px) | Why |
+  |---|---|---|---|---|---|---|---|
+  | `actual` | Actual | `#1148b3` | `#467cc0` | `solid` | `circle` | 2 | The archived stella window mean: it keeps stella's colour, line and marker, as stella does everywhere. |
+  | `predicted` | Predicted | `#c85a0a` | `#f08a3c` | `dash` | `triangle-down` | 2 | Its own token, `plot.predicted`: a vermilion, the classic colour-blind-safe partner of blue, and a marker no series uses. Dashed because it is a forecast. |
+
+  The pair meets the series gates of §4 (`palette.test.ts`): it is more than 40 ΔE00 apart in normal
+  vision and under every simulated dichromacy, and both are at least 3:1 on the plot. Predicted is not
+  `GENE` or `triangular`, so the chart never suggests a code or a tube that is not in it. The error
+  statistics (MSE, RMSE, ranges) are numbers beside the chart, typeset like any other `Stat`. Each line
+  is a step: a window's value held flat across the window, with the marker at the window's midpoint
+  only. The review page (`/#gallery`, Forecast panel) draws the pair from these exports alone.
 * **Narrow charts.** The hover modebar is about 216px wide and would cover a top legend on a phone.
   When the viewport matches `NARROW_CHART_QUERY` (`(max-width: 640px)`), `plotLayout` anchors the
   legend to the bottom of the figure, where Plotly reserves room for it under the axis title. Pass
@@ -364,6 +393,113 @@ treatment, the prefix "Danger:"), used only for the danger rows above.
   (`scene.sampledSurface`), and the centre marker in the tube colour. Axes are labelled with units
   ("Major radius R (m)", "Z (m)").
 
+### Heat & field (D-027)
+
+The owner specified both colormaps of this view, and the design system holds them to the owner's
+words: **temperature: red = hottest, yellow = coldest** (through orange), and **magnetic field |B|:
+dark blue = strongest, green = weakest**. Both run lighter to darker as the quantity grows, so in this
+view darker always means more.
+
+* **Temperature**: `scene.heat`, 9 stops from coldest to hottest. Light `#fcdf00` (yellow) →
+  `#e68000` (orange) → `#bc0013` (red); dark `#fcdf00` → `#ff921a` → `#fa001d`. Both themes start
+  from the same yellow and follow the same hue path; the light theme's red end is darker (L\* 39 against
+  52) so the hot end holds its own edge on white. Look a value up
+  with `heatColor(t, theme)`, `t` in 0–1 with 0 = coldest: bring a temperature into 0–1 with
+  `normalizeRange(T, [lo, hi])` over the range the colour bar shows. Take that range from the data
+  on screen (for example the coldest and hottest values of the starting state, rounded outward), not
+  from limits the data never reaches: a bar four times wider than the data paints every cell in one
+  or two stops and hides the change the view exists to show. The colour bar is
+  `heatGradientCss(theme, direction)`: coldest at the start of `direction`, so `'to right'` (default)
+  puts hottest on the right and `'to top'` puts hottest at the top.
+* **Temperature is a fill, so outline it.** The temperature ramp colours surfaces and cross-section
+  cells, never lines. Its cold end is the owner's yellow (L\* 89), which no light background can hold
+  to 3:1, so the shape's edge is carried by an outline in `sceneTheme(theme).outline`
+  (`scene.boundary`: `#5d6d75` light, `#8a9ca4` dark, at least 3:1 on the scene background), as
+  WCAG 1.4.11 asks of a graphical object: draw the LCFS silhouette in the 3D view and the LCFS in the
+  cross-section with it (at least 1.5px; a stronger text colour is fine). The colour bar's frame uses
+  `--lab-color-border-strong` for the same reason. Every stop also stands at least 20 ΔE00 (the series
+  gate) off the scene background for every viewer, so a cell reads as a colour, never as the
+  background, and the hottest stop is at least 3:1 on the background. An earlier light ramp held every
+  stop to 3:1 on white: it started at a dark mustard (L\* 60), spanned only 28 L\* and read as ochre →
+  brick → maroon, with no visible yellow or orange (a test keeps that record).
+* **|B| in this view**: `scene.field`, 9 stops from weakest to strongest. Light `#00a676` (jade green)
+  → `#06779a` → `#1811a2` (deep ultramarine blue); dark `#76ffd0` → `#1dc3f8` → `#4766fe`. Look up with
+  `fieldColor(t, theme)` (0 = weakest), colour bar `fieldGradientCss(theme, direction)`. Field lines
+  coloured by |B| in this view use it too. **Never use `bmagColor` here**: the |B| ramp of Locate the
+  tubes runs the other way (dark navy = weakest) and must not change, so the two views each keep
+  their own ramp and their own colour bar.
+* **Both**: `sceneTheme(theme)` also returns the stops as `heat` and `field` (and the outline as
+  `outline`), and tokens.css as
+  `--lab-heat-0` … `--lab-heat-8` and `--lab-field-0` … `--lab-field-8`. Pass the sRGB triple to
+  `color.setRGB(r, g, b, SRGBColorSpace)` and draw the coloured surface with an unlit material (or
+  light it gently), so shading does not shift a colour into its neighbour's value. **Always show the
+  colour bar** with the quantity, its unit and the words at its ends: "Temperature (keV)", coldest …
+  hottest, labelled `model`; "|B| (T)", weakest … strongest, labelled VMEC. A |B|-coloured field line
+  drawn over a surface coloured by |B| disappears into it: draw field lines over the temperature map,
+  or give them the `markerOutline` casing.
+* **How they were built and checked** (`ramps.test.ts`; gates and measurement in `palette.ts`): in
+  OKLCH at equal CIEDE2000 steps. The temperature ramp runs from L 0.90 at hue 100° to hue 27° (L 0.50
+  light, 0.62 dark) at the edge of the sRGB gamut. Lightness falls stop by stop in normal
+  vision and under protanopia and deuteranopia (Machado 2009 and Viénot 1999), every step is visible
+  (at least 4.5 ΔE00 in normal vision, 2.5 under simulation), step sizes vary by less than 20% and the
+  hue at each end is the owner's colour. The |B| ramp also colours field lines, so every one of its
+  stops is at least 3:1 against the scene background and no line or cell vanishes into it; on white
+  that is why its weak end is a jade rather than a light green.
+* **Kept apart** (closest approach: the smallest ΔE00 between any colour drawn on one ramp and any
+  colour drawn on the other, in normal vision and under protanopia and deuteranopia, both models).
+  The surface toggles between temperature and |B|, so they are held to the series gate. Field vs
+  temperature: at least 12; measured 14.9 (light) and 19.6 (dark). The |B| ramp of Locate the tubes
+  shows the same quantity in the opposite direction, so no colour of one may pass for a colour of the
+  other; the obvious green → navy ramp came within 4 ΔE00 of it (a negative control in the test). Field vs
+  Locate the tubes' |B|: at least 8; measured 9.4 (light) and 8.8 (dark). Temperature and Locate the
+  tubes' |B| both have a yellow end (coldest in one, strongest in the other), so their yellows may not
+  pass for each other. Temperature vs Locate the tubes' |B|, in normal vision: at least 8; measured
+  13.9 (light) and 10.5 (dark). Under protanopia and deuteranopia the closest approach is 1.4 (light)
+  and 8.8 (dark): on the light theme any yellow → orange → red ramp passes through the lightness of
+  Locate the tubes' ochre strongest end (L\* 60), where both collapse onto the same yellow-brown, and
+  `scene.bmag` may not change. The yellow ends themselves stay at least 8 apart for every viewer, the
+  two ramps never share a view, and each view shows its own colour bar.
+* **Diverters**: black, as the owner drew them. `sceneTheme(theme).diverter` gives a near-black
+  `fill` (`scene.diverterFill`: `#14181a` light, `#030506` dark) and an `edge` (`scene.diverterEdge`:
+  `#ffffff` light, `#d5dee2` dark). Draw the plate with an unlit material in the fill and outline it in
+  the edge colour (at least 1.5px). On white the fill carries the plate; on the dark scene the fill is
+  invisible (about 1.2:1) and the edge carries it. On every ground it can sit on (the scene, the
+  surface fill, every temperature and |B| colour) one of the two is at least 3:1, and the edge is at
+  least 3:1 against the fill. The plates are schematic: say so next to them (D-027 §4).
+  **The black plate is drawn over its rim, and over the slice ring.** The rim is a slightly larger
+  strip under the fill: draw it first and let it write no depth, then the fill. Both are flat strips
+  across φ, and where the surface twists the wider rim's chord rises in front of the fill, so with
+  ordinary depth writes the light rim hid most of a black plate. Both still test depth against the
+  surface, so a plate behind the torus stays hidden. The plate stands outside the LCFS and the slice
+  ring lies on it, so where the slice crosses a diverter the ring runs under the plate and shows again
+  on either side: the plate stays whole and black, never cut in two by the ring. *Not yet in the heat
+  view:* `HeatScene.tsx` draws the ring after the plates, and at the default view the ring's tube
+  stands further out than the plate, so at the starting slice (φ 0°, D1) its light halo and dark core
+  cross D1 and split the plate in two. This section may drop this sentence once the plate covers the
+  ring.
+* **Marks on the coloured surface** (the cross-section's slice ring on the 3D surface, the heat-flow
+  arrows): a `color.text` core on a halo in the scene background (`sceneTheme(theme).text` on
+  `.background`), the halo drawn first and writing no depth, so the core always lands on it. On every
+  temperature and |B| colour the core or its halo is at least 3:1 (WCAG 1.4.11), and neither comes
+  within 12 ΔE00 (the series gate) of a |B| stop, so the slice never passes for a field line. Do not
+  mark the slice in the accent: on the light theme it comes within that distance of the field-line
+  colours. Size the marks in screen pixels on the far side of the torus, not in metres: the slice core
+  at least 2px inside a 5px halo; an arrow's shaft at least 1.5px with 1.5px of halo on each side and
+  a head at least 5px wide. WebGL draws lines 1px wide whatever is asked (a 1px light arrow vanished on
+  the yellow cold end), so draw them as meshes. The D1–D4 leader lines and the cross-section's keyboard
+  cursor are drawn the same way, and the key beside the view shows each mark as drawn, core on halo
+  over the ramp it sits on.
+* **The edge strip: one quantity on two ranges.** The cross-section's cells run from just below the
+  coldest surface temperature to the core temperature on the axis, so the last closed flux surface,
+  the coldest part of the slice, falls into the first stop or two and the cold footprint under a
+  diverter cannot show there. A band just outside the LCFS outline of the cross-section, the edge
+  strip, carries the LCFS temperature at that φ on the 3D surface's range instead (while the view is
+  coloured by temperature; |B| has one range and no strip). Each range has its
+  own colour bar beside the cross-section: the slice's, and one titled **"Edge (LCFS), same scale as
+  the 3D view"**, in keV and labelled `model`. Never stretch one bar over both ranges. The strip is a
+  temperature fill, so it is outlined like the LCFS (`outline`, at least 1.5px), and a diverter plate
+  in the cross-section is drawn just outside the strip, so the strip cells under it stay in view.
+
 ## 8. Components
 
 Import everything from `src/design` (`index.ts`).
@@ -374,7 +510,7 @@ Import everything from `src/design` (`index.ts`).
 | `Stat` | A number with its unit, ±σ and window | `unit` is required. `decimals` must match a precision you can defend. `null` renders "— not available" and never 0. The accessible name reads the full sentence. Uncertainty uses the same decimals as the value. |
 | `StatusPill` | State label | Use one status per pill. Override the text only with a synonym ("Replay · $0", "TERMINATE FAILED"). Only use `live` when the API reports live, and `billing-risk` only for the danger rows of §5. |
 | `Alert` | Money at risk now: GPUs may still be billing | `role="alert"` with the billing-risk treatment (solid octagon icon, raspberry tint, solid outline, 4px leading bar) and a spoken "Danger:" before the `title`. `reason` is the backend's text, printed verbatim: never re-cased, shortened or paraphrased, and long tokens wrap. `children` say what to do; `action` holds the control that acts (Terminate, Retry, or a link to the page that has it). `announce={false}` for a second copy of a danger the page already announces: drawn the same, named the same, a group instead of a live region (§5). `compact` for the header's copy: tighter padding, a 16px icon and one type step down, with every part kept and the reason still whole. Use it only for the danger rows of §5; anything else is a `Callout`. |
-| `ProvenanceBadge` | Kind + verification outcome; expands to solver revision, units, coverage, runtime, verification and sources (sha256) | Put one on every result panel or table. Escape closes the card and returns focus to the badge. A click outside closes it and leaves focus where the click landed. `align="start"` applies when it sits on the left edge. Kind `live` shows the live pill only with the `live` prop (§5); without it the badge reads "Recorded run". Only an http(s) source is a link; any other (a repository file such as `PRD.md`) is named as text with its reference beside it. Units are typeset with `Unit`. |
+| `ProvenanceBadge` | Kind + verification outcome; expands to solver revision, units, coverage, runtime, verification and sources (sha256) | Put one on every result panel or table. When a panel carries more than one, give each a short visible `caption` (for example "Temperatures" beside "Geometry and field"): it is drawn before the pills, and the accessible name starts with it ("Temperatures — provenance of …"). Escape closes the card and returns focus to the badge. A click outside closes it and leaves focus where the click landed. `align="start"` applies when it sits on the left edge. Kind `live` shows the live pill only with the `live` prop (§5); without it the badge reads "Recorded run". Only an http(s) source is a link; any other (a repository file such as `PRD.md`) is named as text with its reference beside it. Units are typeset with `Unit`. |
 | `FixtureCheck` | PRD claim (a value or a range) vs computed value, with Δ and an outcome in glyph and words | **Source:** the claim is PRD.md's unless the fixture's `claimSource` is "task" (only `tasks/<NN>/TASK.md` prints it). Then every word that names the source says TASK.md: the column reads "Claimed (TASK.md)" or "TASK.md range", the outcome "Inside TASK.md range", "Outside TASK.md range", "Arithmetic in TASK.md range" or "No TASK.md value", and the spoken range "TASK.md range lo to hi"; no call site needs to relabel it (`claimedLabel` still overrides the column label alone). A match requires both `matches === true` and the values: identical printed strings for a claimed value. Printed values round an exact tie to even, as Python's round() does when the producer sets `matches` (0.125 at two decimals is 0.12). Δ is the difference of the two printed values, so it reads 0 exactly when they match. Otherwise it is a mismatch, and any disagreement between the flag and the values is called out. **Ranges (D-023):** when the fixture has `claimedRange` (and `claimed` is null), the claimed column reads "PRD range" with lo–hi (never broken at its dash; only the unit may wrap) and the unit, and the check is lo ≤ computed ≤ hi, unrounded: "Inside PRD range" ✓ or "Outside PRD range" ✗. The computed value is printed with two more decimals than the PRD prints, more when needed so it never lands on the other side of a bound (−3.49e-16 against 0–1 reads "−0.0000000000000003", not "0.00"), up to the 100 places toFixed() prints; when even 100 places cannot separate it from a bound (only a bound at or near 0 allows that), it is every digit of its shortest round-trip form. It is always in fixed notation, never "e-16", and so is Δ. `printedDecimals` above 100 prints 100 places. Δ becomes "Δ to range": 0 inside, otherwise the signed distance to the nearer bound, never an unsigned zero. No midpoint is ever shown or spoken, even when an old artifact still has one in `claimed`. `claimed` null without a range shows "—" and "No PRD value". Reading order, in the DOM and in both layouts, is name, claimed, computed, Δ, outcome, note. Stacked by default (name, then the three numbers in equal columns, then the outcome). Inside a query container at least 500px wide the outcome sits beside the numbers; at least 720px wide the check becomes one table row whose four data columns have fixed minimum widths, so stacked rows line up, and the name, the values and the outcome share a line. Only the note can collapse: a note longer than 160 characters shows two lines behind "Show full note". **Basis:** taken from the fixture's `basis` (D-023). The `basis` prop can only make a check more cautious: it can mark a data fixture `arithmetic`, never turn an arithmetic fixture into a data-backed ✓. `arithmetic` marks a check that only redid the arithmetic on PRD-reported inputs: a match then reads "Arithmetic consistent" (or "Arithmetic in PRD range") with an = glyph, neutral colour and a dashed edge, never the green ✓ of a data-backed check. The basis never softens a mismatch. |
 | `SegmentedControl` | One choice among 2–5 peers (bean / triangular, window) | It is a radiogroup with one tab stop. ←→↑↓ move and select, Home/End jump, and disabled options are skipped. The track never clips: the focus ring sits 2px outside the segment, and a control wider than its container wraps. For more than 5 options, or for navigation, use tabs or a select instead. |
 | `Callout` | Inline info, warn or blocked explanation | `role="note"` (static, not an alert). A blocked callout always says what would unblock it (`action`). |
@@ -393,6 +529,11 @@ Import everything from `src/design` (`index.ts`).
 | Show a PRD range as "PRD range 14–15 days" with Inside or Outside | Show or speak the range's midpoint as if the PRD printed it |
 | Name a repository file as a source in text | Link a relative path: it resolves to the app itself |
 | Mark arithmetic on PRD-reported inputs with `basis="arithmetic"` | Show a green ✓ "Match" for a number no data in this repo backs |
+| Put the `model` pill on every number the Heat & field model produces (§5) | Show a model temperature or tile load as measured, derived or simulated |
+| Colour temperature with `heatColor` (red hottest, yellow coldest) and Heat & field's field strength with `fieldColor` (dark blue strongest, green weakest), each with its colour bar | Reuse `bmagColor` in Heat & field, or show a colormap without its colour bar and unit |
+| Draw diverter plates in `diverter.fill` with their `diverter.edge` outline | Draw a black plate with no edge on the dark scene, where it vanishes |
+| Draw a mark over the coloured surface (the slice ring, an arrow) as a `color.text` core on a scene-background halo | Mark it in the accent or a ramp colour, where it passes for a field line or vanishes into the ramp |
+| Draw the forecast chart's two lines with `forecastStyle(line, theme)` | Colour Predicted like a series it is not (GENE, triangular) |
 | Label every axis with its unit: "Time t (a/v<sub>th,i</sub>)" | Leave unitless axes ("Q", "time") |
 | Leave unsampled ranges gray and labelled | Interpolate a line across missing data, or colour gray regions |
 | Pair every colour with an icon and text, and every series with a dash and marker | Encode verification state or series identity by hue alone |
@@ -413,12 +554,16 @@ Enforced by tests unless a line says otherwise.
     surface, and body text is at least 4.5:1 on every tint.
   * Labels inside charts are at least 4.5:1 on the fill under them: the window label on the window
     band, the "unsampled" label on the gray block, also where the block lies over a band.
-  * Control borders, the focus ring, the accent, chart lines, |B| stops, the LIVE fill on every
-    surface, both dashed outlines, the billing-risk outline and the window edge are at least 3:1.
-    The focus ring is also at least 3:1 on every status and callout tint.
+  * Control borders, the focus ring, the accent, chart lines (the forecast's Predicted line too),
+    every stop of the two |B| colormaps (Locate the tubes, Heat & field) on the scene, the outline
+    round a temperature fill on the scene, the LIVE fill on every surface, the three dashed outlines,
+    the billing-risk outline, the window edge and the diverter edge against its fill are at least 3:1.
+    The temperature colormap is a fill: its stops are held to 20 ΔE00 off the scene instead, and its
+    shapes carry that outline (§7). The focus ring is also at least 3:1 on every status and callout
+    tint. The diverter plate is visible on every ground it can sit on (`ramps.test.ts`, §7).
   * Links and hovered links are at least 4.5:1 on every surface and on the tints that hold
     controls: the `Alert`, a mismatch row ("Show full note") and every callout.
-  * Measured worst cases: text 4.81:1 (light) and 4.77:1 (dark); non-text 3.14:1 (light) and 3.10:1 (dark).
+  * Measured worst cases: text 4.81:1 (light) and 4.77:1 (dark); non-text 3.13:1 (light) and 3.10:1 (dark).
 * The pair list is checked against the stylesheet (`css.test.ts`): it reads every colour
   `components.css` draws, in every state the rules combine, plus the focus ring around each control
   and the links in an `__action` slot, and fails when a pair is missing from `contrastPairs.ts` or
@@ -450,7 +595,8 @@ Enforced by tests unless a line says otherwise.
   yet in the app"). Within an announcing Alert only the title and reason are announced; changes to
   its body and action are not (`aria-live="off"`, `components.test.tsx`).
 * Motion: `prefers-reduced-motion` is honoured globally (`tokens.css`).
-* Colour-blind safety: `palette.test.ts` (see §4).
+* Colour-blind safety: `palette.test.ts` (see §4; also the forecast pair, §6) and `ramps.test.ts`
+  (the Heat & field colormaps, §7).
 * Not covered by unit tests, because jsdom lays nothing out: that the container layouts, the
   baseline alignment and the rings look right. `css.test.ts` pins the rules; design review checks
   the rendering at 1440 and 390 px in both themes in a real browser.
@@ -465,13 +611,13 @@ Everything `index.ts` exports at runtime. Import from `src/design`, never from a
 | `theme.ts` | `resolveTheme`, `setThemePreference`, `useResolvedTheme`, `useThemeTokens` |
 | `format.ts` | `formatNumber`, `formatSigned`, `formatWindow`, `trimNumber`, `spokenWindow`, `parseUnit`, `spokenUnit`, `plotlyUnit` |
 | `status.ts` | `STATUS_META`, `VERIFICATION_STATUS`, `CALLOUT_META`, `ALERT_META`, `provenanceStatus` |
-| `plotTheme.ts` | `SERIES_LABEL`, `NARROW_CHART_QUERY`, `axisTitle`, `plotLayout`, `plotConfig`, `seriesColorway`, `seriesStyle`, `uncertaintyBand`, `windowShape`, `unsampledShapes`, `meanSegment` |
-| `sceneTheme.ts` | `sceneTheme`, `toThreeHex`, `bmagColor`, `normalizeBmag`, `bmagGradientCss` |
+| `plotTheme.ts` | `SERIES_LABEL`, `NARROW_CHART_QUERY`, `FORECAST_LINES`, `FORECAST_LABEL`, `axisTitle`, `plotLayout`, `plotConfig`, `seriesColorway`, `seriesStyle`, `forecastStyle`, `uncertaintyBand`, `windowShape`, `unsampledShapes`, `meanSegment` |
+| `sceneTheme.ts` | `sceneTheme`, `toThreeHex`, `bmagColor`, `heatColor`, `fieldColor`, `normalizeRange`, `normalizeBmag`, `bmagGradientCss`, `heatGradientCss`, `fieldGradientCss` |
 | `components/` | `Panel`, `Stat`, `StatusPill`, `ProvenanceBadge`, `FixtureCheck`, `fixtureOutcome`, `SegmentedControl`, `Callout`, `Alert`, `Icon`, `Unit` |
 
 Types are exported beside them: the token and theme types, `Provenance`, `FixtureCheckData`,
-`FixtureBasis`, `PlotLayout`, `PlotLayoutOverrides`, `PlotLayoutOptions`, `SeriesStyle`, `SceneTheme`,
-`IconName` and each component's `…Props`.
+`FixtureBasis`, `PlotLayout`, `PlotLayoutOverrides`, `PlotLayoutOptions`, `SeriesStyle`, `ForecastLine`,
+`SceneTheme`, `IconName` and each component's `…Props`. `ProvenanceKind` includes `model` (D-027).
 
 ## 12. Token reference
 
@@ -523,6 +669,9 @@ rewrites the tables between the two markers, and `designDoc.test.ts` fails if th
 | `--lab-status-prd-reported-fg` | `#6c5715` | `#dcc78c` |
 | `--lab-status-prd-reported-bg` | `#f7f2e3` | `#241f12` |
 | `--lab-status-prd-reported-border` | `#96803a` | `#8f7c40` |
+| `--lab-status-model-fg` | `#8c2b74` | `#eba0de` |
+| `--lab-status-model-bg` | `#f9ecf4` | `#2a1427` |
+| `--lab-status-model-border` | `#a85e96` | `#a0609a` |
 | `--lab-status-unverified-fg` | `#56686f` | `#a9b8be` |
 | `--lab-status-unverified-bg` | `#f6f8f9` | `#141f24` |
 | `--lab-status-unverified-border` | `#73868e` | `#62777f` |
@@ -565,6 +714,7 @@ rewrites the tables between the two markers, and `designDoc.test.ts` fails if th
 | `--lab-plot-unsampled` | `#c9d2d6` | `#3a4a51` |
 | `--lab-plot-unsampled-alpha` | `0.35` | `0.35` |
 | `--lab-plot-band-alpha` | `0.18` | `0.22` |
+| `--lab-plot-predicted` | `#c85a0a` | `#f08a3c` |
 | `--lab-scene-background` | `#ffffff` | `#111b20` |
 | `--lab-scene-surface-line` | `#b8c6cc` | `#3c4d55` |
 | `--lab-scene-surface-fill` | `#eef2f4` | `#162228` |
@@ -582,6 +732,26 @@ rewrites the tables between the two markers, and `designDoc.test.ts` fails if th
 | `--lab-bmag-6` | `#608338` | `#a7d895` |
 | `--lab-bmag-7` | `#888528` | `#d3e18e` |
 | `--lab-bmag-8` | `#b28a29` | `#ffe891` |
+| `--lab-scene-diverter-fill` | `#14181a` | `#030506` |
+| `--lab-scene-diverter-edge` | `#ffffff` | `#d5dee2` |
+| `--lab-heat-0` | `#fcdf00` | `#fcdf00` |
+| `--lab-heat-1` | `#fdc300` | `#ffce39` |
+| `--lab-heat-2` | `#f8ab00` | `#ffb938` |
+| `--lab-heat-3` | `#f09500` | `#ffa52b` |
+| `--lab-heat-4` | `#e68000` | `#ff921a` |
+| `--lab-heat-5` | `#dc6800` | `#ff7c02` |
+| `--lab-heat-6` | `#d24f00` | `#fd5f00` |
+| `--lab-heat-7` | `#c82d00` | `#fe3400` |
+| `--lab-heat-8` | `#bc0013` | `#fa001d` |
+| `--lab-field-0` | `#00a676` | `#76ffd0` |
+| `--lab-field-1` | `#059b87` | `#40f5de` |
+| `--lab-field-2` | `#0c9091` | `#29e6ea` |
+| `--lab-field-3` | `#0a8497` | `#33d5f1` |
+| `--lab-field-4` | `#06779a` | `#1dc3f8` |
+| `--lab-field-5` | `#0066a2` | `#27affe` |
+| `--lab-field-6` | `#0351a9` | `#3f99fe` |
+| `--lab-field-7` | `#0037ab` | `#3e7fff` |
+| `--lab-field-8` | `#1811a2` | `#4766fe` |
 
 ### Scale tokens (the same in both themes)
 

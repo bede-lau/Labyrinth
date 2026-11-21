@@ -21,6 +21,6 @@ Frontend:
 | B6–B7 | `renderer/src/features/budget/*.test.tsx` |
 
 ## Status
-DONE
+IN-PROGRESS
 
-Verified at commit 3faed3a: tasks/04-budget/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).
+Reopened 2026-11-21 by the D-027 integration: the new provenance kind `model` (common.schema.json) widened `ProvenanceKind`, so the B7 test's kind-to-label map in `renderer/src/features/budget/BudgetView.test.tsx` gained `model: 'Model'` (typecheck failed without it; no production code changed, `budget.json` unchanged). Needs re-verification of the owned files. Previously DONE: verified at commit 3faed3a (tasks/04-budget/VERIFY.md, `Verdict: PASS`, external verifier, 2026-11-20).

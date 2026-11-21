@@ -4,6 +4,25 @@
 .fc-badges { display: flex; flex-wrap: wrap; gap: var(--lab-space-2); align-items: center; justify-content: flex-end; }
 .fc-muted { color: var(--lab-color-text-muted); }
 
+/* DZ-9 / DS-4: the replay comes first, so its first line flags a PRD score mismatch and points at the final scores. */
+.fc-pointer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lab-space-1) var(--lab-space-2);
+  margin-bottom: var(--lab-space-3);
+  font-size: var(--lab-font-size-sm);
+  line-height: var(--lab-line-height-sm);
+  color: var(--lab-color-text);
+}
+.fc-pointer__flag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lab-space-1);
+  color: var(--lab-status-mismatch-fg);
+  font-weight: var(--lab-font-weight-semibold);
+}
+
 .fc-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--lab-space-3); }
 .fc-stages { display: flex; gap: var(--lab-space-1); list-style: none; margin: 0; padding: 0; flex-wrap: wrap; }
 .fc-stages li {
@@ -57,7 +76,21 @@
 
 .fc-live { margin-top: var(--lab-space-2); font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text-muted); }
 
-.fc-current, .fc-mae {
+/* F7: the chart of predicted vs actual heat flux is the primary display. */
+.fc-chart-block { display: flex; flex-direction: column; gap: var(--lab-space-2); margin-top: var(--lab-space-4); min-width: 0; }
+.fc-chart-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--lab-space-2); }
+.fc-chart-head__label {
+  font-size: var(--lab-font-size-xs);
+  line-height: var(--lab-line-height-xs);
+  font-weight: var(--lab-font-weight-medium);
+  color: var(--lab-color-text-muted);
+}
+.fc-figure { display: flex; flex-direction: column; gap: var(--lab-space-2); min-width: 0; margin: 0; }
+.fc-chart { width: 100%; min-height: 320px; }
+/* position: relative keeps the spoken copy of a typeset unit (visually hidden, absolutely positioned) inside the caption. */
+.fc-figure__summary { position: relative; font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-subtle); max-width: 90ch; }
+
+.fc-current, .fc-mae, .fc-stats {
   display: flex;
   flex-wrap: wrap;
   gap: var(--lab-space-4) var(--lab-space-8);
@@ -66,7 +99,10 @@
   border: 1px solid var(--lab-color-border);
   border-radius: var(--lab-radius-md);
 }
-.fc-mae { background: var(--lab-color-surface-sunken); }
+.fc-mae, .fc-stats { background: var(--lab-color-surface-sunken); }
+/* F8: the error statistics of the forecaster drawn as Predicted. */
+.fc-stats__def { margin-top: var(--lab-space-2); font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-muted); max-width: 90ch; }
+.fc-range__to { font-size: var(--lab-font-size-sm); color: var(--lab-color-text-muted); }
 .fc-hidden { display: flex; flex-direction: column; gap: var(--lab-space-0-5); }
 .fc-hidden__label { font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-muted); }
 .fc-hidden__value {
@@ -76,9 +112,20 @@
   font-style: italic;
 }
 
+/* F7: the steps table under a disclosure (exact values; keyboard and screen-reader users). */
+.fc-steps { margin-top: var(--lab-space-4); }
+.fc-steps > summary {
+  cursor: pointer;
+  width: max-content;
+  min-height: 24px;
+  line-height: 24px;
+  font-size: var(--lab-font-size-sm);
+  font-weight: var(--lab-font-weight-medium);
+  color: var(--lab-color-accent-text);
+}
 /* position: relative keeps the visually hidden caption inside the scrolling well (it is absolutely
    positioned and would otherwise widen the page on narrow screens). */
-.fc-table-wrap { position: relative; overflow-x: auto; margin-top: var(--lab-space-4); border: 1px solid var(--lab-color-border); border-radius: var(--lab-radius-md); }
+.fc-table-wrap { position: relative; overflow-x: auto; margin-top: var(--lab-space-2); border: 1px solid var(--lab-color-border); border-radius: var(--lab-radius-md); }
 .fc-table { width: 100%; border-collapse: collapse; font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); }
 .fc-table th, .fc-table td { padding: var(--lab-space-1) var(--lab-space-3); border-bottom: 1px solid var(--lab-color-border); text-align: left; white-space: nowrap; }
 .fc-table thead th {

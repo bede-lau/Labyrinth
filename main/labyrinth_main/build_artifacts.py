@@ -17,7 +17,7 @@ from . import __version__
 from .common.io import write_json
 from .common.paths import ARTIFACTS
 
-FEATURES = ["geometry", "transport", "forecast", "budget", "spatial"]
+FEATURES = ["geometry", "transport", "forecast", "budget", "spatial", "heatfield"]
 
 
 def main(argv: list[str] | None = None) -> int:

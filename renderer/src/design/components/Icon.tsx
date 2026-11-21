@@ -16,6 +16,7 @@ export type IconName =
   | 'archive'
   | 'derived'
   | 'quote'
+  | 'model'
   | 'info'
   | 'warn'
   | 'chevron'
@@ -41,6 +42,8 @@ const PATHS: Record<IconName, { stroke?: string[]; fill?: string[]; circle?: [nu
   archive: { stroke: ['M2.5 3.5h11v3h-11z', 'M3.5 6.5v6h9v-6', 'M6.5 9h3'] },
   derived: { stroke: ['M11.5 3.5h-7l4 4.5-4 4.5h7'] },
   quote: { fill: ['M3 7.5h3.25V11H3zM9.25 7.5h3.25V11H9.25z'], stroke: ['M3.5 7.75c0-1.9.7-3 2.4-3.5', 'M9.75 7.75c0-1.9.7-3 2.4-3.5'] },
+  // An italic function sign ƒ: a number produced by a model (D-027), beside the Σ of `derived`.
+  model: { stroke: ['M11.8 3.3c-.5-.45-1.15-.6-1.8-.5-1 .15-1.55.95-1.75 2L6.9 11.2c-.2 1.05-.75 1.85-1.75 2-.65.1-1.3-.05-1.8-.5', 'M5.4 6.6h5.2'] },
   info: { circle: [[8, 8, 6, false], [8, 5.1, 0.9, true]], stroke: ['M8 7.25v4'] },
   warn: { stroke: ['M8 2.75l5.75 10H2.25z', 'M8 6.5v3'], circle: [[8, 11.2, 0.8, true]] },
   chevron: { stroke: ['M6 4l4 4-4 4'] },

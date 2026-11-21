@@ -60,6 +60,14 @@ describe('the pairs that carry the fix round are in the list', () => {
       'accentHover on status billing-risk bg',
       'accentHover on callout blocked',
       'accentHover on surface',
+      // D6 (D-027, D-026): the model pill's dashed outline, the Heat & field ramps, the diverter, the Predicted line.
+      'dashed model border vs its own tint',
+      'dashed model border vs surfaceHover',
+      'status model fg on its bg',
+      'heat fill outline (boundary) on scene',
+      'field stop 0 on scene',
+      'diverter edge vs diverter fill',
+      'forecast predicted line on plot',
     ])
       expect(names, n).toContain(n);
     expect(new Set(names).size, 'pair names are unique').toBe(names.length);

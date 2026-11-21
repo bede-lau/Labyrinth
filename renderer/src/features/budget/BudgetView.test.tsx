@@ -338,7 +338,7 @@ test('B6 a live guard estimate that differs from the artifact guard plan marks t
 test('B7 scenario cards show headline, derivation and interpretation; PRD-reported vs derived; ranges never midpoints', async () => {
   serve(null);
   render(<BudgetView livePollMs={60_000} />);
-  const KIND = { 'prd-reported': 'PRD-reported', derived: 'Derived', archive: 'Archive', live: 'Recorded run', rehearsal: 'Rehearsal' } as const;
+  const KIND = { 'prd-reported': 'PRD-reported', derived: 'Derived', archive: 'Archive', live: 'Recorded run', rehearsal: 'Rehearsal', model: 'Model' } as const;
   const OUTCOME = { passed: 'Verified', failed: 'Failed', blocked: 'Blocked', 'not-applicable': 'Not applicable' } as const;
   for (const s of ARTIFACT.scenarios) {
     const card = await screen.findByRole('article', { name: `${s.title} scenario` });

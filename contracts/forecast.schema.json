@@ -3,7 +3,7 @@
   "$id": "https://labyrinth.local/contracts/forecast.schema.json",
   "title": "Forecast replay: predict next 50-unit local mean, reveal, update, repeat",
   "type": "object",
-  "required": ["schemaVersion", "traceId", "initWindow", "windowWidth", "method", "steps", "mae", "fixtures", "provenance"],
+  "required": ["schemaVersion", "traceId", "initWindow", "windowWidth", "method", "steps", "mae", "errorStats", "fixtures", "provenance"],
   "additionalProperties": false,
   "properties": {
     "schemaVersion": { "const": 1 },
@@ -33,7 +33,56 @@
       "additionalProperties": false,
       "properties": { "persistence": { "type": "number" }, "frozen": { "type": "number" } }
     },
+    "errorStats": {
+      "description": "D-026: error statistics of each forecaster over the scored steps. e_k = forecast_k - observed_k (predicted minus actual) for every step k. Recomputable from `steps`.",
+      "type": "object",
+      "required": ["definition", "persistence", "frozen"],
+      "additionalProperties": false,
+      "properties": {
+        "definition": { "type": "string", "description": "Exact definition of e_k, MSE, RMSE and both ranges." },
+        "persistence": { "$ref": "#/$defs/errorStat" },
+        "frozen": { "$ref": "#/$defs/errorStat" }
+      }
+    },
     "fixtures": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/fixtureCheck" } },
     "provenance": { "$ref": "common.schema.json#/$defs/provenance" }
+  },
+  "$defs": {
+    "errorStat": {
+      "description": "Statistics over n steps. With n = 0 (no steps) every value is null.",
+      "type": "object",
+      "required": ["n", "mse", "rmse", "squaredErrorRange", "errorRange"],
+      "additionalProperties": false,
+      "properties": {
+        "n": { "type": "integer", "minimum": 0 },
+        "mse": { "type": ["number", "null"], "minimum": 0, "description": "Mean of e_k^2 over the n steps (Q_gB,i^2)." },
+        "rmse": { "type": ["number", "null"], "minimum": 0, "description": "sqrt(mse) (Q_gB,i)." },
+        "squaredErrorRange": {
+          "description": "The range of MSE: [min, max] of the per-step squared errors e_k^2 that the MSE averages (Q_gB,i^2); null when n = 0.",
+          "oneOf": [{ "$ref": "common.schema.json#/$defs/window" }, { "type": "null" }]
+        },
+        "errorRange": {
+          "description": "The range of errors: [min, max] of the signed per-step errors e_k = predicted - actual (Q_gB,i); null when n = 0.",
+          "oneOf": [{ "$ref": "common.schema.json#/$defs/window" }, { "type": "null" }]
+        }
+      },
+      "if": { "properties": { "n": { "const": 0 } } },
+      "then": {
+        "properties": {
+          "mse": { "const": null },
+          "rmse": { "const": null },
+          "squaredErrorRange": { "const": null },
+          "errorRange": { "const": null }
+        }
+      },
+      "else": {
+        "properties": {
+          "mse": { "type": "number" },
+          "rmse": { "type": "number" },
+          "squaredErrorRange": { "$ref": "common.schema.json#/$defs/window" },
+          "errorRange": { "$ref": "common.schema.json#/$defs/window" }
+        }
+      }
+    }
   }
 }

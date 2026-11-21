@@ -34,12 +34,14 @@ All have `"schemaVersion": 1`; `fetchArtifact`/`useArtifact` reject anything els
 |---|---|---|---|---|---|
 | geometry | 260 KB | `geometry.schema.json` | `features/geometry` | `features/geometry` | equilibrium, surface, tubes, validation{stellaReference, float64Reference, acceptance129}, provenance |
 | transport | 58 KB | `transport.schema.json` | `features/transport` | `features/transport` | units, traces, windows, triangular, reducedModalRun, unitConversion, fixtures |
-| forecast | 6 KB | `forecast.schema.json` | `features/forecast` | `features/forecast` | traceId, initWindow, windowWidth, method, steps, mae, fixtures, provenance |
+| forecast | 6 KB | `forecast.schema.json` | `features/forecast` | `features/forecast` | traceId, initWindow, windowWidth, method, steps, mae, errorStats, fixtures, provenance |
 | budget | 9 KB | `budget.schema.json` | `features/budget` | `features/budget` | ceilingUsd, postedUsd, plannedUsd, remainingAfterPlanUsd, scenarios, fixtures, guardPlan |
 | spatial | 2.5 KB | `spatial.schema.json` | `features/spatial` | `features/spatial` | geometry, code, nPlanes, ranks, exchanges, fieldSolve, runs, timing, independenceNote, fixtures, provenance |
+| heatfield | ≈ 970 KB (test cap 1.5 MB) | `heatfield.schema.json` | `features/heatfield` | `features/heatfield` | equilibrium, grid, surfaces, fieldLines, diverters, model{parameters, probes, golden, …}, geometryProvenance, provenance |
 
 ### Shared shapes (`contracts/common.schema.json`)
-- **`provenance`**: `kind` ∈ `archive | derived | prd-reported | live | rehearsal`, `solverRevision`, `units`,
+- **`provenance`**: `kind` ∈ `archive | derived | prd-reported | live | rehearsal | model` (`model`, D-027: illustrative model output, parameters
+  chosen for illustration, not fitted, not a W7-X simulation; drawn dashed like PRD-reported), `solverRevision`, `units`,
   `coverage{description,tStart,tEnd}`, `runtime`, `verification{outcome,details}`, `sources[]` (label,url,sha256,path).
   `verification.outcome` ∈ `passed | failed | blocked | not-applicable`. **Show it next to every number.**
 - **`fixtureCheck`** (D-023): `{id, label, claimed, claimedRange?, computed, printedDecimals, matches, basis?, note?}`.
@@ -76,6 +78,16 @@ All have `"schemaVersion": 1`; `fetchArtifact`/`useArtifact` reject anything els
     `plannedUsd` stays 21.83, the PRD's GPU-only plan: show both, labelled. When `/api/live/status` answers, compare its `budget.slotEstimateUsd`
     with `guardPlan.slotEstimateUsd` to the cent and say so when they differ.
 11. **`basis` comes from the fixture** (absent → data) in every view, never from a call-site list. Transport and forecast fixtures carry none.
+12. **forecast `errorStats`** (required, D-026): `definition`, `persistence` and `frozen`, each `{n, mse, rmse, squaredErrorRange, errorRange}` with
+    e_k = forecast − observed (predicted − actual) over the scored steps; "range of MSE" = [min, max] of e_k², "range of errors" = [min, max] of e_k
+    (the owner's words, interpreted in D-026 §2); all null exactly when n = 0 (schema if/then, D-028). The chart plots a value only once it is
+    predicted / revealed; the running statistics count a window at its Update.
+13. **heatfield** (D-027): flat arrays are φ-major (`c = j·nTheta + i`), periodic in both angles, each of length nTheta·nPhi (the consumer checks
+    lengths); `surfaces[0]` is the axis (ρ 0; its |B| varies with θ by up to 0.03 T, stella's extrapolation, D-028), the last is the LCFS (ρ 1); |B| is
+    in tesla (not B_ref). `geometryProvenance` (kind pinned to `derived`) covers surfaces, |B| and field lines; `provenance` (kind pinned to `model`)
+    covers every temperature, heat flux and tile temperature. Coil state at step n: schedule entry with the largest `fromStep` ≤ n. Diverters are the owner's
+    four schematic positions (`diverters.note`: W7-X has ten). The model is specified in `tasks/10-heat-field/MODEL.md`; the renderer port reads
+    every parameter and grid from the artifact and must reproduce `model.golden` to `relativeTolerance` (a renderer test).
 
 ---
 

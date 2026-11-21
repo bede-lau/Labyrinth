@@ -10,8 +10,10 @@ import { ProvenanceBadge } from './components/ProvenanceBadge';
 import { SegmentedControl } from './components/SegmentedControl';
 import { Stat } from './components/Stat';
 import { StatusPill } from './components/StatusPill';
+import { formatWindow } from './format';
 import {
   axisTitle,
+  forecastStyle,
   meanSegment,
   plotConfig,
   plotLayout,
@@ -19,10 +21,12 @@ import {
   uncertaintyBand,
   unsampledShapes,
   windowShape,
+  FORECAST_LINES,
   SERIES_LABEL,
+  type ForecastLine,
 } from './plotTheme';
-import { PALETTE_GATES, seriesMinDeltaE, type Vision } from './palette';
-import { bmagColor, bmagGradientCss, sceneTheme } from './sceneTheme';
+import { PALETTE_GATES, RAMP_SEPARATION_GATES, rampPairSeparation, rampSamples, seriesMinDeltaE, type RampId, type Vision } from './palette';
+import { bmagColor, bmagGradientCss, fieldGradientCss, heatGradientCss, sceneTheme } from './sceneTheme';
 import { STATUS_META } from './status';
 import { setThemePreference, useResolvedTheme, type ThemePreference } from './theme';
 import { SERIES_IDS, STATUS_KINDS, themes, typeScale, type ThemeName } from './tokens';
@@ -160,6 +164,109 @@ function SpecimenChart({ theme }: { theme: ThemeName }) {
   );
 }
 
+/**
+ * Synthetic specimen for the forecast chart's pair (DESIGN.md §6, D-026), shaped like the forecast view's data:
+ * eight 50-unit windows from t = 1500, Actual a noisy window mean, Predicted the persistence forecast (the
+ * previous window's Actual; the first from the window before 1500). Numbers are made up for styling review.
+ */
+export const FORECAST_SPECIMEN = (() => {
+  const r = rng(43);
+  const width = 50;
+  let level = 2.22;
+  let previous = 2.23;
+  const windows: { window: [number, number]; predicted: number; actual: number }[] = [];
+  for (let k = 0; k < 8; k++) {
+    level = 2.22 + 0.55 * (level - 2.22) + 0.2 * r();
+    const actual = Math.round(level * 1000) / 1000;
+    const a = 1500 + k * width;
+    windows.push({ window: [a, a + width], predicted: previous, actual });
+    previous = actual;
+  }
+  const sq = windows.map((w) => (w.predicted - w.actual) ** 2);
+  const mse = sq.reduce((s, e) => s + e, 0) / sq.length;
+  return { windows, span: [1500, 1500 + 8 * width] as [number, number], mse, rmse: Math.sqrt(mse) };
+})();
+
+/**
+ * One forecast line as the forecast view draws it: each window's value held flat across the window (a step,
+ * risers where windows meet), with the line's marker at the window's midpoint only.
+ */
+function forecastSpecimenTrace(line: ForecastLine, theme: ThemeName) {
+  const s = forecastStyle(line, theme);
+  const x: number[] = [];
+  const y: number[] = [];
+  const mid: boolean[] = [];
+  const window: string[] = [];
+  for (const w of FORECAST_SPECIMEN.windows) {
+    const [a, b] = w.window;
+    for (const [t, isMid] of [
+      [a, false],
+      [(a + b) / 2, true],
+      [b, false],
+    ] as const) {
+      x.push(t);
+      y.push(w[line]);
+      mid.push(isMid);
+      window.push(formatWindow(w.window));
+    }
+  }
+  return {
+    type: 'scatter',
+    mode: 'lines+markers',
+    name: s.name,
+    x,
+    y,
+    line: s.line,
+    // Per-point sizes: Plotly would default a sized marker to a bubble chart's 0.7 opacity, so it is explicit.
+    marker: {
+      ...s.marker,
+      opacity: 1,
+      size: mid.map((m) => (m ? s.marker.size : 0)),
+      line: { ...s.marker.line, width: mid.map((m) => (m ? s.marker.line.width : 0)) },
+    },
+    customdata: window,
+    hovertemplate: `${s.name}, t %{customdata}: %{y:.3f}<extra></extra>`,
+    showlegend: true,
+  };
+}
+
+function SpecimenForecastChart({ theme }: { theme: ThemeName }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    // @ts-ignore — plotly.js-dist-min ships no type declarations.
+    import('plotly.js-dist-min')
+      .then((mod: { default?: unknown }) => {
+        if (cancelled || !ref.current) return;
+        const Plotly = (mod.default ?? mod) as {
+          react: (el: HTMLElement, data: unknown[], layout: unknown, config: unknown) => Promise<unknown>;
+        };
+        const data = FORECAST_LINES.map((line) => forecastSpecimenTrace(line, theme));
+        const layout = plotLayout(theme, {
+          height: 260,
+          showlegend: true,
+          xaxis: { title: { text: axisTitle('Time t', 'a/v_{th,i}') }, range: FORECAST_SPECIMEN.span },
+          yaxis: { title: { text: axisTitle('Ion heat flux Q_i', 'Q_{gB,i}') }, tickformat: '.2f' },
+        });
+        return Plotly.react(ref.current, data, layout, plotConfig());
+      })
+      .catch((e: unknown) => setError(String(e)));
+    return () => {
+      cancelled = true;
+    };
+  }, [theme]);
+  return (
+    <figure
+      className="gal-figure"
+      aria-label="Specimen forecast chart: synthetic Predicted (dashed, downward triangles) and Actual (solid, circles) ion heat flux, each held over its 50-unit window"
+    >
+      <div ref={ref} className="gal-chart gal-chart--forecast" />
+      {error && <Callout tone="warn" title="Chart failed to load">{error}</Callout>}
+    </figure>
+  );
+}
+
 /** The specimen surface and the camera that frames it on a 2:1 canvas. */
 export const SPECIMEN = { majorRadius: 5.4, minorRadius: 0.75, fovDeg: 32, camera: [0, -13.5, 15.5] } as const;
 
@@ -258,6 +365,94 @@ function Swatch({ name, value, onBg }: { name: string; value: string; onBg?: str
       <span className="gal-swatch__name">{name}</span>
       <span className="gal-swatch__hex lab-mono">{value}</span>
     </div>
+  );
+}
+
+/** The three colormaps as each viewer sees them (D6): rows of simulated bars, not a table. */
+const RAMP_ROWS: { id: RampId; label: string }[] = [
+  { id: 'heat', label: 'Temperature' },
+  { id: 'field', label: '|B| (Heat & field)' },
+  { id: 'bmag', label: '|B| (Locate the tubes)' },
+];
+const RAMP_VISIONS: { vision: 'normal' | 'deuteranopia' | 'protanopia'; label: string }[] = [
+  { vision: 'normal', label: 'Normal vision' },
+  { vision: 'deuteranopia', label: 'Deuteranopia' },
+  { vision: 'protanopia', label: 'Protanopia' },
+];
+
+/** A colormap drawn as one bar, as seen under `vision` (the colours are token values, or simulations of them). */
+function rampBackground(id: RampId, theme: ThemeName, vision: (typeof RAMP_VISIONS)[number]['vision']): string {
+  const colours = rampSamples(id, theme, 17).map((c) => (vision === 'normal' ? c : simulateHex(c, vision)));
+  return `linear-gradient(to right, ${colours.join(', ')})`;
+}
+
+function HeatFieldSpecimen({ theme }: { theme: ThemeName }) {
+  const st = sceneTheme(theme);
+  const separation = useMemo(
+    () => ({
+      heat: rampPairSeparation('field/heat', theme),
+      bmag: rampPairSeparation('field/bmag', theme),
+      heatBmag: rampPairSeparation('heat/bmag', theme),
+    }),
+    [theme],
+  );
+  // The plate on the grounds where it is hardest to see: the scene, and the darkest stop of each ramp.
+  const grounds = [
+    { name: 'scene', colour: st.background },
+    { name: 'hottest', colour: st.heat[st.heat.length - 1] as string },
+    { name: 'strongest |B|', colour: st.field[st.field.length - 1] as string },
+    { name: 'coldest', colour: st.heat[0] as string },
+  ];
+  return (
+    <>
+      <div className="gal-colorbar" data-ramp="heat">
+        <span className="gal-colorbar__label gal-colorbar__label--pill">
+          Temperature (keV) <StatusPill status="model" />
+        </span>
+        <span className="gal-colorbar__bar" style={{ background: heatGradientCss(theme) }} />
+        <span className="gal-colorbar__ticks">
+          <span>coldest</span>
+          <span>hottest</span>
+        </span>
+      </div>
+      <div className="gal-colorbar" data-ramp="field">
+        <span className="gal-colorbar__label">|B| (T)</span>
+        <span className="gal-colorbar__bar" style={{ background: fieldGradientCss(theme) }} />
+        <span className="gal-colorbar__ticks">
+          <span>weakest</span>
+          <span>strongest</span>
+        </span>
+      </div>
+      <div className="gal-ramps" role="group" aria-label="The three colormaps under simulated colour-vision deficiency">
+        {RAMP_VISIONS.map((v) => (
+          <div key={v.vision} className="gal-ramps__vision">
+            <p className="gal-ramps__title">{v.label}</p>
+            {RAMP_ROWS.map((r) => (
+              <div key={r.id} className="gal-ramps__row" data-ramp={r.id} data-vision={v.vision}>
+                <span className="gal-ramps__name">{r.label}</span>
+                <span className="gal-ramps__bar" style={{ background: rampBackground(r.id, theme, v.vision) }} />
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <p className="gal-ramps__measure lab-num">
+        Closest approach, worst of normal vision and simulated protanopia / deuteranopia: field vs temperature{' '}
+        <strong data-measure="field/heat">{separation.heat.toFixed(1)}</strong> ΔE00 (gate ≥ {RAMP_SEPARATION_GATES['field/heat']}); field
+        vs Locate the tubes’ |B| <strong data-measure="field/bmag">{separation.bmag.toFixed(1)}</strong> ΔE00 (gate ≥{' '}
+        {RAMP_SEPARATION_GATES['field/bmag']}). Normal vision: temperature vs Locate the tubes’ |B|{' '}
+        <strong data-measure="heat/bmag">{separation.heatBmag.toFixed(1)}</strong> ΔE00 (gate ≥ {RAMP_SEPARATION_GATES['heat/bmag']}; they
+        never share a view).
+      </p>
+      <ul className="gal-diverters" aria-label="Diverter plate on its hardest grounds">
+        {grounds.map((g) => (
+          <li key={g.name} className="gal-diverters__ground" style={{ background: g.colour }}>
+            <span className="gal-diverters__plate" style={{ background: st.diverter.fill, borderColor: st.diverter.edge }} />
+            <span className="lab-visually-hidden">Diverter plate on {g.name}</span>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
@@ -393,6 +588,19 @@ export default function Gallery() {
           </div>
         </Panel>
 
+        <Panel
+          eyebrow="Forecast"
+          title="Predicted vs actual heat flux"
+          subtitle="Each window's forecast and its archived window mean, held over the window. Actual keeps stella's colour, solid line and circle; Predicted has its own token, a dashed line and a downward triangle."
+          footer={'Specimen data. Lines from forecastStyle(line, theme); legend names from FORECAST_LABEL. Error e = Predicted − Actual per window; the statistics beside the chart are Stats.'}
+        >
+          <div className="gal-stats">
+            <Stat label="MSE" value={FORECAST_SPECIMEN.mse} decimals={4} unit="Q_{gB,i}²" window={FORECAST_SPECIMEN.span} note="8 windows (specimen)" />
+            <Stat label="RMSE" value={FORECAST_SPECIMEN.rmse} decimals={3} unit="Q_{gB,i}" window={FORECAST_SPECIMEN.span} note="√MSE" />
+          </div>
+          <SpecimenForecastChart theme={theme} />
+        </Panel>
+
         <Panel eyebrow="Locate the tubes" title="Field line coloured by |B|" subtitle="Gray = sampled surface context; colour = data">
           <div className="gal-row">
             <SegmentedControl
@@ -414,6 +622,15 @@ export default function Gallery() {
               <span>high</span>
             </span>
           </div>
+        </Panel>
+
+        <Panel
+          eyebrow="Heat & field"
+          title="Temperature and |B| colormaps, diverter plates"
+          subtitle="The owner’s rules: red hottest → yellow coldest; dark blue strongest → green weakest. Specimen colour bars with no data; every model number carries the Model pill."
+          footer="Diverter plates: near-black fill with an edge, shown on the scene and on the darkest and lightest ramp colours."
+        >
+          <HeatFieldSpecimen theme={theme} />
         </Panel>
 
         <Panel

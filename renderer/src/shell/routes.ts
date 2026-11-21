@@ -1,14 +1,14 @@
-// Hash routes for the six views. `#gallery` is not a route: main.tsx handles it at load time.
+// Hash routes for the seven views. `#gallery` is not a route: main.tsx handles it at load time.
 import type { ArtifactId } from '../lib/artifacts';
 
-export type RouteId = 'locate' | 'advance' | 'transport' | 'forecast' | 'spatial' | 'budget';
+export type RouteId = 'locate' | 'advance' | 'transport' | 'forecast' | 'spatial' | 'budget' | 'heat';
 
 export interface RouteDef {
   id: RouteId;
-  /** Nav label, as named in the PRD. */
+  /** Nav label, as named in the PRD (Heat & field: the owner's requirement of 2026-11-21, D-027). */
   label: string;
-  /** How the view's data arrives, shown next to the label. */
-  source: 'replay' | 'live';
+  /** How the view's data arrives, shown next to the label. `model` = an illustrative model running in the browser. */
+  source: 'replay' | 'live' | 'model';
   /** Files the view reads, named in error panels if the view fails. */
   files: string[];
 }
@@ -23,7 +23,14 @@ export const ROUTES: readonly RouteDef[] = [
   { id: 'forecast', label: 'Forecast replay', source: 'replay', files: [artifactFile('forecast')] },
   { id: 'spatial', label: 'Spatial parallelism', source: 'replay', files: [artifactFile('spatial')] },
   { id: 'budget', label: 'Budget', source: 'replay', files: [artifactFile('budget')] },
+  // D-027: real VMEC geometry and |B| with an illustrative edge heat model computed in the browser.
+  { id: 'heat', label: 'Heat & field', source: 'model', files: [artifactFile('heatfield')] },
 ];
+
+/** The nav's source line for a route. */
+export function sourceLabel(source: RouteDef['source']): string {
+  return source === 'live' ? 'GX run · gated' : source === 'model' ? 'illustrative model' : 'replay';
+}
 
 export const DEFAULT_ROUTE: RouteId = 'locate';
 

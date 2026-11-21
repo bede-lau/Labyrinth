@@ -19,6 +19,7 @@ export const STATUS_KINDS = [
   'archive',
   'derived',
   'prd-reported',
+  'model',
   'unverified',
   'passed',
   'failed',
@@ -41,8 +42,8 @@ export interface StatusColors {
   bg: string;
   /**
    * Outline of the pill. A hairline for most kinds (the icon and text carry the meaning). For the
-   * kinds drawn DASHED (prd-reported, unverified) the dash itself means "not backed by data in
-   * this repo", so those two are ≥ 3:1 against every surface and against their own tint. The one
+   * kinds drawn DASHED (prd-reported, model, unverified) the dash itself means "not backed by data
+   * in this repo", so those are ≥ 3:1 against every surface and against their own tint. The one
    * OUTLINED kind (billing-risk) draws it in its text colour, held to the same 3:1.
    */
   border: string;
@@ -100,6 +101,11 @@ export interface PlotTokens {
   unsampledAlpha: number;
   /** Opacity applied to a series colour for its ±1σ sampling-uncertainty band. */
   bandAlpha: number;
+  /**
+   * The forecast chart's "Predicted" line (D-026). Its partner "Actual" is the archived stella trace
+   * and keeps `series.stella`. Validated against it in palette.test.ts; ≥ 3:1 on the plot.
+   */
+  predicted: string;
 }
 
 export interface SceneTokens {
@@ -111,13 +117,37 @@ export interface SceneTokens {
   surfaceOpacity: number;
   /** Gray = unsampled regions of the field line or surface. */
   unsampled: string;
-  /** Cross-section inset: plasma boundary (dashed) and sampled surface. */
+  /**
+   * Plasma boundary: the dashed boundary of the Locate the tubes cross-section inset, and in Heat & field
+   * the outline round every temperature fill (the LCFS silhouette in 3D, the LCFS in the cross-section).
+   * ≥ 3:1 on `background` (contrastPairs.ts).
+   */
   boundary: string;
   sampledSurface: string;
   /** Marker outline so start/centre/end glyphs read on any line colour. */
   markerOutline: string;
-  /** |B| colormap stops (low -> high), perceptually ordered, CVD-safe, ≥ 3:1 on `background`. */
+  /** |B| colormap stops (low -> high), perceptually ordered, CVD-safe, ≥ 3:1 on `background`. Locate the tubes. */
   bmag: readonly string[];
+  /**
+   * Schematic diverter plates in Heat & field (D-027): black as the owner drew them. The fill is
+   * near-black in both themes; the edge keeps the plate visible where the fill is not (the dark
+   * scene background, the darkest ramp colours). ramps.test.ts: on every ground, fill or edge ≥ 3:1.
+   */
+  diverterFill: string;
+  diverterEdge: string;
+  /**
+   * Temperature colormap stops, COLDEST -> HOTTEST: yellow -> orange -> red (the owner's rule,
+   * D-027). Lightness falls monotonically (yellow lightest, red darkest). A FILL ramp (surfaces and
+   * cross-section cells, never lines): every stop ≥ 20 ΔE00 off `background`, and the filled shape is
+   * outlined in `boundary` (≥ 3:1 on `background`), which carries its edge where a pale stop meets the
+   * scene (ramps.test.ts, DESIGN.md §7).
+   */
+  heat: readonly string[];
+  /**
+   * |B| colormap for Heat & field, WEAKEST -> STRONGEST: green -> dark blue (the owner's rule,
+   * D-027). Lightness falls monotonically; kept apart from `heat` and from `bmag` (ramps.test.ts).
+   */
+  field: readonly string[];
 }
 
 export interface ThemeTokens {
@@ -160,6 +190,7 @@ const light: ThemeTokens = {
     archive: { fg: '#2c5674', bg: '#e8f0f6', border: '#bcd0e0' },
     derived: { fg: '#086a6b', bg: '#e2f1f0', border: '#a9d4d2' },
     'prd-reported': { fg: '#6c5715', bg: '#f7f2e3', border: '#96803a' },
+    model: { fg: '#8c2b74', bg: '#f9ecf4', border: '#a85e96' },
     unverified: { fg: '#56686f', bg: '#f6f8f9', border: '#73868e' },
     passed: { fg: '#1d6a39', bg: '#e5f3e9', border: '#a3d2b1' },
     failed: { fg: '#b3261e', bg: '#fcebea', border: '#efb0aa' },
@@ -192,7 +223,11 @@ const light: ThemeTokens = {
     unsampled: '#c9d2d6',
     unsampledAlpha: 0.35,
     bandAlpha: 0.18,
+    predicted: '#c85a0a',
   },
+  // Ramps built in OKLCH (ramps.test.ts holds the gates; DESIGN.md §7 says why). The field ramp also
+  // colours field lines, so every stop stays ≥ 3:1 on white (its green is a jade). The heat ramp is a
+  // fill outlined in `boundary`, so its cold end can be the true yellow the owner asked for.
   scene: {
     background: '#ffffff',
     surfaceLine: '#b8c6cc',
@@ -203,6 +238,10 @@ const light: ThemeTokens = {
     sampledSurface: '#6a939a',
     markerOutline: '#ffffff',
     bmag: ['#182b58', '#003d63', '#004f67', '#006064', '#006f5a', '#2f7b4a', '#608338', '#888528', '#b28a29'],
+    diverterFill: '#14181a',
+    diverterEdge: '#ffffff',
+    heat: ['#fcdf00', '#fdc300', '#f8ab00', '#f09500', '#e68000', '#dc6800', '#d24f00', '#c82d00', '#bc0013'],
+    field: ['#00a676', '#059b87', '#0c9091', '#0a8497', '#06779a', '#0066a2', '#0351a9', '#0037ab', '#1811a2'],
   },
 };
 
@@ -237,6 +276,7 @@ const dark: ThemeTokens = {
     archive: { fg: '#97bfe2', bg: '#12212d', border: '#2e4d66' },
     derived: { fg: '#6fcfcb', bg: '#0f2627', border: '#245e5d' },
     'prd-reported': { fg: '#dcc78c', bg: '#241f12', border: '#8f7c40' },
+    model: { fg: '#eba0de', bg: '#2a1427', border: '#a0609a' },
     unverified: { fg: '#a9b8be', bg: '#141f24', border: '#62777f' },
     passed: { fg: '#74d394', bg: '#11281a', border: '#2b6a3f' },
     failed: { fg: '#ff8f85', bg: '#311513', border: '#7a2b25' },
@@ -267,7 +307,10 @@ const dark: ThemeTokens = {
     unsampled: '#3a4a51',
     unsampledAlpha: 0.35,
     bandAlpha: 0.22,
+    predicted: '#f08a3c',
   },
+  // On the dark scene the near-black diverter fill disappears into the background, so its light
+  // edge carries the outline there; on the yellow end of the heat map the fill carries it.
   scene: {
     background: '#111b20',
     surfaceLine: '#3c4d55',
@@ -278,6 +321,10 @@ const dark: ThemeTokens = {
     sampledSurface: '#6fa3aa',
     markerOutline: '#111b20',
     bmag: ['#546b9d', '#4980ab', '#4095b1', '#42aab0', '#58bcaa', '#7ccba0', '#a7d895', '#d3e18e', '#ffe891'],
+    diverterFill: '#030506',
+    diverterEdge: '#d5dee2',
+    heat: ['#fcdf00', '#ffce39', '#ffb938', '#ffa52b', '#ff921a', '#ff7c02', '#fd5f00', '#fe3400', '#fa001d'],
+    field: ['#76ffd0', '#40f5de', '#29e6ea', '#33d5f1', '#1dc3f8', '#27affe', '#3f99fe', '#3e7fff', '#4766fe'],
   },
 };
 
@@ -358,8 +405,9 @@ export function themeCssVars(theme: ThemeName): Record<string, string> {
   }
   for (const [k, v] of Object.entries(t.series)) out[`--lab-series-${kebab(k)}`] = v;
   for (const [k, v] of Object.entries(t.plot)) out[`--lab-plot-${kebab(k)}`] = String(v);
+  // Colormaps (bmag, heat, field) become one property per stop: --lab-bmag-0 … --lab-heat-8.
   for (const [k, v] of Object.entries(t.scene)) {
-    if (k === 'bmag') (v as readonly string[]).forEach((c, i) => (out[`--lab-bmag-${i}`] = c));
+    if (Array.isArray(v)) (v as readonly string[]).forEach((c, i) => (out[`--lab-${kebab(k)}-${i}`] = c));
     else out[`--lab-scene-${kebab(k)}`] = String(v);
   }
   return out;

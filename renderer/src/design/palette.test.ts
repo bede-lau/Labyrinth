@@ -13,8 +13,9 @@
 //   - Tritanopia (~0.01 % of people) is reported and held to a softer ≥ 8.
 //   Colour is also never the only channel: every series has its own dash and marker (plotTheme).
 // The gates and the measurement live in palette.ts so the gallery and DESIGN.md quote the same numbers.
-import { deltaE2000, hexToLab, simulateLab, type Lab } from './color';
+import { contrastRatio, deltaE2000, hexToLab, simulateLab, type Lab } from './color';
 import { PALETTE_CONDITIONS, PALETTE_GATES, minPairwiseDeltaE, seriesMinDeltaE } from './palette';
+import { FORECAST_LABEL, FORECAST_LINES, forecastStyle, seriesStyle } from './plotTheme';
 import { SERIES_IDS, THEMES, themes } from './tokens';
 
 const CVD_MIN = PALETTE_GATES.cvd;
@@ -60,6 +61,36 @@ describe.each(THEMES)('series palette — %s theme', (theme) => {
       const worst = Math.min(...conditions.filter((c) => c.vision === vision).map((c) => minPairwise(series, c.toLab).min));
       expect(seriesMinDeltaE(theme, vision)).toBe(worst);
     }
+  });
+});
+
+// D-026: the forecast chart draws two lines, Predicted and Actual. Actual is the archived stella
+// trace and keeps stella's colour; Predicted has its own token. The pair is held to the series gates.
+describe.each(THEMES)('D6 forecast lines Predicted / Actual (D-026) — %s theme', (theme) => {
+  const t = themes[theme];
+  const pair = { predicted: forecastStyle('predicted', theme).line.color, actual: forecastStyle('actual', theme).line.color };
+  test('two lines, named as the owner wrote them; Actual is the stella colour, Predicted its own token', () => {
+    expect([...FORECAST_LINES]).toEqual(['predicted', 'actual']);
+    expect(FORECAST_LINES.map((l) => forecastStyle(l, theme).name)).toEqual(['Predicted', 'Actual']);
+    expect(FORECAST_LABEL).toEqual({ predicted: 'Predicted', actual: 'Actual' });
+    expect(pair.actual).toBe(t.series.stella);
+    expect(pair.predicted).toBe(t.plot.predicted);
+    expect(Object.values(t.series)).not.toContain(t.plot.predicted);
+  });
+  test.each(conditions.map((c) => [c.name, c] as const))('ΔE00 between the two under %s meets the series gate (and the 40 DESIGN.md §6 quotes)', (_n, c) => {
+    const { min } = minPairwise(pair, c.toLab);
+    expect(min).toBeGreaterThanOrEqual(c.min);
+    expect(min).toBeGreaterThan(40);
+  });
+  test('both at least 3:1 on the plot; never colour alone: they differ in dash and in marker', () => {
+    for (const c of Object.values(pair)) expect(contrastRatio(c, t.plot.plot)).toBeGreaterThanOrEqual(3);
+    const p = forecastStyle('predicted', theme);
+    const a = forecastStyle('actual', theme);
+    expect(p.line.dash).not.toBe(a.line.dash);
+    expect(p.marker.symbol).not.toBe(a.marker.symbol);
+    // Actual draws like stella; Predicted's marker is one no series uses.
+    expect([a.line.dash, a.marker.symbol]).toEqual([seriesStyle('stella', theme).line.dash, seriesStyle('stella', theme).marker.symbol]);
+    expect(SERIES_IDS.map((s) => seriesStyle(s, theme).marker.symbol)).not.toContain(p.marker.symbol);
   });
 });
 

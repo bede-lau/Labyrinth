@@ -30,8 +30,8 @@
       "additionalProperties": false,
       "properties": {
         "kind": {
-          "enum": ["archive", "derived", "prd-reported", "live", "rehearsal"],
-          "description": "archive = read from a pinned upstream file; derived = computed by labyrinth_main from archives; prd-reported = number stated in PRD.md with no underlying data in this repo; live/rehearsal = produced by a GX worker."
+          "enum": ["archive", "derived", "prd-reported", "live", "rehearsal", "model"],
+          "description": "archive = read from a pinned upstream file; derived = computed by labyrinth_main from archives; prd-reported = number stated in PRD.md with no underlying data in this repo; live/rehearsal = produced by a GX worker; model = output of an illustrative reduced model whose parameters were chosen for illustration, not fitted to measurements - not a simulation of W7-X and not verified against one (D-027)."
         },
         "solverRevision": { "type": "string" },
         "units": { "type": "string" },

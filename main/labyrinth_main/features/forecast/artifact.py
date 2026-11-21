@@ -1,4 +1,4 @@
-"""forecast.json: persistence vs frozen forecast replay on the stella bean trace (F1–F3)."""
+"""forecast.json: persistence vs frozen forecast replay on the stella bean trace (F1–F3, F6 errorStats)."""
 from __future__ import annotations
 
 from labyrinth_main.common.provenance import fixture, provenance
@@ -104,6 +104,7 @@ def build() -> dict:
         "method": model.METHOD,
         "steps": res["steps"],
         "mae": res["mae"],
+        "errorStats": model.error_stats(res["steps"]),
         "fixtures": fixtures,
         "provenance": provenance(
             "derived",

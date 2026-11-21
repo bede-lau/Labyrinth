@@ -7,7 +7,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { NON_TEXT_MIN, TEXT_MIN, worstContrast } from './contrastPairs';
 import * as publicApi from './index';
-import { PALETTE_GATES, seriesMinDeltaE } from './palette';
+import { PALETTE_GATES, RAMP_CONDITIONS, RAMP_SEPARATION_GATES, rampPairSeparation, seriesMinDeltaE } from './palette';
 import * as plotThemeModule from './plotTheme';
 import * as sceneThemeModule from './sceneTheme';
 import { CALLOUT_META, STATUS_META } from './status';
@@ -439,6 +439,73 @@ describe('§6 / §7: every helper the chart and scene themes export is named whe
     const uns = /`plot\.unsampledAlpha` \((\d+)% light, (\d+)% dark\)/.exec(charts);
     expect(uns?.slice(1).map(Number)).toEqual(THEMES.map((t) => Math.round(themes[t].plot.unsampledAlpha * 100)));
     expect(charts).toContain(`\`${plotThemeModule.NARROW_CHART_QUERY}\``);
+  });
+});
+
+// D6 (D-027, D-026): the owner's colour rules, the measured ramp separations, the model status and the
+// forecast pair are stated where they are explained, with the numbers the code measures.
+describe('D6 §5 / §6 / §7 document the owner requirement of 2026-11-21', () => {
+  const flat = (t: string) => t.replace(/\s+/g, ' ');
+  test('D6 §7 states the owner’s rules for both colormaps', () => {
+    const s = flat(section(/^## 7\. 3D scene conventions/));
+    expect(s).toContain('temperature: red = hottest, yellow = coldest');
+    expect(s).toContain('magnetic field |B|: dark blue = strongest, green = weakest');
+    expect(s).toMatch(/Never use `bmagColor` here/);
+  });
+  test('D6 §7 quotes the separation gates and the measured closest approaches, both themes', () => {
+    const s = flat(section(/^## 7\. 3D scene conventions/));
+    const fixed = (n: number) => n.toFixed(1);
+    const heat = /Field vs temperature: at least (\d+); measured ([\d.]+) \(light\) and ([\d.]+) \(dark\)/.exec(s);
+    expect(Number(heat?.[1])).toBe(RAMP_SEPARATION_GATES['field/heat']);
+    expect([heat?.[2], heat?.[3]]).toEqual(THEMES.map((t) => fixed(rampPairSeparation('field/heat', t))));
+    const bmag = /Field vs Locate the tubes' \|B\|: at least (\d+); measured ([\d.]+) \(light\) and ([\d.]+) \(dark\)/.exec(s);
+    expect(Number(bmag?.[1])).toBe(RAMP_SEPARATION_GATES['field/bmag']);
+    expect([bmag?.[2], bmag?.[3]]).toEqual(THEMES.map((t) => fixed(rampPairSeparation('field/bmag', t))));
+    // DZ-7: temperature vs Locate the tubes' |B| is gated in normal vision; the figure under simulation is quoted too.
+    const hb = /Temperature vs Locate the tubes' \|B\|, in normal vision: at least (\d+); measured ([\d.]+) \(light\) and ([\d.]+) \(dark\)\. Under protanopia and deuteranopia the closest approach is ([\d.]+) \(light\) and ([\d.]+) \(dark\)/.exec(s);
+    expect(Number(hb?.[1])).toBe(RAMP_SEPARATION_GATES['heat/bmag']);
+    expect([hb?.[2], hb?.[3]]).toEqual(THEMES.map((t) => fixed(rampPairSeparation('heat/bmag', t))));
+    expect([hb?.[4], hb?.[5]]).toEqual(THEMES.map((t) => fixed(rampPairSeparation('heat/bmag', t, RAMP_CONDITIONS))));
+  });
+  test('D6 §7 quotes the temperature stops and the outline colours the tokens hold', () => {
+    const s = flat(section(/^## 7\. 3D scene conventions/));
+    for (const t of THEMES) {
+      const h = themes[t].scene.heat;
+      expect(s, `${t} heat ends`).toContain(`\`${h[0]}\``);
+      expect(s, `${t} heat middle`).toContain(`\`${h[4]}\``);
+      expect(s, `${t} heat hot end`).toContain(`\`${h.at(-1)}\``);
+    }
+    expect(s).toContain(`(\`scene.boundary\`: \`${themes.light.scene.boundary}\` light, \`${themes.dark.scene.boundary}\` dark`);
+  });
+  // DZ3-10: §7 names the heat view's second temperature bar in the view's own words (features/heatfield read as
+  // text; the design system never imports from it), and describes the marks drawn on the coloured surface.
+  test('DZ3-10 §7 quotes the edge strip’s colour bar as the heat view prints it, and the core-on-halo marks', () => {
+    const s = flat(section(/^## 7\. 3D scene conventions/));
+    const view = flat(readFileSync(resolve(RENDERER, 'src/features/heatfield/HeatFieldView.tsx'), 'utf8'));
+    const title = /title="(Edge \(LCFS\)[^"]*)"/.exec(view)?.[1];
+    expect(title, 'the edge-strip colour bar title in HeatFieldView.tsx').toBe('Edge (LCFS), same scale as the 3D view');
+    expect(s).toContain(`"${title}"`);
+    expect(s).toMatch(/a `color\.text` core on a halo in the scene background/);
+    expect(s).toMatch(/The black plate is drawn over its rim, and over the slice ring/);
+  });
+  test('D6 §5 says when to use `model` and quotes its meaning word for word', () => {
+    const s = flat(section(/^## 5\. Status semantics/));
+    expect(s).toContain('**Every number that model produces carries the `model` status**');
+    expect(s).toContain(STATUS_META.model.description);
+  });
+  test('D6 §6 forecast table: Actual and Predicted with the colours, dash and marker the code draws', () => {
+    const t = tableIn(/^## 6\. Chart conventions/, 'Line');
+    expect(t.rows.map((r) => code(r[0]))).toEqual(['actual', 'predicted']);
+    for (const row of t.rows) {
+      const line = code(row[0]) as 'actual' | 'predicted';
+      const light = plotThemeModule.forecastStyle(line, 'light');
+      expect(plain(row[1])).toBe(plotThemeModule.FORECAST_LABEL[line]);
+      expect(code(row[2])).toBe(light.line.color);
+      expect(code(row[3])).toBe(plotThemeModule.forecastStyle(line, 'dark').line.color);
+      expect(code(row[4])).toBe(light.line.dash);
+      expect(code(row[5])).toBe(light.marker.symbol);
+      expect(Number(plain(row[6]))).toBe(light.line.width);
+    }
   });
 });
 

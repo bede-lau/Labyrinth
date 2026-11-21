@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://labyrinth.local/contracts/heatfield.schema.json",
+  "title": "Heat & field: W7-X VMEC geometry and |B| grids, traced field lines, schematic diverters and an illustrative edge heat model (D-027, tasks/10-heat-field/MODEL.md)",
+  "type": "object",
+  "required": ["schemaVersion", "equilibrium", "grid", "surfaces", "fieldLines", "diverters", "model", "geometryProvenance", "provenance"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "equilibrium": {
+      "type": "object",
+      "required": ["name", "configuration", "nfp", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "configuration": { "type": "string" },
+        "nfp": { "type": "integer", "minimum": 1 },
+        "source": { "$ref": "common.schema.json#/$defs/source" }
+      }
+    },
+    "grid": {
+      "description": "Angular grid shared by every surface and by the model. theta_i = 2*pi*i/nTheta (VMEC poloidal angle; theta = 0 outboard midplane, theta = pi/2 top, Z > 0); phi_j = 2*pi*j/nPhi (geometric toroidal angle, x = R cos phi, y = R sin phi, z = Z). Flat arrays use index c = j*nTheta + i (phi-major). Consumers check every array length (JSON Schema cannot).",
+      "type": "object",
+      "required": ["nTheta", "nPhi", "layout", "angles"],
+      "additionalProperties": false,
+      "properties": {
+        "nTheta": { "type": "integer", "minimum": 8, "multipleOf": 4 },
+        "nPhi": { "type": "integer", "minimum": 8, "multipleOf": 4, "description": "A multiple of 4 so that the four diverter angles lie on grid planes." },
+        "layout": { "const": "phi-major: c = j*nTheta + i" },
+        "angles": { "type": "string" }
+      }
+    },
+    "surfaces": {
+      "description": "Flux surfaces in ascending rho. The first is the magnetic axis (rho 0, R and Z independent of theta), the last the last closed flux surface (rho 1). Each array has nTheta*nPhi values.",
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["rho", "s", "iota", "R", "Z", "B"],
+        "additionalProperties": false,
+        "properties": {
+          "rho": { "type": "number", "minimum": 0, "maximum": 1 },
+          "s": { "type": "number", "minimum": 0, "maximum": 1, "description": "Normalised toroidal flux, s = rho^2." },
+          "iota": { "type": "number", "description": "Rotational transform at s (stella's radial interpolation)." },
+          "R": { "type": "array", "items": { "type": "number" }, "description": "m" },
+          "Z": { "type": "array", "items": { "type": "number" }, "description": "m" },
+          "B": { "type": "array", "items": { "type": "number", "exclusiveMinimum": 0 }, "description": "|B| in tesla (VMEC bmnc, absolute)." }
+        }
+      }
+    },
+    "fieldLines": {
+      "description": "Field lines on the last closed flux surface traced with the straight-field-line tracer (theta* = alpha + iota*phi), one toroidal turn each.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["alpha", "phi", "x", "y", "z", "B"],
+        "additionalProperties": false,
+        "properties": {
+          "alpha": { "type": "number", "description": "Field-line label (rad), stella convention." },
+          "phi": { "type": "array", "items": { "type": "number" }, "minItems": 2, "description": "rad, ascending" },
+          "x": { "type": "array", "items": { "type": "number" }, "description": "m" },
+          "y": { "type": "array", "items": { "type": "number" }, "description": "m" },
+          "z": { "type": "array", "items": { "type": "number" }, "description": "m" },
+          "B": { "type": "array", "items": { "type": "number", "exclusiveMinimum": 0 }, "description": "T" }
+        }
+      }
+    },
+    "diverters": {
+      "description": "Schematic diverter positions as the owner specified (D-027 §4). W7-X itself has ten divertor units.",
+      "type": "object",
+      "required": ["note", "thetaCentre", "halfWidthTheta", "items"],
+      "additionalProperties": false,
+      "properties": {
+        "note": { "type": "string" },
+        "thetaCentre": { "type": "number", "description": "VMEC theta of the target plate centre and of the unswept strike line (rad)." },
+        "halfWidthTheta": { "type": "number", "exclusiveMinimum": 0, "description": "Half extent of the drawn plate in theta (rad)." },
+        "items": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "prefixItems": [
+            { "$ref": "#/$defs/diverter", "properties": { "id": { "const": "D1" } } },
+            { "$ref": "#/$defs/diverter", "properties": { "id": { "const": "D2" } } },
+            { "$ref": "#/$defs/diverter", "properties": { "id": { "const": "D3" } } },
+            { "$ref": "#/$defs/diverter", "properties": { "id": { "const": "D4" } } }
+          ],
+          "items": false
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "required": ["name", "version", "summary", "equations", "discretization", "parameters", "probes", "golden", "limitations"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "integer", "minimum": 1 },
+        "summary": { "type": "string" },
+        "equations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "text", "meaning"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "text": { "type": "string", "description": "The equation in plain Unicode text." },
+              "meaning": { "type": "string" }
+            }
+          }
+        },
+        "discretization": { "type": "string" },
+        "parameters": {
+          "type": "object",
+          "required": [
+            "Tped", "Tcore0", "rhoBlend", "tauE", "Dpar", "Dperp0", "B0", "tauDiv", "Ttarget",
+            "sigmaPhi", "sigmaTheta", "sweepAmplitude", "sweepFrequency", "epsilon", "sigmaCoilPhi", "sigmaCoilTheta",
+            "heatFluxScale", "tileGain", "Tcool", "tauTile", "tileLimit", "dt", "spinup"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "Tped": { "$ref": "#/$defs/parameter" },
+            "Tcore0": { "$ref": "#/$defs/parameter" },
+            "rhoBlend": { "$ref": "#/$defs/parameter" },
+            "tauE": { "$ref": "#/$defs/parameter" },
+            "Dpar": { "$ref": "#/$defs/parameter" },
+            "Dperp0": { "$ref": "#/$defs/parameter" },
+            "B0": { "$ref": "#/$defs/parameter" },
+            "tauDiv": { "$ref": "#/$defs/parameter" },
+            "Ttarget": { "$ref": "#/$defs/parameter" },
+            "sigmaPhi": { "$ref": "#/$defs/parameter" },
+            "sigmaTheta": { "$ref": "#/$defs/parameter" },
+            "sweepAmplitude": { "$ref": "#/$defs/parameter" },
+            "sweepFrequency": { "$ref": "#/$defs/parameter" },
+            "epsilon": { "$ref": "#/$defs/parameter" },
+            "sigmaCoilPhi": { "$ref": "#/$defs/parameter" },
+            "sigmaCoilTheta": { "$ref": "#/$defs/parameter" },
+            "heatFluxScale": { "$ref": "#/$defs/parameter" },
+            "tileGain": { "$ref": "#/$defs/parameter" },
+            "Tcool": { "$ref": "#/$defs/parameter" },
+            "tauTile": { "$ref": "#/$defs/parameter" },
+            "tileLimit": { "$ref": "#/$defs/parameter" },
+            "dt": { "$ref": "#/$defs/parameter" },
+            "spinup": { "$ref": "#/$defs/parameter" }
+          }
+        },
+        "probes": {
+          "description": "Grid cells [i, j] whose temperature the golden checkpoints record.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "prefixItems": [{ "type": "integer", "minimum": 0 }, { "type": "integer", "minimum": 0 }],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "golden": {
+          "description": "Checkpoints of the Python reference implementation. Every implementation of the model (the renderer's port) must reproduce each value to relativeTolerance.",
+          "type": "object",
+          "required": ["relativeTolerance", "scenarios"],
+          "additionalProperties": false,
+          "properties": {
+            "relativeTolerance": { "type": "number", "exclusiveMinimum": 0 },
+            "scenarios": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["id", "description", "coilSchedule", "checkpoints"],
+                "additionalProperties": false,
+                "properties": {
+                  "id": { "type": "string" },
+                  "description": { "type": "string" },
+                  "coilSchedule": {
+                    "description": "From step fromStep on, coil k is on when coils[k] = 1. The first entry starts at step 0.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": ["fromStep", "coils"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "fromStep": { "type": "integer", "minimum": 0 },
+                        "coils": { "type": "array", "items": { "enum": [0, 1] }, "minItems": 4, "maxItems": 4 }
+                      }
+                    }
+                  },
+                  "checkpoints": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": ["step", "t", "probesT", "meanT", "peakTileC", "peakHeatFlux"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "step": { "type": "integer", "minimum": 0 },
+                        "t": { "type": "number", "description": "s" },
+                        "probesT": { "type": "array", "items": { "type": "number" }, "description": "keV, aligned with model.probes" },
+                        "meanT": { "type": "number", "description": "keV, arithmetic mean over all LCFS cells" },
+                        "peakTileC": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "degC, D1..D4" },
+                        "peakHeatFlux": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "MW/m^2, D1..D4" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "limitations": { "type": "string" }
+      }
+    },
+    "geometryProvenance": {
+      "description": "Provenance of the surfaces, |B| and field lines (VMEC; kind derived, pinned).",
+      "allOf": [
+        { "$ref": "common.schema.json#/$defs/provenance" },
+        { "properties": { "kind": { "const": "derived" } } }
+      ]
+    },
+    "provenance": {
+      "description": "Provenance of the model output (kind model, pinned: model output can never be labelled as data).",
+      "allOf": [
+        { "$ref": "common.schema.json#/$defs/provenance" },
+        { "properties": { "kind": { "const": "model" } } }
+      ]
+    }
+  },
+  "$defs": {
+    "diverter": {
+      "type": "object",
+      "required": ["id", "phi", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "enum": ["D1", "D2", "D3", "D4"] },
+        "phi": { "type": "number", "description": "Toroidal angle (rad)." },
+        "label": { "type": "string" }
+      }
+    },
+    "parameter": {
+      "type": "object",
+      "required": ["value", "unit", "symbol", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": "number" },
+        "unit": { "type": "string" },
+        "symbol": { "type": "string" },
+        "description": { "type": "string" }
+      }
+    }
+  }
+}
