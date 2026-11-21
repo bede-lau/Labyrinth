@@ -730,3 +730,223 @@ Not checked in this run: a real browser (keyboard focus styles, screen readers),
 `labyrinth_main.server` behind the app.
 
 Verdict: PASS
+
+## Run 3 — whole task
+Verifier run: 2026-11-21, commit 77fd8b6
+Re-verification after D-024. `git status --short` was empty at the start and at the end of the run (whole tree, so the
+owned paths `renderer/src/shell/` and `renderer/src/lib/` too). `git diff --stat 3faed3a HEAD -- renderer/src/shell` prints
+nothing; in `renderer/src/lib` only `liveContract.ts`, `liveContract.test.ts` and `liveStatus.ts` changed. Short scope at the
+owner's request: the task's own tests, one independent probe per outcome, five mutations (all on the D-024 change).
+`verify.sh all`, every probe test and every mutation ran in isolated copies (`scripts/probe-copy.sh vt09-gate` and
+`vt09-probe`, both deleted at the end, restore checked with `cmp` against the shared tree). The targeted tests and
+`check_boundaries.py` ran read-only in the shared tree at HEAD 77fd8b6.
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| A1 | Navigation across the six views, keyboard accessible, URL hash reflects the view | `renderer/src/shell/App.test.tsx` › "A1 navigation reaches all six views by keyboard and the URL hash names the view" and "A1 a route change is announced and moves focus…"; the shell is unchanged since 3faed3a | Real `App` with the real views and real artifacts, no backend: `#/Nope` is rewritten to `#/locate`; setting the hash to each of the six views gives exactly one `aria-current` (that link), the title "<view> · Labyrinth" and a main landmark named after the view. The built bundle carries the six route ids | PASS |
+| A2 | Global mode indicator: REPLAY ($0) vs LIVE, driven by `/api/live/status`; no backend means full replay | `App.test.tsx` A2 tests (incl. "a partial or malformed status body never blanks the page"), `lib.test.tsx` A2 tests, `renderer/src/lib/liveContract.test.ts` (9 tests; the 3 D-024 tests compare the validator with ajv on a corruption corpus, on every comparison rule alone and inside a saved run, and pin the messages) | (1) My own 51 hand-written and text-level comparison payloads plus 4000 seeded multi-step fuzzed documents against Ajv2020 (strictNumbers on) over `contracts/live-status.schema.json` and `live-run.schema.json`: 0 disagreements for `validateLiveStatus` and for `validateSavedRun`. (2) Five `comparison` objects produced by the real backend `comparison.py` (no samples, partial cover, full cover, injected agree/disagree, error path) are accepted by ajv and both validators. (3) Real `App` with the real views: a mode "live" snapshot with 8 kinds of broken comparison on `#/transport`, `#/advance`, `#/budget` shows "Replay · $0" with "invalid status", no LIVE pill, 6 nav links, the h1 and the view; control with a valid comparison shows LIVE. Mutations M1 to M4 on the validator turn the repo tests red; M5 is caught only by my probe (finding 1) | PASS |
+| A3 | Typed artifact loader with loading / error / data states; a missing or invalid artifact shows an error panel naming the file, never a blank screen | `renderer/src/shell/ArtifactGate.test.tsx`, the A3 tests in `lib.test.tsx`, `App.test.tsx` › "A3 a view that throws shows the named error panel…"; `artifacts.ts` and the shell are untouched by 77fd8b6 | Real `App` with the real views, no backend: `spatial.json` answered with HTML (200), `transport.json` with schemaVersion 2, `geometry.json` 404, `forecast.json` schemaVersion 1 with no fields: the main region names the file in each case (headings "Could not load artifacts/spatial.json", "Transport evidence could not be loaded", "Could not load artifacts/geometry.json", "Could not load artifacts/forecast.json"), 6 nav links, h1 intact | PASS |
+| A4 | Header states the user decision question and a global provenance legend | `App.test.tsx` › "A4 header states the user decision…" and "A4 the legend explains every provenance kind and verification outcome defined in contracts/common.schema.json" | The question read from TASK.md equals the rendered h1 and `DECISION_QUESTION`, character for character, and appears verbatim in the built bundle; the "Provenance legend" region is rendered | PASS |
+| A5 | Static build (`npm run build`) contains `dist/artifacts/*.json` so replay works with no backend | `renderer/src/shell/build.test.ts` (6 tests) | The real `npm run build` of `verify.sh all` in the gate copy: 6 of 6 `dist/artifacts/*.json` have the sha256 of `artifacts/*.json`; a plain `python3 -m http.server` on 127.0.0.1 serving `dist` returns all six byte-identical with schemaVersion 1 and 404 for `/api/live/status` | PASS |
+
+### Real output
+Gate (isolated copy of the clean tree at 77fd8b6; `docs:handoff` warns that currency cannot be checked in a copy without `.git`):
+```
+$ (cd ~/.cache/labyrinth-probes/vt09-gate && VITEST_MAX_WORKERS=2 bash scripts/verify.sh all) ; echo EXIT=$?
+main/tests: 347 passed in 43.48s
+ Test Files  30 passed (30)
+      Tests  1370 passed (1370)
+━━━ verify.sh summary (scope: all)
+  PASS  boundary:self-test (0s)
+  PASS  boundary:scan (0s)
+  PASS  docs:handoff (0s)
+  PASS  scripts:tests (10s)
+  PASS  main:lint (0s)
+  PASS  main:tests (42s)
+  PASS  artifacts:schema (0s)
+  PASS  artifacts:fresh (1s)
+  PASS  renderer:typecheck (16s)
+  PASS  renderer:tests (70s)
+  PASS  renderer:build (3s)
+verify.sh: all stages passed.
+EXIT=0
+```
+Targeted tests and boundary check (shared tree, read-only, HEAD 77fd8b6):
+```
+$ npm --prefix renderer run -s test -- src/shell src/lib
+ ✓ src/shell/build.test.ts (6 tests)
+ ✓ src/shell/App.test.tsx (43 tests)
+ ✓ src/lib/lib.test.tsx (9 tests)
+ ✓ src/lib/liveContract.test.ts (9 tests)
+ ✓ src/shell/advance.test.tsx (3 tests)
+ ✓ src/lib/contracts.test.ts (1 test)
+ ✓ src/shell/Boundary.test.tsx (4 tests)
+ ✓ src/lib/liveStatusStore.test.ts (30 tests)
+ ✓ src/shell/ArtifactGate.test.tsx (1 test)
+ ✓ src/shell/galleryMode.test.ts (2 tests)
+ Test Files  10 passed (10)
+      Tests  108 passed (108)
+EXIT=0
+$ npm --prefix renderer run -s test -- src/lib/liveContract.test.ts --reporter=verbose
+ ✓ … > D-024 validateLiveStatus agrees with the schema on snapshots carrying a comparison and on every corruption of them
+ ✓ … > D-024 every comparison rule: the schema and the validator give the same verdict, alone and inside a saved run
+ ✓ … > D-024 validateLiveStatus names what is wrong in a comparison
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+EXIT=0
+$ python3 scripts/check_boundaries.py
+boundary: OK (169 files scanned)
+exit=0
+```
+Validator probe (`vt09_contract.test.ts` in the copy; oracle `new Ajv2020({ strict: false, strictNumbers: true })` over all
+`contracts/*.schema.json`; each document checked alone and as phase 2 of a saved run). Abridged to the rows of interest; all 51 rows say `agree`:
+```
+VT09|agree|ajv=invalid|validator=invalid|run ajv=invalid validateSavedRun=invalid|comparison = null|$.comparison: expected an object, got null
+VT09|agree|ajv=invalid|validator=invalid|run ajv=invalid validateSavedRun=invalid|covered missing on uncovered window|$.comparison.windows[1]: missing required property "covered"
+VT09|agree|ajv=invalid|validator=invalid|run ajv=invalid validateSavedRun=invalid|flip covered window to false, stats kept|$.comparison.windows[0].mean: expected null, got 2.7 (window not covered)
+VT09|agree|ajv=invalid|validator=invalid|run ajv=invalid validateSavedRun=invalid|flip to false with stats nulled but claim true|$.comparison.windows[0].saturatedClaimAllowed: expected false, got true (window not covered)
+VT09|agree|ajv=valid|validator=valid|run ajv=valid validateSavedRun=valid|flip to false, everything nulled, claim false (valid)|
+VT09|agree|ajv=invalid|validator=invalid|run ajv=invalid validateSavedRun=invalid|uncovered, only stationary false|$.comparison.windows[1].stationary: expected null, got boolean (window not covered)
+VT09|agree|ajv=invalid|validator=invalid|run ajv=invalid validateSavedRun=invalid|windows: second only|$.comparison.windows: expected 0 or 2 items, got 1
+VT09|agree|ajv=invalid|validator=invalid|run ajv=invalid validateSavedRun=invalid|archive[1] code "stella"|$.comparison.windows[1].archive[1].code: expected one of "GENE", got "stella"
+VT09|agree|ajv=valid|validator=valid|run ajv=valid validateSavedRun=valid|top-level claim true with every verdict "no claim" (schema does not encode it)|
+VT09|agree|ajv=valid|validator=valid|run ajv=valid validateSavedRun=valid|both windows covered and identical (valid)|
+VT09|agree|ajv=invalid|validator=invalid|run ajv=invalid validateSavedRun=invalid|"__proto__" key in comparison|$.comparison: unexpected property "__proto__"
+VT09|agree|ajv=invalid|validator=invalid|run ajv=invalid validateSavedRun=invalid|"hasOwnProperty" key in an archive entry|$.comparison.windows[0].archive[0]: unexpected property "hasOwnProperty"
+VT09|agree|ajv=invalid|validator=invalid|run ajv=invalid validateSavedRun=invalid|window.window [200, 1e400]|$.comparison.windows[0].window[1]: expected a finite number, got Infinity
+VT09|SUMMARY|51 cases, 39 invalid by ajv, 51 agree
+VT09|FUZZ|4000 documents, 2536 invalid and 1464 valid by ajv, 0 disagreements
+VT09|BACKEND|no samples|ajv=true|validator=valid|savedRun ajv=true validator=valid
+VT09|BACKEND|partial 180-290 (committed archive)|ajv=true|validator=valid|savedRun ajv=true validator=valid
+VT09|BACKEND|full 150-420 (committed archive)|ajv=true|validator=valid|savedRun ajv=true validator=valid
+VT09|BACKEND|full 150-420 (injected archive: stella same mean, GENE far)|ajv=true|validator=valid|savedRun ajv=true validator=valid
+VT09|BACKEND|divergent repeat (error path)|ajv=true|validator=valid|savedRun ajv=true validator=valid
+```
+The backend objects came from `labyrinth_main.features.live_gx.comparison.live_comparison` in the copy:
+```
+no samples: nSamples=0 windows=2 covered=[False, False] verdicts=[['no claim', 'no claim'], ['no claim', 'no claim']] saturatedClaimAllowed=False
+full 150-420 (committed archive): nSamples=541 windows=2 covered=[True, True] verdicts=[['no claim', 'no claim'], ['no claim', 'no claim']] saturatedClaimAllowed=False
+full 150-420 (injected archive: stella same mean, GENE far): nSamples=541 windows=2 covered=[True, True] verdicts=[['agree', 'disagree'], ['agree', 'disagree']] saturatedClaimAllowed=True
+divergent repeat (error path): nSamples=2 windows=0 covered=[] verdicts=[] saturatedClaimAllowed=False reason='Live comparison could not be computed: ValueError: the live bean trace'
+```
+A2 app probe (`vt09_a2app.test.tsx`, real views, real artifacts; 24 rows, all alike; `#/transport` shown in full, one row each for the others):
+```
+VT09-A2|control valid comparison|#/transport|pills=["live:LIVE · GPU 0 / GPU 1"]|mode=LIVE · GPU 0 / GPU 1Both workers launched; streaming GX output (live).
+VT09-A2|#/transport|comparison: null|pills=["replay:Replay · $0"]|liveAnywhere=false|nav=6|h1=true|mainChars=14341|mode=Replay · $0The live API answered with an invalid status; it is ignored and every view plays saved evidence.
+VT09-A2|#/transport|one window only|pills=["replay:Replay · $0"]|liveAnywhere=false|nav=6|h1=true|mainChars=14341|mode=Replay · $0The live API answered with an invalid status; …
+VT09-A2|#/transport|uncovered window with a mean|pills=["replay:Replay · $0"]|liveAnywhere=false|nav=6|h1=true|mainChars=14341|mode=Replay · $0The live API answered with an invalid status; …
+VT09-A2|#/transport|uncovered window claims saturation|pills=["replay:Replay · $0"]|liveAnywhere=false|nav=6|h1=true|mainChars=14341|mode=Replay · $0The live API answered with an invalid status; …
+VT09-A2|#/transport|archive GENE before stella|pills=["replay:Replay · $0"]|liveAnywhere=false|nav=6|h1=true|mainChars=14341|mode=Replay · $0The live API answered with an invalid status; …
+VT09-A2|#/transport|verdict "agrees"|pills=["replay:Replay · $0"]|liveAnywhere=false|nav=6|h1=true|mainChars=14341|mode=Replay · $0The live API answered with an invalid status; …
+VT09-A2|#/transport|comparison has an extra key|pills=["replay:Replay · $0"]|liveAnywhere=false|nav=6|h1=true|mainChars=14341|mode=Replay · $0The live API answered with an invalid status; …
+VT09-A2|#/transport|windows: undefined-ish (string)|pills=["replay:Replay · $0"]|liveAnywhere=false|nav=6|h1=true|mainChars=14341|mode=Replay · $0The live API answered with an invalid status; …
+VT09-A2|#/advance|comparison: null|pills=["replay:Replay · $0"]|liveAnywhere=false|nav=6|h1=true|mainChars=1229|mode=Replay · $0The live API answered with an invalid status; …
+VT09-A2|#/budget|comparison: null|pills=["replay:Replay · $0"]|liveAnywhere=false|nav=6|h1=true|mainChars=8527|mode=Replay · $0The live API answered with an invalid status; …
+```
+A1, A3, A4 probe (`vt09_shell.test.tsx`, real views, real artifacts, API unreachable):
+```
+VT09-A1|#/forecast|aria-current=["#/forecast"]|title=Forecast replay · Labyrinth|main=Forecast replay
+VT09-A1|#/spatial|aria-current=["#/spatial"]|title=Spatial parallelism · Labyrinth|main=Spatial parallelism
+VT09-A1|#/budget|aria-current=["#/budget"]|title=Budget · Labyrinth|main=Budget
+VT09-A1|#/advance|aria-current=["#/advance"]|title=Advance plasma · Labyrinth|main=Advance plasma
+VT09-A1|#/transport|aria-current=["#/transport"]|title=Check transport · Labyrinth|main=Check transport
+VT09-A1|#/locate|aria-current=["#/locate"]|title=Locate the tubes · Labyrinth|main=Locate the tubes
+VT09-A3|#/spatial|spatial|names file=true|headings=["Could not load artifacts/spatial.json"]|nav=6|h1=true
+VT09-A3|#/transport|transport|names file=true|headings=["Transport evidence could not be loaded"]|nav=6|h1=true
+VT09-A3|#/locate|geometry|names file=true|headings=["Could not load artifacts/geometry.json"]|nav=6|h1=true
+VT09-A3|#/forecast|forecast|names file=true|headings=["Could not load artifacts/forecast.json"]|nav=6|h1=true
+VT09-A4|TASK.md=Is this W7-X heat-flux estimate accurate enough to justify a longer simulation?|h1=Is this W7-X heat-flux estimate accurate enough to justify a longer simulation?|identical=true|constant identical=true
+ Test Files  3 passed (3)
+      Tests  10 passed (10)
+EXIT=0
+```
+A5 / A4 / A1 on the build that `verify.sh all` produced in the gate copy:
+```
+budget.json src=b7d16911e7b4944d dist=b7d16911e7b4944d
+forecast.json src=75c7039534843200 dist=75c7039534843200
+geometry.json src=1df0e9d5bdfd752a dist=1df0e9d5bdfd752a
+manifest.json src=4c823491715bafe8 dist=4c823491715bafe8
+spatial.json src=6f2ed8add50c693c dist=6f2ed8add50c693c
+transport.json src=ae594c701e542a5a dist=ae594c701e542a5a
+identical: 6 of 6; dist/artifacts count: 6
+Serving HTTP on 127.0.0.1 port 47391 (http://127.0.0.1:47391/) ...
+GET /artifacts/manifest.json -> 200, identical=True, schemaVersion=1
+GET /artifacts/geometry.json -> 200, identical=True, schemaVersion=1
+GET /artifacts/transport.json -> 200, identical=True, schemaVersion=1
+GET /artifacts/forecast.json -> 200, identical=True, schemaVersion=1
+GET /artifacts/spatial.json -> 200, identical=True, schemaVersion=1
+GET /artifacts/budget.json -> 200, identical=True, schemaVersion=1
+GET /api/live/status -> 404 (no backend)
+TASK.md question: Is this W7-X heat-flux estimate accurate enough to justify a longer simulation?
+question verbatim in renderer/dist/assets/index-VS5okhCr.js: 1
+### route ids in renderer/dist/assets/index-VS5okhCr.js
+locate:id:`locate` advance:id:`advance` transport:id:`transport` forecast:id:`forecast` spatial:id:`spatial` budget:id:`budget`
+```
+Mutations (probe copy; M1 to M4 run `src/lib/liveContract.test.ts` plus my contract probe, M5 runs `src/shell src/lib
+src/features/transport src/features/live-gx` plus my A2 app probe; each file restored and compared with the shared tree):
+```
+=== [M1-ifthen-dropped] renderer/src/lib/liveContract.ts :: >   if (w.covered !== false || true) return null;
+    exit=1
+   × D-024 validateLiveStatus agrees with the schema on snapshots carrying a comparison and on every corruption of them
+   × D-024 every comparison rule: the schema and the validator give the same verdict, alone and inside a saved run
+   × D-024 validateLiveStatus names what is wrong in a comparison
+   × VT09 hand-written and text-level comparison corruptions: validator == ajv, alone and inside a saved run
+   × VT09 seeded multi-step fuzz of comparison: validator == ajv on every document, alone and inside a saved run
+    restored, identical to the shared tree
+=== [M2-one-window-allowed] renderer/src/lib/liveContract.ts :: > return (v as unknown[]).length === 99 ?
+    exit=1
+   × D-024 every comparison rule: the schema and the validator give the same verdict, alone and inside a saved run
+   × D-024 validateLiveStatus names what is wrong in a comparison
+   × VT09 hand-written and text-level comparison corruptions: validator == ajv, alone and inside a saved run
+   × VT09 seeded multi-step fuzz of comparison: validator == ajv on every document, alone and inside a saved run
+    restored, identical to the shared tree
+=== [M3-comparison-nullable] renderer/src/lib/liveContract.ts :: > { qualified: bool, provenance, comparison: nullable(comparison) }
+    exit=1
+   × D-024 validateLiveStatus agrees with the schema on snapshots carrying a comparison and on every corruption of them
+   × D-024 every comparison rule: the schema and the validator give the same verdict, alone and inside a saved run
+   × D-024 validateLiveStatus names what is wrong in a comparison
+   × VT09 hand-written and text-level comparison corruptions: validator == ajv, alone and inside a saved run
+    restored, identical to the shared tree
+=== [M4-archive-order-free] renderer/src/lib/liveContract.ts :: > object({ code: oneOf(['stella', 'GENE']),
+    exit=1
+   × D-024 every comparison rule: the schema and the validator give the same verdict, alone and inside a saved run
+   × D-024 validateLiveStatus names what is wrong in a comparison
+   × VT09 hand-written and text-level comparison corruptions: validator == ajv, alone and inside a saved run
+   × VT09 seeded multi-step fuzz of comparison: validator == ajv on every document, alone and inside a saved run
+    restored, identical to the shared tree
+=== [M5-fetch-skips-check-when-comparison] renderer/src/lib/liveStatus.ts :: > const problem = (body as { comparison?: unknown } | null)?.comparison !== undefined ? null : validateLiveStatus(body);
+    exit=1
+   × VT09-A2 a live snapshot with a broken comparison drops to REPLAY and never blanks (#/transport)
+   × VT09-A2 a live snapshot with a broken comparison drops to REPLAY and never blanks (#/advance)
+   × VT09-A2 a live snapshot with a broken comparison drops to REPLAY and never blanks (#/budget)
+    restored, identical to the shared tree
+--- whole copy vs shared tree for the owned dirs
+diff exit=0
+probe copy deleted: /home/qqbot/.cache/labyrinth-probes/vt09-gate
+probe copy deleted: /home/qqbot/.cache/labyrinth-probes/vt09-probe
+$ git status --short          (end: empty)
+$ git diff --stat 77fd8b6 -- renderer/src/shell renderer/src/lib          (empty)
+```
+
+### Findings
+No outcome is blocked. The validator change agrees with ajv on everything I tried, including multi-step corruptions the
+repo's single-step corpus does not generate, accepts what the real backend emits, and a rejected body leaves the app in
+replay with the shell and the view on screen.
+1. Minor, weak test (A2 after D-024): no repo test sends a status body with a broken `comparison` through
+   `fetchLiveStatus` or the App. Mutation M5 at `renderer/src/lib/liveStatus.ts:283` (skip `validateLiveStatus` when the body
+   carries a comparison) leaves `src/shell`, `src/lib`, `src/features/transport` and `src/features/live-gx` green; only my
+   probe caught it. Low risk: line 283 is the single check, and both halves are tested (the rules in
+   `liveContract.test.ts:329-450`, the rejection path in `App.test.tsx:389-409`). Fix: add `{ ...status('live'), comparison: null }`
+   and a one-window comparison to the bodies at `renderer/src/shell/App.test.tsx:390-397`.
+2. Note for task 02: the schema and the validator both accept a top-level `comparison.saturatedClaimAllowed: true` with every
+   archive entry at "no claim" (the "only with an agree" rule lives in the schema description and the backend, not in the
+   schema). The transport model already flags this case (`renderer/src/features/transport/model.ts:535`); it is not a shell matter.
+3. Note: a reversed `window` such as [300, 200] is accepted by both, as documented at `renderer/src/lib/liveContract.ts:191`
+   (JSON Schema cannot order the two items).
+4. The two minors of the previous run (`modePills` deciding LIVE on its own at `liveStatus.ts`, two wordings of error
+   panels) were not re-checked; the shell code is unchanged since then.
+
+Not checked in this run: a real browser, the dev server, the real `labyrinth_main.server` behind the app.
+
+Verdict: PASS

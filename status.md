@@ -7,7 +7,8 @@
 
 ## Current state
 
-**Seven of ten tasks are `DONE`; 02, 06, 09 are back in VERIFYING for D-024 (live comparison) until their verifiers re-run.** Before D-024 each had a final external-verifier run at commit `3faed3a` ending in `Verdict: PASS`, with a `PASS` row for every outcome
+**All ten tasks are `DONE`.** 02, 06 and 09 were reopened for D-024 (the PRD's live comparison, cross-RX-2) and re-verified at `77fd8b6` (`Verdict: PASS`
+each; reviewer APPROVE). The other seven are verified at `3faed3a`. Before D-024 each had a final external-verifier run at commit `3faed3a` ending in `Verdict: PASS`, with a `PASS` row for every outcome
 (`tasks/<NN>/VERIFY.md`), and the code passed the 2026-11-20 review round with all six areas approved. `scripts/check_docs.py` enforces this (D-022): any
 later change to a task's owned files reopens it until a verifier runs again. `verify.sh all` at `3faed3a`: exit 0, 11/11 stages — boundary self-test
 134 violation shapes, 71 gate tests, 331 backend tests, artifacts schema-valid and byte-fresh, tsc clean, 1350 frontend tests, vite build.
@@ -16,25 +17,31 @@ later change to a task's owned files reopens it until a verifier runs again. `ve
 |---|---|---|---|
 | 00 | scaffold, boundary, gates | DONE | `3faed3a` |
 | 01 | geometry | DONE (acceptance-129 BLOCKED by design, D-007) | `3faed3a` |
-| 02 | transport | VERIFYING (D-024: T13 live comparison) | was `3faed3a` |
+| 02 | transport | DONE (T13 live comparison, D-024) | `77fd8b6` |
 | 03 | forecast | DONE (PRD MAE mismatch shown, D-016) | `3faed3a` |
 | 04 | budget | DONE | `3faed3a` |
 | 05 | spatial | DONE (PRD-reported/blocked: no checkpoints in repo) | `3faed3a` |
-| 06 | live GX | VERIFYING (D-024: L11 comparison) against fakes — **never run on Modal** (§6 runbook) | was `3faed3a` |
+| 06 | live GX | DONE against fakes (L11 comparison, D-024) — **never run on Modal** (§6 runbook) | `77fd8b6` |
 | 07 | HTTP server | DONE | `3faed3a` |
 | 08 | design system | DONE | `3faed3a` |
-| 09 | app shell | VERIFYING (D-024: `liveContract.ts` validator) | was `3faed3a` |
+| 09 | app shell | DONE (`liveContract.ts` comparison validator, D-024) | `77fd8b6` |
 
 **GitHub:** `origin/main` = `03bd626` (pushed 2026-11-20 on the owner's "Push to main"; fast-forward from `f0ca8e6`). The live-comparison work runs
 in a separate session in this checkout and commits locally; push it only after its review and verification, and ask the owner first.
 
 **Open, not blocking DONE** (details in the Session 3 log below and in each VERIFY.md "Findings"):
-- **Live comparison (cross-RX-2) closed by D-024, awaiting re-verification:** live-status `comparison` (schema, `live_gx/comparison.py`, orchestrator
-  snapshot, Check transport "Live comparison" panel, live-panel summary line, `liveContract.ts` validator); docs and TASK.md outcomes T13 / L11. Reviewer
-  APPROVE (one round; minors RV-024-1/2/3/4/7 fixed by the maintainer, each fix probed). `verify.sh all` green. Committed locally, **not pushed**.
-  Next: verifiers for 02, 06, 09 at that commit → DONE. With the committed archive every live verdict is "no claim" (D-017) — by design.
-  Open: RV-024-6 (owner's call) — the comparison disappears when the session leaves `live`; option: keep the last session's comparison labelled "session
-  ended". CLAUDE.md "Current stage" still names this PRD gap (left for the owner to edit).
+- **Live comparison (cross-RX-2) closed by D-024** (commit `77fd8b6`, DONE commit after it; both local, **not pushed** — ask the owner): live-status
+  `comparison` (schema, `live_gx/comparison.py`, orchestrator snapshot, Check transport "Live comparison" panel, live-panel summary line, `liveContract.ts`
+  validator); docs and TASK.md outcomes T13 / L11. With the committed archive every live verdict is "no claim" (D-017) — by design.
+- **F4-1 (06 verifier, affects `transport/stats.py` = task 02; needs a D-017 refinement):** the bias-corrected Sokal τ can fall below half a sample, so
+  N_eff exceeds the in-window sample count and a window with < 20 samples can open the claim gate (14 white-noise samples: nEff 51.6, nEffLower 25.8 →
+  `agree`; 15 samples: gate opened in 23 of 200 seeds). Invisible on the archive (its 200–400 windows never establish N_eff), but a sparse live GX trace could
+  claim agreement. Fix: cap N_eff (and its upper-bound value) at the in-window sample count / τ_int ≥ ½ sample, with a test; re-verify 02 (and 06).
+  F4-2: the half-split test misses small drifts (expected power limit).
+- Minors from D-024: RV-024-6 (owner's call: the comparison disappears once the session leaves `live`; option: keep the last one labelled "session ended");
+  02 n1 (the "Live trace claim" column shows a green "Claim allowed" pill — the live gate — next to "No claim" verdicts; reword to "Live gate met"); 02 n2
+  (live stderr printed to 3 decimals); 09 minor (no shell test sends a status with a broken `comparison` through the App); 06 F3-1 (TASK.md L10 wording
+  "only when idle" vs Launch after a settled fallback). CLAUDE.md "Current stage" still names this PRD gap (left for the owner to edit).
 - Minors from the final reviews (FR-FE-LIVE-1/2, design-r3-N1, RV-G21/22/23, RV-G5 part, be-live-r4-1) and the verifiers' minors (2–3 per task, mostly
   test wording and doc lines).
 

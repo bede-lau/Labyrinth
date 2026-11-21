@@ -27,6 +27,6 @@ Frontend:
 | L9–L10 | `renderer/src/features/live-gx/*.test.tsx` |
 
 ## Status
-VERIFYING
+DONE
 
-Reopened 2026-11-20 for D-024 (live comparison, new outcome L11; `main/labyrinth_main/features/live_gx/` changed). Previously DONE at commit 3faed3a (VERIFY.md run of that date, `Verdict: PASS`).
+Verified at commit 77fd8b6 (D-024 live comparison, new outcome L11): tasks/06-live-gx/VERIFY.md run 4, `Verdict: PASS` (external verifier, 2026-11-21, against fakes; never run on Modal). Reviewer APPROVE of the D-024 change (2026-11-21). Previously DONE at 3faed3a.
