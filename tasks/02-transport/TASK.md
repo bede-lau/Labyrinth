@@ -29,6 +29,6 @@ Frontend:
 | T8–T13 | `renderer/src/features/transport/*.test.tsx`, one `test('T8 …')` per outcome |
 
 ## Status
-VERIFYING
+DONE
 
-Reopened 2026-11-21 for D-025 (τ_int floored at ½ sample in `transport/stats.py`, so N_eff never exceeds the samples in a window; 06 verifier finding F4-1). Previously DONE at 77fd8b6 (VERIFY.md run 5, `Verdict: PASS`).
+Verified at commit 8a85c67 (D-025: τ_int floored at ½ sample in `transport/stats.py`, so N_eff never exceeds the samples in a window; 06 verifier finding F4-1): tasks/02-transport/VERIFY.md run 6, `Verdict: PASS` (external verifier, 2026-11-21). Reviewer APPROVE of D-025 (2026-11-21, after one fix round). Previously DONE at 77fd8b6 (D-024) and 3faed3a.
