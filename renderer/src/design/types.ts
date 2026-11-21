@@ -15,7 +15,11 @@ export interface Verification {
   details: string;
 }
 
-export type ProvenanceKind = 'archive' | 'derived' | 'prd-reported' | 'live' | 'rehearsal';
+/**
+ * contracts/common.schema.json#/$defs/provenance/properties/kind. `model` (D-027) = output of an
+ * illustrative reduced model whose parameters were chosen for illustration, not fitted to measurements.
+ */
+export type ProvenanceKind = 'archive' | 'derived' | 'prd-reported' | 'live' | 'rehearsal' | 'model';
 
 export interface Provenance {
   kind: ProvenanceKind;

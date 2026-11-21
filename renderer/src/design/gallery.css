@@ -33,6 +33,7 @@
 .gal-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--lab-space-4); padding: var(--lab-space-1) 0 var(--lab-space-3); }
 .gal-figure { margin: 0; }
 .gal-chart { width: 100%; min-height: 300px; }
+.gal-chart--forecast { min-height: 260px; }
 /* Height comes from the canvas (half its width, 180–300px), so a narrow panel is not mostly empty. */
 .gal-scene { width: 100%; min-height: 180px; border-radius: var(--lab-radius-sm); overflow: hidden; }
 .gal-scene canvas { display: block; }
@@ -53,8 +54,23 @@
 .gal-btn:hover { background: var(--lab-color-surface-hover); }
 .gal-row { margin-bottom: var(--lab-space-3); }
 .gal-colorbar { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: var(--lab-space-3); margin-top: var(--lab-space-3); font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); }
-.gal-colorbar__bar { height: 10px; border-radius: var(--lab-radius-xs); }
+/* Framed in border-strong: the temperature bar starts at a pale yellow that is not 3:1 on the panel (DESIGN.md §7). */
+.gal-colorbar__bar { height: 10px; border-radius: var(--lab-radius-xs); border: 1px solid var(--lab-color-border-strong); }
 .gal-colorbar__ticks { grid-column: 2; display: flex; justify-content: space-between; color: var(--lab-color-text-subtle); }
+.gal-colorbar + .gal-colorbar { margin-top: var(--lab-space-2); }
+.gal-colorbar__label--pill { display: inline-flex; align-items: center; gap: var(--lab-space-2); }
+/* D6: the three colormaps as each viewer sees them, one column per kind of vision. */
+.gal-ramps { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--lab-space-3); margin-top: var(--lab-space-4); }
+.gal-ramps__vision { display: flex; flex-direction: column; gap: var(--lab-space-1); min-width: 0; }
+.gal-ramps__title { font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); font-weight: var(--lab-font-weight-medium); color: var(--lab-color-text-muted); }
+.gal-ramps__row { display: grid; gap: 2px; }
+.gal-ramps__name { font-size: var(--lab-font-size-2xs); line-height: var(--lab-line-height-2xs); color: var(--lab-color-text-subtle); }
+.gal-ramps__bar { height: 8px; border-radius: var(--lab-radius-xs); }
+.gal-ramps__measure { margin-top: var(--lab-space-3); max-width: 100ch; font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-muted); }
+/* A diverter plate (fill + edge, set inline from sceneTheme) on the grounds where it is hardest to see. */
+.gal-diverters { list-style: none; margin: var(--lab-space-3) 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--lab-space-2); }
+.gal-diverters__ground { display: grid; place-items: center; width: 64px; height: 40px; border: 1px solid var(--lab-color-border); border-radius: var(--lab-radius-sm); }
+.gal-diverters__plate { width: 10px; height: 28px; border-width: 2px; border-style: solid; border-radius: 1px; }
 /* justify-items: start keeps each pill at its own width (grid items stretch by default). */
 .gal-status { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--lab-space-2) var(--lab-space-3); align-items: center; justify-items: start; }
 .gal-status li { display: contents; }

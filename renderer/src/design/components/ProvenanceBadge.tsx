@@ -12,6 +12,12 @@ export interface ProvenanceBadgeProps {
   /** What the provenance is for, used in the accessible name: "stella bean trace". */
   subject?: string;
   /**
+   * A short VISIBLE subject drawn before the pills ("Temperatures", "Geometry and |B|"). Give one to every
+   * badge when a panel carries more than one, so a reader sees which record covers what without opening
+   * them. The accessible name then starts with it (WCAG 2.5.3, label in name).
+   */
+  caption?: string;
+  /**
    * Pass `true` ONLY from the live-status path, when `/api/live/status` reports mode "live" right
    * now (`isLive(state)` in `lib/liveStatus.ts`). Without it a record of kind `live` — which is
    * what an artifact or a saved run carries — is drawn as "Recorded run" with the replay
@@ -37,6 +43,7 @@ const isWebUrl = (url: string) => /^https?:\/\/\S/i.test(url);
 export function ProvenanceBadge({
   provenance,
   subject,
+  caption,
   live = false,
   defaultOpen = false,
   align = 'end',
@@ -60,7 +67,8 @@ export function ProvenanceBadge({
     return () => document.removeEventListener('pointerdown', onDown);
   }, [open]);
 
-  const name = `Provenance${subject ? ` of ${subject}` : ''}: ${kindMeta.label}, ${outcomeMeta.label}`;
+  const what = `${subject ? ` of ${subject}` : ''}: ${kindMeta.label}, ${outcomeMeta.label}`;
+  const name = caption ? `${caption} — provenance${what}` : `Provenance${what}`;
 
   return (
     <div
@@ -83,6 +91,7 @@ export function ProvenanceBadge({
         aria-label={name}
         onClick={() => setOpen((o) => !o)}
       >
+        {caption && <span className="lab-prov__caption">{caption}</span>}
         <StatusPill status={kindMeta.status}>{kindMeta.label}</StatusPill>
         <StatusPill status={outcomeStatus} />
         <Icon name="chevron" size={12} className="lab-prov__chev" />

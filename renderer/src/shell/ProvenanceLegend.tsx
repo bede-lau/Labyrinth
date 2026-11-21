@@ -6,7 +6,7 @@ import { STATUS_META, StatusPill, type StatusKind } from '../design';
  * `live` is the one kind that is described in words below instead of being drawn.
  */
 const GROUPS: { title: string; kinds: StatusKind[] }[] = [
-  { title: 'Where a number comes from', kinds: ['replay', 'archive', 'derived', 'prd-reported', 'rehearsal'] },
+  { title: 'Where a number comes from', kinds: ['replay', 'archive', 'derived', 'prd-reported', 'rehearsal', 'model'] },
   { title: 'How far it is checked', kinds: ['passed', 'unverified', 'blocked', 'mismatch', 'failed', 'not-applicable'] },
 ];
 

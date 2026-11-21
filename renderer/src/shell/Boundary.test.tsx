@@ -25,6 +25,7 @@ vi.mock('../features/transport/TransportView', () => ({ TransportView: () => <p>
 vi.mock('../features/forecast/ForecastView', () => ({ ForecastView: () => <p>view:forecast</p> }));
 vi.mock('../features/spatial/SpatialView', () => ({ SpatialView: () => <p>view:spatial</p> }));
 vi.mock('../features/budget/BudgetView', () => ({ BudgetView: () => <p>view:budget</p> }));
+vi.mock('../features/heatfield/HeatFieldView', () => ({ HeatFieldView: () => <p>view:heat</p> }));
 
 beforeEach(() => {
   history.replaceState(null, '', '/');
@@ -55,7 +56,7 @@ test('a crash in the mode indicator leaves the page up and says, as an alert, th
   expect(header.querySelector('[data-status="live"]')).toBeNull();
   // Everything else is still on the page.
   expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(DECISION_QUESTION);
-  expect(within(screen.getByRole('navigation', { name: 'Views' })).getAllByRole('link')).toHaveLength(6);
+  expect(within(screen.getByRole('navigation', { name: 'Views' })).getAllByRole('link')).toHaveLength(7);
   expect(screen.getByText('view:locate')).toBeInTheDocument();
   expect(screen.getByRole('region', { name: 'Provenance legend' })).toBeInTheDocument();
   expect(screen.getByRole('radiogroup', { name: 'Colour theme' })).toBeInTheDocument();

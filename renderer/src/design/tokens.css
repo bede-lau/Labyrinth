@@ -90,6 +90,9 @@
   --lab-status-prd-reported-fg: #6c5715;
   --lab-status-prd-reported-bg: #f7f2e3;
   --lab-status-prd-reported-border: #96803a;
+  --lab-status-model-fg: #8c2b74;
+  --lab-status-model-bg: #f9ecf4;
+  --lab-status-model-border: #a85e96;
   --lab-status-unverified-fg: #56686f;
   --lab-status-unverified-bg: #f6f8f9;
   --lab-status-unverified-border: #73868e;
@@ -132,6 +135,7 @@
   --lab-plot-unsampled: #c9d2d6;
   --lab-plot-unsampled-alpha: 0.35;
   --lab-plot-band-alpha: 0.18;
+  --lab-plot-predicted: #c85a0a;
   --lab-scene-background: #ffffff;
   --lab-scene-surface-line: #b8c6cc;
   --lab-scene-surface-fill: #eef2f4;
@@ -149,6 +153,26 @@
   --lab-bmag-6: #608338;
   --lab-bmag-7: #888528;
   --lab-bmag-8: #b28a29;
+  --lab-scene-diverter-fill: #14181a;
+  --lab-scene-diverter-edge: #ffffff;
+  --lab-heat-0: #fcdf00;
+  --lab-heat-1: #fdc300;
+  --lab-heat-2: #f8ab00;
+  --lab-heat-3: #f09500;
+  --lab-heat-4: #e68000;
+  --lab-heat-5: #dc6800;
+  --lab-heat-6: #d24f00;
+  --lab-heat-7: #c82d00;
+  --lab-heat-8: #bc0013;
+  --lab-field-0: #00a676;
+  --lab-field-1: #059b87;
+  --lab-field-2: #0c9091;
+  --lab-field-3: #0a8497;
+  --lab-field-4: #06779a;
+  --lab-field-5: #0066a2;
+  --lab-field-6: #0351a9;
+  --lab-field-7: #0037ab;
+  --lab-field-8: #1811a2;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -192,6 +216,9 @@
     --lab-status-prd-reported-fg: #dcc78c;
     --lab-status-prd-reported-bg: #241f12;
     --lab-status-prd-reported-border: #8f7c40;
+    --lab-status-model-fg: #eba0de;
+    --lab-status-model-bg: #2a1427;
+    --lab-status-model-border: #a0609a;
     --lab-status-unverified-fg: #a9b8be;
     --lab-status-unverified-bg: #141f24;
     --lab-status-unverified-border: #62777f;
@@ -234,6 +261,7 @@
     --lab-plot-unsampled: #3a4a51;
     --lab-plot-unsampled-alpha: 0.35;
     --lab-plot-band-alpha: 0.22;
+    --lab-plot-predicted: #f08a3c;
     --lab-scene-background: #111b20;
     --lab-scene-surface-line: #3c4d55;
     --lab-scene-surface-fill: #162228;
@@ -251,6 +279,26 @@
     --lab-bmag-6: #a7d895;
     --lab-bmag-7: #d3e18e;
     --lab-bmag-8: #ffe891;
+    --lab-scene-diverter-fill: #030506;
+    --lab-scene-diverter-edge: #d5dee2;
+    --lab-heat-0: #fcdf00;
+    --lab-heat-1: #ffce39;
+    --lab-heat-2: #ffb938;
+    --lab-heat-3: #ffa52b;
+    --lab-heat-4: #ff921a;
+    --lab-heat-5: #ff7c02;
+    --lab-heat-6: #fd5f00;
+    --lab-heat-7: #fe3400;
+    --lab-heat-8: #fa001d;
+    --lab-field-0: #76ffd0;
+    --lab-field-1: #40f5de;
+    --lab-field-2: #29e6ea;
+    --lab-field-3: #33d5f1;
+    --lab-field-4: #1dc3f8;
+    --lab-field-5: #27affe;
+    --lab-field-6: #3f99fe;
+    --lab-field-7: #3e7fff;
+    --lab-field-8: #4766fe;
   }
 }
 
@@ -294,6 +342,9 @@
   --lab-status-prd-reported-fg: #dcc78c;
   --lab-status-prd-reported-bg: #241f12;
   --lab-status-prd-reported-border: #8f7c40;
+  --lab-status-model-fg: #eba0de;
+  --lab-status-model-bg: #2a1427;
+  --lab-status-model-border: #a0609a;
   --lab-status-unverified-fg: #a9b8be;
   --lab-status-unverified-bg: #141f24;
   --lab-status-unverified-border: #62777f;
@@ -336,6 +387,7 @@
   --lab-plot-unsampled: #3a4a51;
   --lab-plot-unsampled-alpha: 0.35;
   --lab-plot-band-alpha: 0.22;
+  --lab-plot-predicted: #f08a3c;
   --lab-scene-background: #111b20;
   --lab-scene-surface-line: #3c4d55;
   --lab-scene-surface-fill: #162228;
@@ -353,6 +405,26 @@
   --lab-bmag-6: #a7d895;
   --lab-bmag-7: #d3e18e;
   --lab-bmag-8: #ffe891;
+  --lab-scene-diverter-fill: #030506;
+  --lab-scene-diverter-edge: #d5dee2;
+  --lab-heat-0: #fcdf00;
+  --lab-heat-1: #ffce39;
+  --lab-heat-2: #ffb938;
+  --lab-heat-3: #ffa52b;
+  --lab-heat-4: #ff921a;
+  --lab-heat-5: #ff7c02;
+  --lab-heat-6: #fd5f00;
+  --lab-heat-7: #fe3400;
+  --lab-heat-8: #fa001d;
+  --lab-field-0: #76ffd0;
+  --lab-field-1: #40f5de;
+  --lab-field-2: #29e6ea;
+  --lab-field-3: #33d5f1;
+  --lab-field-4: #1dc3f8;
+  --lab-field-5: #27affe;
+  --lab-field-6: #3f99fe;
+  --lab-field-7: #3e7fff;
+  --lab-field-8: #4766fe;
 }
 
 /* ---- base ------------------------------------------------------------------------------ */

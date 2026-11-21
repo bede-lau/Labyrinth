@@ -5,13 +5,14 @@ import { TransportView } from '../features/transport/TransportView';
 import { ForecastView } from '../features/forecast/ForecastView';
 import { SpatialView } from '../features/spatial/SpatialView';
 import { BudgetView } from '../features/budget/BudgetView';
+import { HeatFieldView } from '../features/heatfield/HeatFieldView';
 import { useLiveStatus } from '../lib/liveStatus';
 import { ViewErrorBoundary } from './ArtifactGate';
 import { HeaderBoundary } from './Boundary';
 import { ModeAlert, ModeIndicator } from './ModeIndicator';
 import { centeredScrollLeft, fadeEdges, type FadeEdges } from './navScroll';
 import { ProvenanceLegend } from './ProvenanceLegend';
-import { ROUTES, hrefFor, routeDef, type RouteId } from './routes';
+import { ROUTES, hrefFor, routeDef, sourceLabel, type RouteId } from './routes';
 import { ThemeSwitch } from './ThemeSwitch';
 import { useHashRoute } from './useHashRoute';
 import './shell.css';
@@ -25,6 +26,7 @@ const VIEWS: Record<RouteId, ComponentType> = {
   forecast: ForecastView,
   spatial: SpatialView,
   budget: BudgetView,
+  heat: HeatFieldView,
 };
 
 export interface AppProps {
@@ -127,7 +129,7 @@ export function App({ pollMs = 2000 }: AppProps) {
               <li key={r.id}>
                 <a className="shell-nav__link" href={hrefFor(r.id)} aria-current={r.id === route ? 'page' : undefined}>
                   <span className="shell-nav__label">{r.label}</span>
-                  <span className="shell-nav__source">{r.source === 'live' ? 'GX run · gated' : 'replay'}</span>
+                  <span className="shell-nav__source">{sourceLabel(r.source)}</span>
                 </a>
               </li>
             ))}

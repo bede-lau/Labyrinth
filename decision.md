@@ -267,6 +267,77 @@ claims (185 of 185) and coverage (0.940) are unchanged (02 verifier run 6). Test
 `transport/stats.py` changed); task 06's owned files are unchanged. Still open (D-017 limit, unchanged): positively correlated sparse traces can
 open the gate below 20 true effective samples (AR(1) τ = 2 samples, N = 60: ≈ 11 % of runs).
 
+## D-026 · Forecast replay draws predicted vs actual heat flux and reports MSE (owner requirement 2026-11-21)
+**Context.** The owner's requirement (`design-artifacts/requirements-2026-11-21/`, page 4 and the typed text): "Replace the current graph on the
+forecast replay tab with this graph of predicted heat flux and actual heat flux (2 lines) against time. Show MSE, and range of MSE (mean square
+error). Give range of errors against predicted and actual heat flux difference." The tab's main display was the steps table.
+**Decision.**
+1. `forecast.json` gains a required `errorStats` object: `definition`, and for `persistence` and `frozen` each `n`, `mse`, `rmse`,
+   `squaredErrorRange` = [min, max] of e_k², `errorRange` = [min, max] of e_k, with e_k = forecast_k − observed_k (predicted − actual) over the
+   scored steps (all null when there are none). main/ computes it from the same `steps` (no new window-mean definition, D-013/D-016 unchanged;
+   the MAE fixtures are unchanged).
+2. Interpretation, recorded so the owner can correct it: "range of MSE" = the spread of the per-window squared errors the MSE averages
+   (min–max of e_k²); "range of errors" = min–max of the signed predicted − actual differences. RMSE is added so the error has the flux's units.
+3. The renderer replaces the steps table, as the primary display, by a Plotly chart: heat flux (Q_gB,i) against time (a/v_th,i), two step lines
+   over each 50-unit window, **Predicted** (persistence by default, a selector offers frozen) and **Actual** (the archived observed window mean).
+   The Predict → Reveal → Update replay (F4) drives it: a value is plotted only once predicted or revealed. MSE, RMSE and both ranges are shown
+   for the selected forecaster, running over the scored windows (a window counts at its Update, like the running MAE); once every window is
+   scored they equal `errorStats`. The table stays under a disclosure (keyboard
+   and screen-reader users, exact values).
+**Consequences.** Contract change → task 03 reopened (outcomes F6–F8) and re-verified. No other artifact changes.
+
+## D-027 · Heat & field: real VMEC geometry and |B|, an illustrative edge heat model, schematic diverters (owner requirement 2026-11-21)
+**Context.** The owner asks for a 3D interactive W7-X model: a temperature heat map (red hottest → yellow coldest), hover read-outs of temperature
+and |B|, a cross-section with an angle slider, four diverters at 0, π/2, π, 3π/2 with a temperature side panel, magnetic-field adjustment toggles
+that show the heat flow moving, a moving |B|-against-angle graph linked to the 3D model with a frozen snapshot, |B| colour-coded dark blue
+(strongest) → green (weakest), the loop "heat map → predict → change the field → new heat map", and the equation used to predict heat movement
+(`design-artifacts/requirements-2026-11-21/`). This repo holds no measured or simulated W7-X temperature, divertor-load or coil-response data,
+and the PRD says simulated magnetic corrections need a validated coil response, state transfer across equilibria and matched divertor and
+core-energy measurements — that remains true.
+**Decision.**
+1. A new view **Heat & field** (route `#/heat`) and feature `heatfield` on both sides (task 10). "Locate the tubes" is unchanged: its PRD rule
+   "unsampled regions stay gray" forbids painting the whole torus with data there.
+2. Real data, provenance kind `derived`: R, Z and |B| (tesla) on surfaces ρ = 0, 0.125 … 1 × 48 θ × 72 φ from `wout_w7x_kjm.nc` with the
+   existing VMEC reader, and eight LCFS field lines from the existing straight-field-line tracer.
+3. Temperatures, heat fluxes and tile temperatures come from an **illustrative reduced edge heat model** (`tasks/10-heat-field/MODEL.md`):
+   explicit anisotropic diffusion on the LCFS along the field-line pitch ι and across it with D⊥ ∝ (B0/B)², relaxation to a pedestal
+   temperature, sinks at Gaussian diverter footprints, a control-coil perturbation ε·B that sweeps the strike line, and lumped tile temperatures.
+   A new provenance kind **`model`** (common.schema.json): parameters chosen for illustration, not fitted to measurements; not a simulation of
+   W7-X. The view labels every model number with it; |B| is labelled VMEC, with the illustrative coil perturbation added while a coil is on.
+4. Diverters as the owner drew them: four, at φ = 0, π/2, π, 3π/2, black, with the note "schematic positions — W7-X has ten divertor units
+   (upper and lower in each of its five field periods)".
+5. Interactivity (toggle a coil at any moment, play/pause, predict from the current state) needs the model in the browser. main/ owns the
+   reference implementation (Python), the grids and golden checkpoints in `artifacts/heatfield.json`; the renderer's TypeScript port reads all
+   grids and parameters from the artifact (no duplicated constants) and must reproduce every golden checkpoint to `relativeTolerance` (2e-6:
+   the artifact rounds to 7 significant figures and the reference consumes the rounded inputs). MODEL.md, both implementations and the golden
+   values change together. This is no import between main/ and renderer/: the artifact is the only channel (D-001).
+6. "Parallelism predicts future heat flux movements" (page 1): the Predict step runs this reduced model ahead from the current state. The
+   GENE-X spatial-parallel run cannot predict anything here (no checkpoints in the repo, task 05); the view says so.
+7. Colours as the owner specified: temperature yellow (coldest) → red (hottest), |B| green (weakest) → dark blue (strongest); the design system
+   owns both ramps (tokens, both themes, lightness monotonic). Gray stays reserved for unsampled/context.
+**Consequences.** New contract `heatfield.schema.json`, manifest id `heatfield`, provenance kind `model` (design-system status, app-shell legend),
+a seventh route. Tasks 08 (D6) and 09 (A1, A6) reopened and re-verified; task 10 new. The PRD's later-milestone sentence still stands: this is an
+illustration of the loop, not a validated magnetic correction.
+
+## D-028 · Build clarifications for D-026 and D-027 (2026-11-21)
+**Context.** Building and reviewing D-026/D-027 settled points MODEL.md and the contracts had left open.
+**Decision.**
+1. Tuning (MODEL.md "Tuning"): only `tileGain` changed, 100 → 165 °C per MW m⁻² (`heatFluxScale` stays 0.2). At 3 s with coils off D1 and D4
+   are above the 1200 °C limit and D2, D3 below; with all coils on from 0 s all four are below. Stability number 0.7355 (≤ 1).
+2. Coil state at step n = the coil-schedule entry with the largest `fromStep` ≤ n; it drives step n → n+1 and the diagnostics of the state after
+   n steps. Both implementations take φ_k from `diverters.items[k].phi` and θ_d from `diverters.thetaCentre` as written (7 significant figures).
+3. Contracts tightened: `heatfield.provenance.kind` is pinned to `model` and `geometryProvenance.kind` to `derived` (model output can never be
+   labelled as data); a forecast `errorStat` has all-null values exactly when n = 0.
+4. Axis |B| in `heatfield.surfaces[0]` varies with θ by up to 0.03 T (1.1 %, stella's half-grid extrapolation); stated in
+   `geometryProvenance.verification.details`. The model uses only the LCFS.
+5. Task 08 D6: temperature vs the frozen Locate-the-tubes |B| ramp cannot be separated under protanopia/deuteranopia in the light theme (its ochre
+   strongest end has the lightness of the orange any yellow → red ramp passes through). D6 now asks ΔE00 ≥ 8 in normal vision, the yellow ends
+   ≥ 8 apart for every viewer, and separate views with separate colour bars.
+6. Forecast statistics run over the scored windows (a window counts at its Update, as the running MAE does). The owner's two-line chart
+   must not hide behind 24 clicks: a "Run to end" control steps every remaining window in the Predict → Reveal → Update order, and the
+   replay panel moves above the final scores (DOM order); a one-line pointer at the top of the replay keeps the PRD MAE mismatch visible.
+**Consequences.** MODEL.md, tasks 03 and 08 wording updated; no artifact values change except the text fields named above.
+
 ## D-014 · (not adopted) "Wave mode" for the orchestrator's Stop hook
 **Context.** With parallel agents editing one working tree, the Stop hook (`verify.sh all` on the shared tree)
 repeatedly blocked the orchestrator on files it must not touch. A proposal to verify committed HEAD in a clean

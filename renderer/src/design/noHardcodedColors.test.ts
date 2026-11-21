@@ -12,6 +12,8 @@ import { withAlpha } from './color';
 import { parseCss } from './cssRules';
 import {
   axisTitle,
+  FORECAST_LINES,
+  forecastStyle,
   meanSegment,
   plotLayout,
   seriesStyle,
@@ -281,6 +283,7 @@ describe.each(THEMES)('emitted theme colours are tokens — %s', (theme) => {
     plotLayout(theme, { xaxis: { title: { text: axisTitle('Time', 'a/v_{th,i}') } } }),
     plotLayout(theme, {}, { narrow: true }),
     ...SERIES_IDS.map((s) => seriesStyle(s, theme)),
+    ...FORECAST_LINES.map((l) => forecastStyle(l, theme)),
     ...SERIES_IDS.map((s) => uncertaintyBand([0, 1], [1, 2], 0.1, s, theme)),
     windowShape([300, 400], theme, '300–400'),
     ...unsampledShapes([0, 100], theme),

@@ -125,7 +125,18 @@ export function contrastPairs(theme: ThemeName): ContrastPair[] {
   out.push({ name: 'plot axis line', fg: t.plot.axis, bg: t.plot.plot, min: NON_TEXT });
   for (const [k, v] of Object.entries(t.series)) out.push({ name: `series ${k} on plot`, fg: v, bg: t.plot.plot, min: NON_TEXT });
   for (const [k, v] of Object.entries(t.series)) out.push({ name: `series ${k} on scene`, fg: v, bg: t.scene.background, min: NON_TEXT });
+  // The forecast chart's Predicted line (Actual is the stella series, already above).
+  out.push({ name: 'forecast predicted line on plot', fg: t.plot.predicted, bg: t.plot.plot, min: NON_TEXT });
+  // The |B| colormaps also colour field lines (a line has no outline of its own): every stop is held to 3:1.
   t.scene.bmag.forEach((v, i) => out.push({ name: `|B| stop ${i} on scene`, fg: v, bg: t.scene.background, min: NON_TEXT }));
+  t.scene.field.forEach((v, i) => out.push({ name: `field stop ${i} on scene`, fg: v, bg: t.scene.background, min: NON_TEXT }));
+  // The temperature colormap only fills (the LCFS, cross-section cells) and its cold end is the owner's
+  // yellow, so the shape's edge is carried by the outline drawn round it (WCAG 1.4.11; DESIGN.md §7).
+  // ramps.test.ts keeps every heat stop ≥ 20 ΔE00 off the scene background.
+  out.push({ name: 'heat fill outline (boundary) on scene', fg: t.scene.boundary, bg: t.scene.background, min: NON_TEXT });
+  // The diverter's edge is drawn round its fill: it must read as an outline. (Which of the two carries
+  // the plate on each ground is checked in ramps.test.ts: on white the fill does, on the dark scene the edge.)
+  out.push({ name: 'diverter edge vs diverter fill', fg: t.scene.diverterEdge, bg: t.scene.diverterFill, min: NON_TEXT });
   return out;
 }
 

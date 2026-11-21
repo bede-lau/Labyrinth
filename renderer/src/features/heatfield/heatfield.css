@@ -1,0 +1,272 @@
+/* Heat & field. Tokens only (no colour literals). Data colours come from the heat and field ramps; gray is never
+   data here. The layout is a grid: the 3D scene with the |B| chart directly under it (the chart is read beside the
+   3D view) on the left, cross-section and diverters spanning both rows on the right, then the control loop and
+   the equation at full width; one column on narrow screens, never a page-level horizontal scroll. */
+.hf-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  grid-template-areas:
+    'notes notes'
+    'scene side'
+    'chart side'
+    'loop loop'
+    'equation equation';
+  /* The chart row is the flexible one: when the side column is taller than scene + chart, the spare height goes
+     below the chart, so the chart stays directly under the 3D view instead of a gap opening between them. */
+  grid-template-rows: auto auto 1fr auto auto;
+  gap: var(--lab-space-4);
+  align-items: start;
+  min-width: 0;
+}
+.hf-layout__notes { grid-area: notes; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--lab-space-3); }
+.hf-layout__scene { grid-area: scene; min-width: 0; }
+.hf-layout__side { grid-area: side; display: flex; flex-direction: column; gap: var(--lab-space-4); min-width: 0; }
+.hf-layout__chart { grid-area: chart; min-width: 0; }
+.hf-layout__loop { grid-area: loop; min-width: 0; }
+.hf-layout__equation { grid-area: equation; min-width: 0; }
+
+.hf-badges { display: inline-flex; flex-wrap: wrap; gap: var(--lab-space-2); align-items: center; justify-content: flex-end; }
+
+/* ---- buttons, toggles, checkboxes ---------------------------------------------------------- */
+.hf-btn {
+  display: inline-flex; align-items: center; gap: var(--lab-space-1);
+  min-height: 28px; padding: 0 var(--lab-space-3);
+  font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm);
+  background: var(--lab-color-surface); color: var(--lab-color-text);
+  border: 1px solid var(--lab-color-border-strong); border-radius: var(--lab-radius-sm);
+  cursor: pointer; white-space: nowrap;
+}
+.hf-btn:hover:not(:disabled) { background: var(--lab-color-surface-hover); }
+.hf-btn:disabled { color: var(--lab-color-text-subtle); border-color: var(--lab-color-border); cursor: not-allowed; }
+.hf-btn--primary { background: var(--lab-color-accent); border-color: var(--lab-color-accent); color: var(--lab-color-accent-fg); font-weight: var(--lab-font-weight-semibold); }
+.hf-btn--primary:hover:not(:disabled) { background: var(--lab-color-accent-hover); }
+.hf-btn--sm { min-height: 24px; padding: 0 var(--lab-space-2); font-size: var(--lab-font-size-xs); }
+.hf-btn[aria-pressed='true'] { background: var(--lab-color-accent-subtle); border-color: var(--lab-color-accent); font-weight: var(--lab-font-weight-semibold); }
+
+.hf-toggle {
+  display: inline-flex; align-items: center; gap: var(--lab-space-2);
+  min-height: 28px; padding: 0 var(--lab-space-2);
+  font-size: var(--lab-font-size-xs); color: var(--lab-color-text);
+  background: var(--lab-color-surface); border: 1px solid var(--lab-color-border-strong); border-radius: var(--lab-radius-pill);
+  cursor: pointer;
+}
+.hf-toggle__track {
+  position: relative; display: inline-block; width: 26px; height: 14px;
+  border-radius: var(--lab-radius-pill); border: 1px solid var(--lab-color-border-strong); background: var(--lab-color-surface-sunken);
+}
+.hf-toggle__thumb {
+  position: absolute; top: 1px; left: 1px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--lab-color-text-muted);
+  transition: transform var(--lab-motion-fast) var(--lab-motion-easing);
+}
+.hf-toggle[aria-pressed='true'] { border-color: var(--lab-color-accent); font-weight: var(--lab-font-weight-semibold); }
+.hf-toggle[aria-pressed='true'] .hf-toggle__track { background: var(--lab-color-accent); border-color: var(--lab-color-accent); }
+.hf-toggle[aria-pressed='true'] .hf-toggle__thumb { transform: translateX(12px); background: var(--lab-color-accent-fg); }
+
+.hf-options { display: flex; flex-wrap: wrap; gap: var(--lab-space-2) var(--lab-space-5); margin: var(--lab-space-2) 0 var(--lab-space-3); }
+.hf-check { display: inline-flex; align-items: center; gap: var(--lab-space-2); min-height: 24px; font-size: var(--lab-font-size-sm); color: var(--lab-color-text); cursor: pointer; }
+.hf-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--lab-color-accent); }
+
+/* ---- playback ---------------------------------------------------------------------------------- */
+.hf-play { display: flex; flex-wrap: wrap; align-items: center; gap: var(--lab-space-2) var(--lab-space-3); }
+.hf-clock { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: var(--lab-space-1) var(--lab-space-2); font-size: var(--lab-font-size-sm); color: var(--lab-color-text); }
+.hf-clock > .lab-num { font-weight: var(--lab-font-weight-semibold); }
+.hf-clock__note { font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); }
+
+/* ---- 3D scene -------------------------------------------------------------------------------- */
+.hf-scene { position: relative; }
+.hf-scene__canvas {
+  width: 100%; height: 480px;
+  border-radius: var(--lab-radius-sm); overflow: hidden;
+  background: var(--lab-scene-background);
+  border: 1px solid var(--lab-color-border);
+  cursor: grab; touch-action: none;
+}
+.hf-scene__canvas:active { cursor: grabbing; }
+.hf-scene__canvas canvas { display: block; }
+.hf-scene__labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+/* D1…D4 and "Slice φ …": a fixed box centred on the point HeatScene computes beyond what it names, joined to it by
+   a leader line (DZ-2, DZ3-1). Its width, height, centring margins and line height are written by HeatScene from
+   scene.ts LABEL / SLICE_LABEL, the sizes the placement clears the plates with (HF3-4), so none is set here. */
+.hf-scene__label {
+  position: absolute; left: 0; top: 0;
+  box-sizing: border-box; padding: 0;
+  text-align: center; white-space: nowrap; overflow: hidden;
+  font-size: var(--lab-font-size-xs); font-weight: var(--lab-font-weight-bold);
+  color: var(--lab-color-text); background: var(--lab-color-surface);
+  border: 1px solid var(--lab-color-border-strong); border-radius: var(--lab-radius-xs);
+}
+/* The leader: a text-coloured line on a halo in the scene ground, visible on every ramp colour (as the slice cursor). */
+.hf-scene__leaders { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.hf-scene__leader-halo { stroke: var(--lab-scene-background); stroke-width: 4; stroke-linecap: round; }
+.hf-scene__leader-line { stroke: var(--lab-color-text); stroke-width: 1.5; stroke-linecap: round; }
+.hf-scene__reset { position: absolute; top: var(--lab-space-2); right: var(--lab-space-2); min-height: 24px; font-size: var(--lab-font-size-xs); }
+
+.hf-readout {
+  position: absolute; z-index: var(--lab-z-popover);
+  display: flex; flex-direction: column; gap: 2px;
+  max-width: 15rem; padding: var(--lab-space-2) var(--lab-space-3);
+  background: var(--lab-color-surface-raised); color: var(--lab-color-text);
+  border: 1px solid var(--lab-color-border-strong); border-radius: var(--lab-radius-md);
+  box-shadow: var(--lab-shadow-raised);
+  font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs);
+  pointer-events: none;
+}
+.hf-readout__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--lab-space-1); }
+.hf-readout__k { color: var(--lab-color-text-muted); min-width: 6.5em; }
+.hf-readout__v { font-weight: var(--lab-font-weight-semibold); }
+
+.hf-keys {
+  display: grid; grid-template-columns: minmax(220px, 340px) minmax(0, 1fr);
+  gap: var(--lab-space-3) var(--lab-space-5); align-items: start; margin-top: var(--lab-space-3);
+}
+.hf-key { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--lab-space-1); }
+.hf-key li { display: inline-flex; align-items: center; gap: var(--lab-space-2); font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-muted); }
+.hf-swatch { display: inline-block; flex: none; width: 18px; height: 6px; border-radius: var(--lab-radius-xs); }
+.hf-swatch--plate { height: 10px; width: 14px; background: var(--lab-scene-diverter-fill); outline: 2px solid var(--lab-scene-diverter-edge); border: 1px solid var(--lab-color-border-strong); }
+/* Field lines take every colour of the |B| ramp (HeatFieldView draws fieldGradientCss into this strip, DZ3-1). */
+.hf-swatch--line { height: 4px; outline: 1px solid var(--lab-scene-marker-outline); }
+/* The arrow and the slice as drawn in 3D: a color.text core on a scene-background halo, shown over the surface's
+   own colour ramp (HeatFieldView paints it in), where the halo is what keeps the mark readable (DZ3-1, DZ3-2). */
+.hf-swatch--mark { width: 30px; height: 14px; border: 1px solid var(--lab-color-border-strong); }
+.hf-swatch--mark svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.hf-mark__halo { fill: none; stroke: var(--lab-scene-background); stroke-linecap: round; stroke-linejoin: round; }
+.hf-mark__core { fill: none; stroke: var(--lab-color-text); stroke-linecap: round; stroke-linejoin: round; }
+.hf-mark__head-halo { fill: var(--lab-scene-background); stroke: var(--lab-scene-background); stroke-width: 3; stroke-linejoin: round; }
+.hf-mark__head { fill: var(--lab-color-text); stroke: none; }
+.hf-swatch--arrow .hf-mark__halo { stroke-width: 4.5; }
+.hf-swatch--arrow .hf-mark__core { stroke-width: 1.5; }
+.hf-swatch--slice .hf-mark__halo { stroke-width: 5; }
+.hf-swatch--slice .hf-mark__core { stroke-width: 2; }
+
+.hf-summary { margin-top: var(--lab-space-3); max-width: 110ch; font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-muted); }
+.hf-small { margin-top: var(--lab-space-2); max-width: 100ch; font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-muted); }
+
+/* ---- colour bars --------------------------------------------------------------------------- */
+.hf-colorbar { display: flex; flex-direction: column; gap: var(--lab-space-1); font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); min-width: 0; }
+.hf-colorbar__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--lab-space-2); }
+.hf-colorbar__title { color: var(--lab-color-text); font-weight: var(--lab-font-weight-medium); }
+.hf-colorbar__body { display: flex; flex-direction: column; gap: 2px; }
+/* Framed in border-strong (≥ 3:1): the temperature bar starts at a pale yellow that is not 3:1 on the panel (DESIGN.md §7). */
+.hf-colorbar__bar { display: block; height: 12px; border-radius: var(--lab-radius-xs); border: 1px solid var(--lab-color-border-strong); }
+.hf-colorbar__ticks { display: flex; justify-content: space-between; gap: var(--lab-space-2); color: var(--lab-color-text-subtle); }
+.hf-colorbar__note { color: var(--lab-color-text-subtle); }
+
+/* ---- cross-section ------------------------------------------------------------------------- */
+.hf-slider { display: flex; flex-direction: column; gap: var(--lab-space-2); margin-bottom: var(--lab-space-2); }
+.hf-slider__label { font-size: var(--lab-font-size-sm); color: var(--lab-color-text); }
+.hf-slider input[type='range'] { width: 100%; min-height: 24px; accent-color: var(--lab-color-accent); }
+.hf-slider__jumps { display: flex; flex-wrap: wrap; gap: var(--lab-space-1); }
+
+.hf-xs { margin: 0 0 var(--lab-space-3); }
+.hf-xs__box { position: relative; max-width: 360px; margin: 0 auto; }
+/* The viewBox is 360 units wide: capping the width keeps the SVG labels at their token size. */
+.hf-xs__svg { display: block; width: 100%; height: auto; }
+.hf-xs__frame { fill: var(--lab-scene-background); stroke: var(--lab-plot-axis); stroke-width: 1; }
+.hf-xs__grid line { stroke: var(--lab-plot-grid); stroke-width: 1; }
+/* Each cell is stroked in its own fill (CrossSection sets stroke = fill), so anti-aliasing leaves no hairline seams
+   between neighbours (DZ3-4). The same for the edge strip. */
+.hf-xs__cells path, .hf-xs__edge path { stroke-width: 0.75px; stroke-linejoin: round; }
+.hf-xs__cells path:hover { stroke: var(--lab-color-text); stroke-width: 1; }
+/* The edge strip is a temperature fill too, so it is outlined like the LCFS (DESIGN.md §7, ≥ 1.5px, ≥ 3:1). */
+.hf-xs__edge { pointer-events: none; }
+.hf-xs__edge .hf-xs__edge-outline { fill: none; stroke: var(--lab-scene-boundary); stroke-width: 1.5px; stroke-linejoin: round; }
+/* The LCFS outline carries the slice's edge where a pale temperature cell meets the background (DESIGN.md §7: ≥ 1.5px). */
+.hf-xs__lcfs { fill: none; stroke: var(--lab-color-text); stroke-width: 1.5; pointer-events: none; }
+.hf-xs__axis { fill: var(--lab-color-text); stroke: var(--lab-scene-marker-outline); stroke-width: 1; pointer-events: none; }
+.hf-xs__plate-edge { fill: none; stroke: var(--lab-scene-diverter-edge); stroke-width: 9; stroke-linecap: round; }
+.hf-xs__plate-fill { fill: none; stroke: var(--lab-scene-diverter-fill); stroke-width: 5; stroke-linecap: round; }
+.hf-xs__plate-label { font-size: var(--lab-font-size-xs); font-weight: var(--lab-font-weight-bold); fill: var(--lab-color-text); paint-order: stroke; stroke: var(--lab-scene-background); stroke-width: 3; }
+.hf-xs__ticks text { font-size: var(--lab-font-size-2xs); fill: var(--lab-color-text-muted); font-variant-numeric: tabular-nums; }
+.hf-xs__axis-title { font-size: var(--lab-font-size-xs); fill: var(--lab-color-text-muted); }
+/* Keyboard cursor: a text-coloured outline on a halo in the scene ground, visible on every ramp colour. */
+.hf-xs__cursor { pointer-events: none; }
+.hf-xs__cursor-halo { fill: none; stroke: var(--lab-scene-background); stroke-width: 4; stroke-linejoin: round; }
+.hf-xs__cursor-line { fill: none; stroke: var(--lab-color-text); stroke-width: 2; stroke-linejoin: round; }
+.hf-xs__hint { margin-top: var(--lab-space-1); font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); }
+.hf-details--lcfs { margin-top: var(--lab-space-2); }
+.hf-details--lcfs .hf-table-wrap { max-height: 20rem; overflow-y: auto; }
+
+/* ---- tables -------------------------------------------------------------------------------- */
+.hf-table-wrap { max-width: 100%; overflow-x: auto; margin-top: var(--lab-space-2); }
+.hf-table { width: 100%; border-collapse: collapse; font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); }
+.hf-table th, .hf-table td { padding: var(--lab-space-1) var(--lab-space-2); text-align: left; border-bottom: 1px solid var(--lab-color-border); vertical-align: middle; }
+.hf-table thead th { font-size: var(--lab-font-size-xs); font-weight: var(--lab-font-weight-semibold); color: var(--lab-color-text-muted); background: var(--lab-color-surface-sunken); }
+.hf-table tbody th { font-weight: var(--lab-font-weight-semibold); color: var(--lab-color-text); }
+.hf-table .hf-num { text-align: right; }
+.hf-where { display: block; font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); }
+
+.hf-div__name { display: block; }
+.hf-div__where { display: block; white-space: nowrap; font-size: var(--lab-font-size-2xs); font-weight: var(--lab-font-weight-regular); color: var(--lab-color-text-muted); }
+.hf-div__foot { display: flex; flex-direction: column; align-items: flex-start; gap: var(--lab-space-1); margin-top: var(--lab-space-3); }
+.hf-limit { display: inline-flex; align-items: center; gap: var(--lab-space-1); white-space: nowrap; font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); }
+.hf-limit[data-over='true'] { color: var(--lab-status-failed-fg); font-weight: var(--lab-font-weight-semibold); }
+/* Narrow card (a phone, or a narrow side column): the diverter table must fit without a sideways scroll, so the
+   field-adjustment toggles (the owner's main control) stay in view. Tighter cells, the status words may wrap
+   under their icon, and the toggle drops its inner gaps. The table stays a table (no display changes). */
+@container (max-width: 420px) {
+  .hf-div__table th, .hf-div__table td { padding-inline: var(--lab-space-1); }
+  /* Long header words ("adjustment") hyphenate (index.html sets lang="en") instead of widening their column. */
+  .hf-div__table thead th { line-height: var(--lab-line-height-xs); hyphens: auto; }
+  .hf-div__table .hf-limit { white-space: normal; align-items: flex-start; }
+  .hf-div__table .hf-limit svg { flex: none; margin-top: 1px; }
+  .hf-div__table .hf-toggle { gap: var(--lab-space-1); padding: 0 var(--lab-space-1); }
+}
+/* Narrower still (a 360px phone): the angle under each diverter name may wrap too. Below about 300px the table
+   scrolls inside its own region; the page never does. */
+@container (max-width: 310px) {
+  .hf-div__table .hf-div__where { white-space: normal; }
+}
+
+/* ---- chart ----------------------------------------------------------------------------------- */
+.hf-figure { display: flex; flex-direction: column; gap: var(--lab-space-2); min-width: 0; }
+/* Clipped: Plotly draws at 700px until its first resize, which must never widen the page (phones zoom out to it). */
+.hf-figure__plot { width: 100%; min-height: 300px; overflow: hidden; }
+.hf-figure__summary { font-size: var(--lab-font-size-xs); line-height: var(--lab-line-height-xs); color: var(--lab-color-text-subtle); }
+.hf-snap { display: inline-flex; flex-wrap: wrap; gap: var(--lab-space-2); }
+
+/* ---- control loop ------------------------------------------------------------------------------ */
+.hf-loop { display: flex; flex-direction: column; gap: var(--lab-space-3); }
+.hf-loop__steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--lab-space-2); counter-reset: none; }
+.hf-loop__step {
+  display: flex; align-items: center; gap: var(--lab-space-2); min-width: 0;
+  padding: var(--lab-space-2); border: 1px solid var(--lab-color-border); border-radius: var(--lab-radius-md);
+  font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted);
+}
+.hf-loop__step[aria-current='step'] { border-color: var(--lab-color-accent); background: var(--lab-color-accent-subtle); color: var(--lab-color-text); font-weight: var(--lab-font-weight-semibold); }
+.hf-loop__step[data-done='true'] { color: var(--lab-color-text); }
+.hf-loop__num {
+  flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+  border: 1px solid var(--lab-color-border-strong); font-weight: var(--lab-font-weight-semibold);
+}
+.hf-loop__step[aria-current='step'] .hf-loop__num { border-color: var(--lab-color-accent); background: var(--lab-color-accent); color: var(--lab-color-accent-fg); }
+.hf-loop__title { min-width: 0; overflow-wrap: anywhere; }
+.hf-loop__body { display: flex; flex-direction: column; align-items: flex-start; gap: var(--lab-space-2); }
+.hf-loop__text { font-size: var(--lab-font-size-sm); color: var(--lab-color-text); max-width: 100ch; }
+.hf-loop__caption { caption-side: top; text-align: left; padding-bottom: var(--lab-space-1); font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); }
+.hf-loop__adj { font-weight: var(--lab-font-weight-regular); color: var(--lab-color-text-muted); }
+
+/* ---- equation ---------------------------------------------------------------------------------- */
+.hf-eq { display: flex; flex-direction: column; gap: var(--lab-space-3); }
+.hf-eq__main { padding: var(--lab-space-3) var(--lab-space-4); background: var(--lab-color-surface-sunken); border-radius: var(--lab-radius-md); border-left: 3px solid var(--lab-status-model-border); }
+.hf-eq__label { font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); }
+.hf-eq__math { font-family: 'Cambria Math', 'STIX Two Math', 'Latin Modern Math', serif; font-size: var(--lab-font-size-lg); line-height: var(--lab-line-height-lg); color: var(--lab-color-text); overflow-wrap: anywhere; }
+.hf-eq__meaning, .hf-eq__prose { font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text-muted); max-width: 110ch; }
+.hf-eq__list { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--lab-space-1); margin: var(--lab-space-3) 0; }
+.hf-eq__list dt.hf-eq__math { font-size: var(--lab-font-size-md); margin-top: var(--lab-space-2); }
+.hf-eq__list dd { margin: 0; font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); }
+.hf-eq__h { margin-top: var(--lab-space-3); font-size: var(--lab-font-size-sm); color: var(--lab-color-text); }
+.hf-details > summary { font-size: var(--lab-font-size-sm); font-weight: var(--lab-font-weight-semibold); color: var(--lab-color-text); }
+.hf-details--note { margin-top: var(--lab-space-1); }
+.hf-details--note > summary { font-weight: var(--lab-font-weight-medium); }
+
+/* The page grid follows the viewport; everything inside a Panel follows the Panel body (an inline-size container,
+   DESIGN.md §8/§9), so a narrow card on a wide screen gets the narrow layout too (DZ3-9). */
+@media (max-width: 1100px) {
+  .hf-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: 'notes' 'scene' 'side' 'chart' 'loop' 'equation'; }
+}
+@container (max-width: 560px) {
+  .hf-scene__canvas { height: 340px; }
+  .hf-keys { grid-template-columns: minmax(0, 1fr); }
+  .hf-loop__steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

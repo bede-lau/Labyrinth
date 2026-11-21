@@ -5,7 +5,31 @@
 > Branch **`main`**. Everything below "Current state" is history, newest first.
 > Every command runs inside WSL through `scripts/dev.sh` — CLAUDE.md "Running commands on this machine" (D-020).
 
-## Current state
+## In flight (2026-11-21, session 4) — owner requirement "Heat & field" + forecast chart
+
+The owner sent a new requirement (`design-artifacts/requirements-2026-11-21/`, transcribed in its README.md) and asked to commit and push when
+done. Decisions **D-026** (forecast: predicted-vs-actual chart, MSE / RMSE / ranges, `errorStats` in forecast.json) and **D-027** (new view
+"Heat & field": real VMEC geometry and |B|, an illustrative edge heat model specified in `tasks/10-heat-field/MODEL.md`, schematic diverters at
+0, π/2, π, 3π/2, new provenance kind `model`). Contracts changed by the maintainer: `heatfield.schema.json` (new), `forecast.schema.json`
+(`errorStats`), `common.schema.json` (kind `model`), `manifest.schema.json` (id `heatfield`). Tasks **03, 08, 09 reopened (IN-PROGRESS)**,
+task **10-heat-field new (IN-PROGRESS)**. Build workflow `labyrinth-heatfield-forecast-build` (run `wf_82fb4f5b-459`): backend + design-lead →
+frontend forecast + frontend heat → integrator → one reviewer per area → fixes → re-review of blocker/major only → final integrator.
+**Workflow result:** 16 agents, all done; final integrator `verify.sh all` exit 0 (378 backend, 1660 frontend tests). Reviews: backend APPROVE,
+forecast frontend APPROVE, heat frontend APPROVE after HF-R1 fix; design re-review left **DZ-2** (D1–D4 labels cover the plates) and **DZ-4**
+(cross-section temperature range fixed at T_t..T_0) open, plus minors (no 3D LCFS outline, D1/slice markers hidden at 0°, badge captions,
+forecast chart opens empty / no "Run to end"). Task 04 reopened too: its B7 test's kind map gained `model` (no production change).
+Maintainer follow-ups done: D-028 (tuning tileGain 165, coil-state convention, contracts pin heatfield provenance kinds and forecast errorStat
+null-iff-n=0, axis |B| note, D6 wording, F8 "scored windows"); MODEL.md, interface.md, TASK 03/08 updated.
+Fix-up agents done (heat view DZ-2/4/5/8 + outline + rim draw order + pinned kinds; forecast "Run to end" + replay panel first + mismatch
+pointer; backend tests for the pinned contracts); `verify.sh all` exit 0 afterwards. Review workflow `labyrinth-fixround-review` (run
+`wf_2c72a427-a1f`): one reviewer per area (backend+contracts, fe-heat, fe-forecast, design visual) → owning engineer fixes blocker/major → re-review.
+Review result: backend, fe-heat and fe-forecast APPROVE; design's DZ3-1..3 majors fixed; the follow-up found DZ4-1 (phone slice label cut off).
+The owner then asked to cancel redundant checks: no more review rounds. The forecast minors (FC-R6/R7, DZ3-8) and the gallery specimen (DZ3-10) are done
+and green; one heat fixer is finishing DZ4-1, keeping the plates drawn over the slice ring, and the phone arrows.
+**Next:** `verify.sh all` → commit → three verifiers (03+04, 08+09, 10) → DONE → commit → push to `main` (the owner already asked for the push).
+If this session stops mid-way: nothing is committed yet for this work; the working tree holds it.
+
+## Current state (before session 4)
 
 **All ten tasks are `DONE`.** 02 was re-verified at `8a85c67` for D-025 (τ_int floor). 02, 06 and 09 were reopened for D-024 (the PRD's live comparison, cross-RX-2) and re-verified at `77fd8b6` (`Verdict: PASS`
 each; reviewer APPROVE). The other seven are verified at `3faed3a`. Before D-024 each had a final external-verifier run at commit `3faed3a` ending in `Verdict: PASS`, with a `PASS` row for every outcome
@@ -26,8 +50,7 @@ later change to a task's owned files reopens it until a verifier runs again. `ve
 | 08 | design system | DONE | `3faed3a` |
 | 09 | app shell | DONE (`liveContract.ts` comparison validator, D-024) | `77fd8b6` |
 
-**GitHub:** `origin/main` = `03bd626` (pushed 2026-11-20 on the owner's "Push to main"; fast-forward from `f0ca8e6`). The live-comparison work runs
-in a separate session in this checkout and commits locally; push it only after its review and verification, and ask the owner first.
+**GitHub:** `origin/main` = `7f49105` (pushed 2026-11-21 on the owner's "Push to main"; includes D-024 and D-025 and their re-verifications).
 
 **Open, not blocking DONE** (details in the Session 3 log below and in each VERIFY.md "Findings"):
 - **Live comparison (cross-RX-2) closed by D-024** (commit `77fd8b6`, DONE commit after it; both local, **not pushed** — ask the owner): live-status

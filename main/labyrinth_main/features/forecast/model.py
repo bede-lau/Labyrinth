@@ -24,6 +24,7 @@ solely to report how sensitive the MAE is to the definition.
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 
 import numpy as np
@@ -88,6 +89,43 @@ def run(t: Sequence[float], q: Sequence[float], mean: MeanFn = window_mean,
     mae = {"persistence": float(np.mean([s["absErrPersistence"] for s in steps])),
            "frozen": float(np.mean([s["absErrFrozen"] for s in steps]))}
     return {"init": init, "steps": steps, "mae": mae}
+
+
+# D-026 (owner requirement 2026-11-21): predicted vs actual error statistics over the scored steps.
+ERROR_STATS_DEFINITION = (
+    "D-026. Over the n scored steps k of `steps` (n is given with each forecaster's statistics), e_k = forecast_k - "
+    "observed_k, i.e. predicted minus "
+    "actual (Q_gB,i), where forecast_k is that step's persistence or frozen forecast and observed_k its archived "
+    "observed window mean (the same values the MAE uses; window means unchanged, D-013). MSE = (1/n) * sum_k e_k^2 "
+    "(Q_gB,i^2). RMSE = sqrt(MSE) (Q_gB,i). squaredErrorRange = [min_k e_k^2, max_k e_k^2] (Q_gB,i^2): the 'range of "
+    "MSE', read as the spread of the per-step squared errors the MSE averages (interpretation recorded in D-026 sec. 2). "
+    "errorRange = [min_k e_k, max_k e_k] (Q_gB,i): the range of the signed predicted - actual differences. With n = 0 "
+    "every value is null."
+)
+
+
+def error_stat(forecasts: Sequence[float], observed: Sequence[float]) -> dict:
+    """D-026 statistics of e_k = forecast_k - observed_k (predicted minus actual); every value null when n = 0."""
+    f = np.asarray(forecasts, dtype=float)
+    o = np.asarray(observed, dtype=float)
+    if f.shape != o.shape or f.ndim != 1:
+        raise ValueError(f"forecasts and observations must be 1-D and aligned, got {f.shape} and {o.shape}")
+    n = int(f.size)
+    if n == 0:
+        return {"n": 0, "mse": None, "rmse": None, "squaredErrorRange": None, "errorRange": None}
+    e = f - o
+    sq = e * e
+    mse = float(np.mean(sq))
+    return {"n": n, "mse": mse, "rmse": math.sqrt(mse), "squaredErrorRange": [float(sq.min()), float(sq.max())],
+            "errorRange": [float(e.min()), float(e.max())]}
+
+
+def error_stats(steps: Sequence[dict]) -> dict:
+    """`errorStats` of forecast.json, from the same steps the artifact holds."""
+    observed = [s["observed"] for s in steps]
+    return {"definition": ERROR_STATS_DEFINITION,
+            "persistence": error_stat([s["persistence"] for s in steps], observed),
+            "frozen": error_stat([s["frozen"] for s in steps], observed)}
 
 
 # Each variant uses one definition for both observation and forecast.

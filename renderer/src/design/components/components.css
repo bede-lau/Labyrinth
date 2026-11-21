@@ -101,6 +101,8 @@
 .lab-pill[data-status='archive'] { --pill-fg: var(--lab-status-archive-fg); --pill-bg: var(--lab-status-archive-bg); --pill-border: var(--lab-status-archive-border); }
 .lab-pill[data-status='derived'] { --pill-fg: var(--lab-status-derived-fg); --pill-bg: var(--lab-status-derived-bg); --pill-border: var(--lab-status-derived-border); }
 .lab-pill[data-status='prd-reported'] { --pill-fg: var(--lab-status-prd-reported-fg); --pill-bg: var(--lab-status-prd-reported-bg); --pill-border: var(--lab-status-prd-reported-border); border-style: dashed; }
+/* Model (D-027): an illustrative model's output. Dashed like prd-reported: no measurement backs it. */
+.lab-pill[data-status='model'] { --pill-fg: var(--lab-status-model-fg); --pill-bg: var(--lab-status-model-bg); --pill-border: var(--lab-status-model-border); border-style: dashed; }
 .lab-pill[data-status='unverified'] { --pill-fg: var(--lab-status-unverified-fg); --pill-bg: var(--lab-status-unverified-bg); --pill-border: var(--lab-status-unverified-border); border-style: dashed; }
 .lab-pill[data-status='passed'] { --pill-fg: var(--lab-status-passed-fg); --pill-bg: var(--lab-status-passed-bg); --pill-border: var(--lab-status-passed-border); }
 .lab-pill[data-status='failed'] { --pill-fg: var(--lab-status-failed-fg); --pill-bg: var(--lab-status-failed-bg); --pill-border: var(--lab-status-failed-border); }
@@ -180,6 +182,14 @@
   transition: background-color var(--lab-motion-fast) var(--lab-motion-easing), border-color var(--lab-motion-fast) var(--lab-motion-easing);
 }
 .lab-prov__toggle:hover { background: var(--lab-color-surface-hover); border-color: var(--lab-color-border); }
+/* The visible subject of a badge on a panel that carries more than one ("Temperatures", "Geometry and |B|"). */
+.lab-prov__caption {
+  padding-left: var(--lab-space-1);
+  font-size: var(--lab-font-size-xs);
+  font-weight: var(--lab-font-weight-medium);
+  color: var(--lab-color-text-muted);
+  white-space: nowrap;
+}
 .lab-prov__toggle:focus-visible { border-radius: var(--lab-radius-pill); }
 .lab-prov__chev { transition: transform var(--lab-motion-fast) var(--lab-motion-easing); }
 .lab-prov__toggle[aria-expanded='true'] .lab-prov__chev { transform: rotate(90deg); }
