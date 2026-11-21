@@ -2,10 +2,27 @@
 
 > **Single source of truth for handoff. Read "Current state" first, then `interface.md`, `architecture.md`, `decision.md`.**
 > Last updated: 2026-11-21 by the maintainer's live-comparison session (D-024) (Claude Code in the owner's checkout `D:\Labyrinth`, Windows + WSL).
-> Branch **`main`**. Everything below "Current state" is history, newest first.
+> Branch **`heat-field`** (session 4; `main` = `origin/main` `bbf2fc6`, the owner's redesign). Everything below "Current state" is history, newest first.
 > Every command runs inside WSL through `scripts/dev.sh` — CLAUDE.md "Running commands on this machine" (D-020).
 
-## In flight (2026-11-21, session 4) — owner requirement "Heat & field" + forecast chart
+## Session 4 result (2026-11-21) — read first: this work is on branch `heat-field`, NOT on `main`
+
+- **Where it is:** commit `ca1871b` (the build) plus the DONE commit after it, pushed to **`origin/heat-field`**. `origin/main` is `bbf2fc6`.
+  The owner pushed that from another machine the same day ("Integrate verified simulation artifacts and redesign Labyrinth replay views": nav rail,
+  GENE-X Dommaschk checkpoints, Modal rehearsal qualified, a new Forecast view that opens on all 8 windows with an absolute-error toggle, its
+  own **D-026**). Asked how to combine the two, the owner chose "push mine to a branch, decide later".
+- **Task 10-heat-field: DONE** (verified at `ca1871b`, `Verdict: PASS`).
+- **Tasks 03, 04, 08, 09: IN-PROGRESS on this branch.** They were built, reviewed and gated green, but their verifiers were stopped: any merge
+  with `bbf2fc6` changes their owned files, so they need verifying after the merge.
+- **To merge later:** `git merge-tree --write-tree --name-only heat-field origin/main` shows 12 conflicts. They are in `artifacts/manifest.json`
+  (regenerate), `renderer/src/features/forecast/{ForecastView.tsx,ForecastView.test.tsx,forecast.css}` (two forecast redesigns, so the owner must
+  pick: combine, mine or theirs), `renderer/src/shell/{App.tsx,App.test.tsx,Boundary.test.tsx,routes.ts}` (Heat & field becomes a 7th rail entry)
+  and `tasks/{03,04,08,09}/TASK.md`.
+  decision.md merges without a textual conflict, but **both sides used D-026**: renumber this branch's D-026/D-027/D-028 to D-027/D-028/D-029,
+  along with every reference to them in code, tests, docs and the artifacts' text. After merging: `verify.sh all`, then one verifier each for
+  03, 04, 08 and 09 (tasks 10's owned files are not touched by `bbf2fc6`), then push to `main`.
+
+## In flight (2026-11-21, session 4) — owner requirement "Heat & field" + forecast chart (history of the session)
 
 The owner sent a new requirement (`design-artifacts/requirements-2026-11-21/`, transcribed in its README.md) and asked to commit and push when
 done. Decisions **D-026** (forecast: predicted-vs-actual chart, MSE / RMSE / ranges, `errorStats` in forecast.json) and **D-027** (new view
@@ -26,8 +43,8 @@ pointer; backend tests for the pinned contracts); `verify.sh all` exit 0 afterwa
 Review result: backend, fe-heat and fe-forecast APPROVE; design's DZ3-1..3 majors fixed; the follow-up found DZ4-1 (phone slice label cut off).
 The owner then asked to cancel redundant checks: no more review rounds. The forecast minors (FC-R6/R7, DZ3-8) and the gallery specimen (DZ3-10) are done
 and green; one heat fixer is finishing DZ4-1, keeping the plates drawn over the slice ring, and the phone arrows.
-**Next:** `verify.sh all` → commit → three verifiers (03+04, 08+09, 10) → DONE → commit → push to `main` (the owner already asked for the push).
-If this session stops mid-way: nothing is committed yet for this work; the working tree holds it.
+Then: `verify.sh all` exit 0 → commit `ca1871b` → verifiers started; pushing to `main` was rejected (origin/main had moved to `bbf2fc6`, see above),
+so the 03+04 and 08+09 verifiers were stopped; task 10's verifier finished with PASS.
 
 ## Current state (before session 4)
 

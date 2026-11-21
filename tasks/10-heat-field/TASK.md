@@ -39,4 +39,6 @@ Frontend (route `#/heat`, nav label "Heat & field"):
 | H7–H16 | `renderer/src/features/heatfield/*.test.ts(x)` (one or more tests per outcome, names starting `H<n> `) |
 
 ## Status
-IN-PROGRESS
+DONE
+
+Verified at commit ca1871b: tasks/10-heat-field/VERIFY.md, `Verdict: PASS` (external verifier, 2026-11-21; independent numpy re-implementation of MODEL.md reproduces every golden checkpoint to 3.75e-7). Reviewed: backend, heat frontend and design areas (2026-11-21 review rounds, status.md session 4). Lives on branch `heat-field` until it is merged with `origin/main` (status.md).
