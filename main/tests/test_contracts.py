@@ -129,8 +129,7 @@ def test_spatial_contract_requires_fixtures():
 
 
 def test_spatial_contract_requires_the_d023_speedup_and_runs_fixtures():
-    """BE-DATA-4 / D-023 §2: at least the 1.27x speedup (basis arithmetic) and the 4-of-4 controlled runs (matches
-    null: not recomputable here); an empty or partial list is invalid."""
+    """Require both fixtures with either saved evidence or the legacy PRD-reported basis."""
     v = validator("spatial.schema.json")
     art = spatial_artifact.build()
     fx = {f["id"]: f for f in art["fixtures"]}
@@ -142,11 +141,10 @@ def test_spatial_contract_requires_the_d023_speedup_and_runs_fixtures():
     assert not valid(v, with_fixtures([]))
     assert not valid(v, with_fixtures([f for f in art["fixtures"] if f["id"] != "speedup"]))
     assert not valid(v, with_fixtures([f for f in art["fixtures"] if f["id"] != "controlled-runs-passed"]))
-    speedup_no_basis = {k: val for k, val in fx["speedup"].items() if k != "basis"}
-    assert not valid(v, with_fixtures([speedup_no_basis, fx["controlled-runs-passed"]]))
-    assert not valid(v, with_fixtures([{**fx["speedup"], "basis": "data"}, fx["controlled-runs-passed"]]))
-    runs_recomputed = {**fx["controlled-runs-passed"], "computed": 4, "matches": True}
-    assert not valid(v, with_fixtures([fx["speedup"], runs_recomputed]))
+    old_speedup = {**fx["speedup"], "basis": "arithmetic"}
+    old_runs = {k: v for k, v in fx["controlled-runs-passed"].items() if k != "basis"}
+    old_runs.update(computed=None, matches=None)
+    assert valid(v, with_fixtures([old_speedup, old_runs]))
 
 
 def test_closed_objects_and_non_negative_guard_plan():

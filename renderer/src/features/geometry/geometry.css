@@ -2,14 +2,14 @@
 .geo-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
-  grid-template-areas: 'scene inset' 'chart validation';
+  grid-template-areas: 'scene plan' 'scene inset' 'chart chart';
   gap: var(--lab-space-4);
   align-items: start;
 }
 .geo-layout__scene { grid-area: scene; }
 .geo-layout__inset { grid-area: inset; }
 .geo-layout__chart { grid-area: chart; }
-.geo-layout__validation { grid-area: validation; }
+.geo-layout__plan { grid-area: plan; }
 
 .geo-verdict { display: inline-flex; flex-wrap: wrap; gap: var(--lab-space-2); align-items: center; justify-content: flex-end; }
 
@@ -89,10 +89,21 @@
 .geo-check__note { padding-top: var(--lab-space-2); border-top: 1px solid var(--lab-color-border); }
 
 @media (max-width: 1100px) {
-  .geo-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'scene' 'inset' 'chart' 'validation'; }
+  .geo-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'plan' 'scene' 'inset' 'chart'; }
 }
 @media (max-width: 640px) {
   .geo-scene__canvas { height: 320px; }
   .geo-scene__keys { grid-template-columns: minmax(0, 1fr); }
   .geo-check__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+.geo-plan { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--lab-space-2); }
+.geo-plan button { display: grid; gap: var(--lab-space-1); justify-items: start; padding: var(--lab-space-3); border: 1px solid var(--lab-color-border); border-radius: var(--lab-radius-md); background: var(--lab-color-surface); color: var(--lab-color-text); cursor: pointer; }
+.geo-plan button[aria-pressed='true'] { border-color: var(--lab-color-accent); background: var(--lab-color-accent-subtle); }
+.geo-plan button:hover { border-color: var(--lab-color-border-strong); }
+.geo-plan svg { width: 100%; height: auto; fill: none; }
+.geo-plan__mesh { stroke: var(--lab-color-border-strong); stroke-width: 0.45; }
+.geo-plan__line { stroke: var(--lab-series-bean); stroke-width: 1.7; }
+.geo-plan [data-tube='triangular'] .geo-plan__line { stroke: var(--lab-series-triangular); }
+.geo-plan span { color: var(--lab-color-text-muted); font: var(--lab-font-size-xs)/1.4 var(--lab-font-mono); }
+.geo-plan strong { font-size: var(--lab-font-size-md); }

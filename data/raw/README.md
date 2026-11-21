@@ -21,3 +21,9 @@ González-Jerez et al., J. Plasma Phys. 88 (2022), doi:10.1017/S0022377822000393
 **Not present:** the "129 saved stella samples" of bean |B| at ρ = 0.8 named in the PRD acceptance
 test. They are not at the cited stella commit (searched test_2, test_5, test_7, quick_benchmarks).
 See decision.md D-007.
+
+
+## Local Modal verification inputs
+
+- `stella-modal-bean/` holds the executed input and printed geometry from the full-grid stella startup on 19 November 2026 (stella revision `6f60964d`). Compare the 129 rows at ρ 0.8 against the existing pinned `wout_w7x_kjm.nc`.
+- `genex-dommaschk/` holds the two NetCDF partition checkpoints and the separate traced two-GPU verification JSON. The controlled CPU–GPU–GPU–CPU run JSON and host metadata supply the untraced timings and all three MMS rows per run. The app records source hashes in each rebuilt artifact.

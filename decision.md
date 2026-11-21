@@ -280,3 +280,12 @@ D-014 was never used for a real change. Workaround used: wait in-turn for agents
 **Decision.** Everything was committed, in separate, explicitly labelled commits (verified backends / live GX UNVERIFIED /
 design system pending / frontend WIP UNVERIFIED). `status.md` §2 is the truth about what is verified. No task is marked `DONE`.
 **Consequence.** Do not read the presence of code in `main/` or `renderer/` as verification: check the VERIFY.md and status table.
+
+
+## D-026 · Use the saved local stella and GENE-X verification evidence
+
+The bundled Modal stella bean geometry and input are the 129-sample reference at ρ 0.8. Recompute the printed-field and toroidal-angle comparison alongside the existing ρ 0.7 checks. The acceptance contract still reads blocked records from earlier replays.
+
+Read the saved checkpoint bounds and traced GPU mapping for the Dommaschk replay. Recompute the means and 39-value reference check for each controlled run. Timing and kernel activity come from separate recorded experiments. Spatial fixture contracts accept both derived and earlier PRD-reported figures.
+
+The budget uses “PRD base estimate” for the GPU, CPU and RAM calculation. The guard estimate includes additional allowances.

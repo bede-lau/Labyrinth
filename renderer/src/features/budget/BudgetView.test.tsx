@@ -87,13 +87,13 @@ const ledgerPill = () =>
 
 /** The comparison table as text: [[header…], [row…], …]. */
 function compareTable() {
-  const table = screen.getByRole('table', { name: /Guard pricing compared with the PRD's GPU-only figures/ });
+  const table = screen.getByRole('table', { name: /Guard pricing compared with the PRD base estimate/ });
   return within(table)
     .getAllByRole('row')
     .map((r) => [...r.children].map((c) => c.textContent?.replace(/\s+/g, ' ').trim()));
 }
 
-test('B6 ledger bar to the $40 ceiling: posted, planned, remaining; live guard estimate distinguished from PRD GPU-only', async () => {
+test('B6 ledger bar to the $40 ceiling: posted, planned, remaining; live guard estimate distinguished from PRD base estimate', async () => {
   // Replay build (API unreachable): PRD ledger only, guard clearly marked as not reachable.
   serve(null);
   const { unmount } = render(<BudgetView livePollMs={60_000} />);
@@ -117,10 +117,10 @@ test('B6 ledger bar to the $40 ceiling: posted, planned, remaining; live guard e
   expect(screen.getByText('Guard not reachable')).toBeInTheDocument();
 
   // The guard's plan comes from the artifact's guardPlan (the backend priced it with the guard itself,
-  // D-023), labelled with that source beside the PRD's GPU-only figures: each number under its own
+  // D-023), labelled with that source beside the PRD base estimate: each number under its own
   // column header, and nothing claims to come from the API while it is unreachable.
   expect(compareTable()).toEqual([
-    ['Item', 'PRD (GPU time only)', 'Guard (incl. setup, idle, storage)'],
+    ['Item', 'PRD base estimate', 'Guard (incl. setup, idle, storage)'],
     ['15-min live slot', '$1.53', '$2.65 · guard plan · budget.json'],
     ['One-hour rehearsal', '$6.10', '$7.73 · guard plan · budget.json'],
     ['Planned total incl. $8.10 posted', '$21.83', '$26.21 · guard plan · budget.json'],
@@ -133,7 +133,7 @@ test('B6 ledger bar to the $40 ceiling: posted, planned, remaining; live guard e
   expect(screen.getByTestId('guard-assumptions')).toHaveTextContent(ARTIFACT.guardPlan.assumptions);
   expect(screen.getByTestId('guard-assumptions')).toHaveTextContent('Hard timeouts in the plan: live slot 1500 s, rehearsal 4500 s.');
   expect(screen.getByTestId('plan-vs-ceiling')).toHaveTextContent(
-    'Both plans stay inside the $40.00 ceiling: PRD GPU-only plan $21.83, Guard plan $26.21.',
+    'Both plans stay inside the $40.00 ceiling: PRD base estimate $21.83, Guard plan $26.21.',
   );
   unmount();
 
@@ -168,7 +168,7 @@ test('B6 ledger bar to the $40 ceiling: posted, planned, remaining; live guard e
 test('B6 the ledger, its title and the plan-versus-ceiling statement follow a modified artifact', async () => {
   const a = clone();
   Object.assign(a, { ceilingUsd: 50, postedUsd: 9.99, plannedUsd: 30.5, remainingAfterPlanUsd: 19.5 });
-  // FF-16: the PRD's GPU-only rehearsal price is rate × hours from the live-demo inputs, not the hourly rate.
+  // FF-16: the PRD base rehearsal price is rate × hours from the live-demo inputs, not the hourly rate.
   a.scenarios.find((s) => s.id === 'live-demo')!.inputs.rehearsalH = 2;
   serve(null, a);
   const first = render(<BudgetView livePollMs={60_000} />);
@@ -182,7 +182,7 @@ test('B6 the ledger, its title and the plan-versus-ceiling statement follow a mo
   expect(compareTable()[2]).toEqual(['One rehearsal, 2 h', '$12.20', '$7.73 · guard plan · budget.json']);
   expect(compareTable()[3]).toEqual(['Planned total incl. $9.99 posted', '$30.50', '$26.21 · guard plan · budget.json']);
   expect(screen.getByTestId('plan-vs-ceiling')).toHaveTextContent(
-    'Both plans stay inside the $50.00 ceiling: PRD GPU-only plan $30.50, Guard plan $26.21.',
+    'Both plans stay inside the $50.00 ceiling: PRD base estimate $30.50, Guard plan $26.21.',
   );
   first.unmount();
 
@@ -197,7 +197,7 @@ test('B6 the ledger, its title and the plan-versus-ceiling statement follow a mo
   expect(screen.getByTestId('prd-rehearsal')).toHaveTextContent(/^—$/);
   expect(compareTable()[2]![0]).toBe('One-hour rehearsal');
   expect(warn).toHaveTextContent('Guard plan $26.21 is $1.21 over the $25.00 ceiling');
-  expect(warn).toHaveTextContent('PRD GPU-only plan $21.83 stays inside it');
+  expect(warn).toHaveTextContent('PRD base estimate $21.83 stays inside it');
   expect(document.body).not.toHaveTextContent(/Both plans stay inside/);
   second.unmount();
 
@@ -206,7 +206,7 @@ test('B6 the ledger, its title and the plan-versus-ceiling statement follow a mo
   serve(null, over);
   const third = render(<BudgetView livePollMs={60_000} />);
   const both = await screen.findByRole('note', { name: /Both plans exceed the \$20\.00 ceiling/ });
-  expect(both).toHaveTextContent('PRD GPU-only plan $21.83 is $1.83 over');
+  expect(both).toHaveTextContent('PRD base estimate $21.83 is $1.83 over');
   expect(both).toHaveTextContent('Guard plan $26.21 is $6.21 over');
   expect(planChecks(over).map((p) => p.inside)).toEqual([false, false]);
   expect(planChecks(ARTIFACT).map((p) => p.inside)).toEqual([true, true]);
@@ -238,7 +238,7 @@ test('B6 the ledger, its title and the plan-versus-ceiling statement follow a mo
   );
   expect(screen.getByTestId('guard-assumptions')).not.toHaveTextContent(ARTIFACT.guardPlan.assumptions);
   const guardOver = screen.getByRole('note', { name: /Over the \$27\.00 ceiling: Guard plan$/ });
-  expect(guardOver).toHaveTextContent('Guard plan $27.73 is $0.73 over the $27.00 ceiling. PRD GPU-only plan $21.83 stays inside it.');
+  expect(guardOver).toHaveTextContent('Guard plan $27.73 is $0.73 over the $27.00 ceiling. PRD base estimate $21.83 stays inside it.');
 });
 
 test('B6 the ledger provenance pills follow the live-demo scenario kind in the artifact, never a hard-coded "derived"', async () => {
@@ -616,7 +616,7 @@ test('FF-8 when the API stops answering a session that may be billing, the guard
       'billed $20.00, pending $2.65, next slot estimate $2.65 of the $40.00 ceiling. These figures are not current. ' +
       'The connection to a session that may be billing was lost: GPUs may still be billing. Use Terminate in Advance plasma.',
   );
-  expect(within(note).getByRole('link', { name: 'Open Advance plasma to send Terminate' })).toHaveAttribute('href', '#/advance');
+  expect(within(note).getByRole('link', { name: 'Open Modal dashboard' })).toHaveAttribute('href', 'https://modal.com/apps');
   expect(document.body).not.toHaveTextContent(/static replay build/);
   const panel = screen.getByRole('region', { name: /Live budget guard: setup, idle and storage included/ });
   expect(panel.querySelector('.lab-panel__header .lab-pill')).toHaveAttribute('data-status', 'billing-risk');

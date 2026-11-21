@@ -17,13 +17,7 @@ TEST2_DIR = f"{STELLA_BLOB}/AUTOMATIC_TESTS/numerical_tests/test_2_geometry"
 GEOMETRY_URL = f"{TEST2_DIR}/EXPECTED_OUTPUT.vmec_geometry.geometry"
 OUT_NC_URL = f"{TEST2_DIR}/EXPECTED_OUTPUT.vmec_geometry.out.nc"
 
-ACCEPTANCE_129_DETAILS = (
-    "BLOCKED (decision D-007): the PRD acceptance test compares bean |B| with 129 saved stella samples "
-    "at rho 0.8, but those samples are not in this repo or at the cited stella commit "
-    f"{STELLA_COMMIT[:8]} (only rho 0.7 W7-X VMEC outputs with 13-25 samples exist there: test_2, test_5, "
-    "test_7). The tracer is instead validated against stella's saved rho 0.7 geometry (25 samples). "
-    "Unblock: add the stella .geometry/.out.nc file holding the 129 samples to data/raw/."
-)
+BEAN_EVIDENCE = paths.RAW / "stella-modal-bean"
 
 
 def build() -> dict:
@@ -50,6 +44,26 @@ def build() -> dict:
     out_nc_src = source("stella EXPECTED_OUTPUT.vmec_geometry.out.nc (test_2_geometry, float64 bmag)",
                         OUT_NC_URL, paths.STELLA_TEST2_OUT_NC)
 
+    geometry_path = BEAN_EVIDENCE / "overlap.geometry"
+    input_path = BEAN_EVIDENCE / "overlap.in"
+    bean = stella_reference.compare(eq, geometry_path, input_path)
+    params = bean["params"]
+    if (bean["samplesCompared"] != tubes.N_SAMPLES
+            or not math.isclose(params["torflux"], tubes.RHO**2, abs_tol=1e-12)
+            or params["alpha0"] != 0 or params["zeta_center"] != 0):
+        raise ValueError("saved stella run does not match the 129-point bean geometry")
+    bean_ok = bean["allWithinPrintedPrecision"]
+    bean_src = source("Modal stella bean geometry (rho 0.8, 129 samples)",
+                      "data/raw/stella-modal-bean/overlap.geometry", geometry_path)
+    bean_input = source("Modal stella bean input", "data/raw/stella-modal-bean/overlap.in", input_path)
+    acceptance = {
+        "outcome": "passed" if bean_ok else "failed",
+        "details": (f"Compared all {bean['samplesCompared']} saved Modal stella samples at rho 0.8. "
+                    f"Maximum absolute error in |B|/B_ref: {bean['maxAbsError']:.3g}. "
+                    + ("All |B| and toroidal angles agree to printed precision."
+                       if bean_ok else "At least one sample is outside the printed precision.")),
+    }
+
     s = tubes.RHO**2
     surf = eq.surface(s)
     boundary_surf = eq.surface(1.0)
@@ -71,8 +85,7 @@ def build() -> dict:
     else:
         f64_verdict = f"OUTSIDE tolerance {tolerance:g} on bmag (the zed grid within it)"
     details = (
-        "PRD acceptance (bean |B| vs 129 saved stella samples at rho 0.8): BLOCKED, samples not available "
-        "(D-007). Tracer validated vs stella rho 0.7: " + ("passed" if tracer_ok else "FAILED") + " "
+        acceptance["details"] + " Tracer validated vs stella rho 0.7: " + ("passed" if tracer_ok else "FAILED") + " "
         f"({ref['samplesCompared']} samples, 4 significant figures: bmag max |error| {ref['maxAbsError']:.3g}, "
         f"max rel {ref['maxRelError']:.3g}, zeta max |error| {ref['maxAbsErrorZeta']:.3g}; "
         + ("every zeta and bmag within half a unit in the last printed place"
@@ -127,7 +140,7 @@ def build() -> dict:
                 "source": geo_src,
             },
             "float64Reference": float64_reference,
-            "acceptance129": {"outcome": "blocked", "details": ACCEPTANCE_129_DETAILS},
+            "acceptance129": acceptance,
         },
         "provenance": provenance(
             "derived",
@@ -135,10 +148,8 @@ def build() -> dict:
                              f"(stella {STELLA_COMMIT[:8]} conventions)"),
             units=units,
             coverage=coverage,
-            sources=[wout_src, geo_src, out_nc_src],
-            # The PRD acceptance is blocked, so the overall outcome must never read "passed" (D-007); a failed
-            # tracer validation (printed-precision OR float64 check) is still reported as "failed".
-            outcome="blocked" if tracer_ok else "failed",
+            sources=[wout_src, geo_src, out_nc_src, bean_src, bean_input],
+            outcome="passed" if tracer_ok and bean_ok else "failed",
             details=details,
             runtime="not recorded (artifact is byte-deterministic; no wall-clock values are stored)",
         ),

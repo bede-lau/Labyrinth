@@ -50,9 +50,8 @@ All have `"schemaVersion": 1`; `fetchArtifact`/`useArtifact` reject anything els
   Built only by `common.provenance.fixture()` / `range_fixture()`. **Mismatches must be displayed, never hidden.**
 
 ### Semantics the UI must respect (each is a past review finding)
-1. **geometry `validation.acceptance129` is `{outcome: "blocked", details}`, schema `const "blocked"`** (D-007, D-023: the 129 saved stella
-   samples are not in the repo; unblocking is a schema change with its own decision entry). Render pill, reason and unblock step from it,
-   never from `provenance.verification.outcome` (which reads `blocked`, or `failed` if the tracer validation failed; its schema still allows `passed`).
+1. **geometry `validation.acceptance129`** reports `passed` or `failed` from the 129 saved Modal stella samples (D-026).
+   Older artifacts may report `blocked`. Render this check from its own outcome and details.
    The ρ 0.7 tracer verdict needs `stellaReference.allWithinPrintedPrecision` **and** `float64Reference.allWithinTolerance` (item 9).
 2. **geometry `surface.positions`** is `150 φ × 48 θ`, φ-major, **periodic in both indices with no duplicated seam** — wrap indices when triangulating.
    Cross-sections/boundary curves are *closed* polylines (first point repeated at the end).
@@ -63,17 +62,16 @@ All have `"schemaVersion": 1`; `fetchArtifact`/`useArtifact` reject anything els
 7. **budget range fixtures** (14–15 d, $3,100–3,200, 28–30 d, $6,200–6,400): `claimed: null`, `claimedRange`, `matches` = inside the range. No midpoint
    exists anywhere: show `lo–hi` and the distance to the range; never parse a range out of a label or note. Every recomputed budget fixture
    (ranges, $1.53/$13.73/$21.83/$18.17, 46,368 CPU-h) has `basis: "arithmetic"`; the GX benchmark items have `computed: null`, `matches: null`, no basis.
-8. **spatial `fixtures`** (required): `speedup` (claimed 1.27, computed 184.69/145.44 = 1.269871, basis arithmetic), `controlled-runs-passed`
-   (claimed 4, computed null), `cpu-mean-s` 184.69 and `gpu-mean-s` 145.44 (computed null). Pills and the run tally come from these and from `runs`
-   (`timing.speedupRecomputed` still exists). Exchanges are listed in both directions per boundary (3↔4, 6↔1). Provenance is `prd-reported`/`blocked`
-   (no checkpoints in repo). Label "Dommaschk geometry — not W7-X".
+8. **spatial `fixtures`** require `speedup` and `controlled-runs-passed`. The bundled artifact also checks the CPU and GPU means
+   against the PRD at printed precision. It derives ownership from saved checkpoints and GPU activity from the traced run.
+   Paired arrows depict periodic neighbors across rank boundaries. Label the case Dommaschk.
 9. **geometry `validation.float64Reference`** (required): `samplesCompared` 25, `tolerance` 1e-10 (absolute on bmag), `maxAbsError`, `maxRelError`,
    `allWithinTolerance`, `source` — our bmag vs stella's float64 `out.nc`. Both errors are rounded **up** to 2 significant figures (3e-13; raw 2.94e-13) so the
    rebuild stays byte-identical; `allWithinTolerance` is decided unrounded (every bmag and the zed grid). Read it from this field, never from provenance prose.
 10. **budget `guardPlan`** (required): the live guard's own plan, produced by calling `live_gx/budget_guard.py` (`budget.artifact.guard_plan()`):
     `slotEstimateUsd` 2.65, `rehearsalEstimateUsd` 7.73, `slotHardTimeoutS` 1500, `rehearsalHardTimeoutS` 4500, `plannedTotalUsd` 26.21
     (= $8.10 posted + 2 rehearsals + 1 slot), `assumptions` (the guard's non-PRD allowances and whether every step fits the ceiling).
-    `plannedUsd` stays 21.83, the PRD's GPU-only plan: show both, labelled. When `/api/live/status` answers, compare its `budget.slotEstimateUsd`
+    `plannedUsd` stays 21.83, the PRD base estimate: show both, labelled. When `/api/live/status` answers, compare its `budget.slotEstimateUsd`
     with `guardPlan.slotEstimateUsd` to the cent and say so when they differ.
 11. **`basis` comes from the fixture** (absent → data) in every view, never from a call-site list. Transport and forecast fixtures carry none.
 
@@ -133,11 +131,13 @@ once the session thread has ended the API is back at the gate's `idle`/`unavaila
   is "no claim"**: the archive's 200–300 / 300–400 windows are undecidable and their N_eff is not established, so the ≥ 20 gate is not met (D-017); the flag stays false; live means, uncertainty and deltas are still shown.
   The renderer shows it only when `isLive` (Check transport, "Live comparison").
 - `budget` in the snapshot comes from the guard (D-015): `slotEstimateUsd` $2.65, `hardTimeoutS` 1500 s (less when the remaining budget is short). With `budget.json` `guardPlan`
-  ($2.65 / $7.73 / $26.21) it **differs from the PRD's GPU-only $1.53/$13.73/$21.83** — show both, labelled.
+  ($2.65 / $7.73 / $26.21) it **differs from the PRD base $1.53/$13.73/$21.83** — show both, labelled.
 
 ---
 
 ## 4. Renderer-side interfaces
+
+Advance plasma also reads the geometry artifact to illustrate the two planned GX assignments. Both outlines use the same orthographic projection of the saved surface and tube samples. The worker labels remain available if the illustration cannot load.
 
 **Data access (only `renderer/src/lib/`):**
 - `artifacts.ts` — `useArtifact<T>(id)` → `{status:'loading'} | {status:'error',file,message} | {status:'ready',data}` (never blank), `fetchArtifact` (non-2xx or `schemaVersion !== 1` → error), `artifactUrl(id)` = `/artifacts/<id>.json`.
@@ -273,5 +273,4 @@ Helper scripts (D-020): `dev.sh` (toolchain PATH wrapper, caps `VITEST_MAX_WORKE
 
 ## 10. Known interface gaps
 
-- `common.verification.outcome` still permits `passed` for geometry `provenance.verification`; only a backend test (`test_geometry.py`) keeps it `blocked`/`failed`. `acceptance129` itself is schema-fixed.
 - Modal API details (`cancel(terminate_containers=True)`, `startup_timeout`, `(request, limit)` tuples, `scaledown_window`, `Image.env`, `modal.is_local()`) were written against knowledge of modal 1.x, **not an installed `modal==1.6.4`**.

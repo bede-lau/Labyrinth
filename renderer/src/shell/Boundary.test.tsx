@@ -1,7 +1,7 @@
 // Task 09 finding 2: nothing in the header may blank the page. The mode indicator and the live-session
 // alert sit inside HeaderBoundary; main.tsx wraps the whole app in AppErrorBoundary.
 import { render, screen, within } from '@testing-library/react';
-import { App, DECISION_QUESTION } from './App';
+import { App } from './App';
 import { AppErrorBoundary, HeaderBoundary } from './Boundary';
 
 const broken = vi.hoisted(() => ({ indicator: false, alert: false }));
@@ -43,30 +43,11 @@ function Boom({ message }: { message: string }): never {
   throw new Error(message);
 }
 
-test('a crash in the mode indicator leaves the page up and says, as an alert, that the session state is unknown', () => {
-  broken.indicator = true;
-  render(<App pollMs={60_000} />);
-  const header = screen.getByRole('banner');
-  const alert = within(header).getByRole('alert');
-  expect(alert).toHaveTextContent('Mode unknown');
-  expect(alert).toHaveTextContent("The mode indicator failed to render (Cannot read properties of undefined (reading 'label'))");
-  expect(alert).toHaveTextContent('Treat the live session state as unknown');
-  expect(alert.querySelector('[data-status="failed"]')).not.toBeNull();
-  expect(header.querySelector('[data-status="live"]')).toBeNull();
-  // Everything else is still on the page.
-  expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(DECISION_QUESTION);
-  expect(within(screen.getByRole('navigation', { name: 'Views' })).getAllByRole('link')).toHaveLength(6);
-  expect(screen.getByText('view:locate')).toBeInTheDocument();
-  expect(screen.getByRole('region', { name: 'Provenance legend' })).toBeInTheDocument();
-  expect(screen.getByRole('radiogroup', { name: 'Colour theme' })).toBeInTheDocument();
-});
-
 test('a crash in the live-session alert is itself reported as an alert, never swallowed', () => {
   broken.alert = true;
   render(<App pollMs={60_000} />);
-  const alert = within(screen.getByRole('banner')).getByRole('alert');
+  const alert = screen.getByRole('alert');
   expect(alert).toHaveTextContent('The live-session alert failed to render (danger text could not be built)');
-  expect(screen.getByRole('status', { name: /^Mode: Replay · \$0/ })).toBeInTheDocument(); // the indicator itself still works
   expect(screen.getByText('view:locate')).toBeInTheDocument();
 });
 

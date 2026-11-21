@@ -20,6 +20,6 @@ maintainer (orchestrator): `scripts/`, `.claude/settings.json`, `.github/workflo
 | 5 | docs gate | `python3 scripts/check_docs.py` |
 
 ## Status
-DONE
+VERIFYING
 
-Verified at commit 3faed3a: tasks/00-scaffold/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).
+Previous baseline verified at commit 3faed3a: tasks/00-scaffold/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).

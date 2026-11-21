@@ -57,7 +57,7 @@
     },
     "independenceNote": { "type": "string" },
     "fixtures": {
-      "description": "PRD numbers this artifact reports (D-023 §2): the speedup is an arithmetic re-check of PRD-reported means; the controlled-run tally and the means themselves cannot be recomputed here (matches null). Required: at least the 'speedup' fixture with basis arithmetic and the 'controlled-runs-passed' fixture with matches null.",
+      "description": "Speedup and controlled-run tally checked against saved timings and reference rows. Earlier replay artifacts may carry PRD-reported inputs.",
       "type": "array",
       "minItems": 2,
       "items": { "$ref": "common.schema.json#/$defs/fixtureCheck" },
@@ -65,15 +65,15 @@
         {
           "contains": {
             "type": "object",
-            "required": ["id", "basis"],
-            "properties": { "id": { "const": "speedup" }, "basis": { "const": "arithmetic" } }
+            "required": ["id"],
+            "properties": { "id": { "const": "speedup" } }
           }
         },
         {
           "contains": {
             "type": "object",
-            "required": ["id", "matches"],
-            "properties": { "id": { "const": "controlled-runs-passed" }, "matches": { "type": "null" } }
+            "required": ["id"],
+            "properties": { "id": { "const": "controlled-runs-passed" } }
           }
         }
       ]
