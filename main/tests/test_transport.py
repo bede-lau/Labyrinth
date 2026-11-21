@@ -189,6 +189,69 @@ def test_T3_claim_gate_and_stderr_calibration_monte_carlo():
     assert stats.t_ppf(0.975, 1e6) == pytest.approx(1.959964, abs=1e-5)
 
 
+def test_T3_n_eff_never_exceeds_the_samples_in_the_window_so_a_sparse_trace_cannot_claim():
+    """D-025 (06 verifier F4-1): a few noisy samples can give a negative lag-1 autocorrelation and a Sokal tau_int below
+    half a sample; unfloored, N_eff exceeded the sample count (up to ~250x) and 12-25 white-noise samples opened the
+    N_eff >= 20 claim gate in 13-38 of 200 seeds. tau_int is floored at 1/2 sample: N_eff <= N - 1, never a claim."""
+    finite = floored_seen = 0
+    for n in (12, 14, 15, 20, 25):
+        for seed in range(200):
+            rng = np.random.default_rng(seed)
+            t = np.linspace(299.0, 401.0, n + 2)  # n samples inside [300, 400], one bracketing sample each side
+            q = 2.5 + 0.1 * rng.standard_normal(n + 2)
+            err = stats.sampling_error(t, q, (300.0, 400.0))
+            ws = stats.window_stats(t, q, (300.0, 400.0))
+            st = stats.half_split_test(t, q, (300.0, 400.0))
+            assert ws.n_samples == n and ws.saturated_claim_allowed is False, (n, seed)
+            assert st.n_eff is None or st.n_eff <= n - 1 + 1e-9, (n, seed, st.n_eff)
+            assert (err.n_eff is None) == (err.stderr is None)  # a Sokal window that was never reached: no N_eff at all
+            if err.n_eff is not None:
+                finite += 1
+                assert err.n_eff <= n - 1 + 1e-9, (n, seed, err.n_eff)
+                assert err.n_eff_lower is None or err.n_eff_lower < err.n_eff
+                s = float(np.std(np.interp(np.linspace(300, 400, n), t, q), ddof=1))
+                assert err.stderr >= s / math.sqrt(n - 1) - 1e-12  # never below the independent-samples stderr
+            if err.floored:
+                floored_seen += 1
+                assert "raised to the floor of 0.5 sample" in ws.detail and "D-025" in ws.detail
+                assert err.tau_time == pytest.approx(stats.TAU_INT_MIN * 100.0 / (n - 1))
+    assert finite > 800 and floored_seen > 100  # both paths are exercised (the raw estimate was often below 1/2 sample)
+    # A converged estimate <= 0 (alternating samples: lag-1 correlation -1) is floored too, not reported as "Sokal window
+    # not reached"; the Madras-Sokal bound of a floored tau uses the window the floor needs, M = 3, not the raw lag 1.
+    n, dt = 12, 100.0 / 11
+    t = 300.0 + dt * np.arange(-1, n + 1)  # 12 samples exactly on [300, 400], one bracketing sample each side
+    q = 2.5 + 0.1 * (-1.0) ** np.arange(n + 2)
+    err = stats.sampling_error(t, q, (300.0, 400.0))
+    assert (err.floored, err.converged, err.window_lag) == (True, True, 1)
+    assert err.n_eff == pytest.approx(n - 1) and err.tau_time == pytest.approx(0.5 * dt)
+    assert err.n_eff_lower == pytest.approx(100.0 / (2 * 0.5 * dt * (1 + math.sqrt(2 * (2 * 3 + 1) / n))))
+    assert "raised to the floor of 0.5 sample" in stats.window_stats(t, q, (300.0, 400.0)).detail
+    # Long traces are unaffected: an AR(1) with tau ~4.5 samples keeps its N_eff and its claim.
+    t = np.arange(2000, dtype=float)
+    ws = stats.window_stats(t, _ar1(np.random.default_rng(20261121), 2000, 0.8), (0, 1999))
+    assert ws.saturated_claim_allowed and not stats.sampling_error(t, _ar1(np.random.default_rng(20261121), 2000, 0.8),
+                                                                    (0, 1999)).floored
+    assert "1/2 sample (D-025" in stats.METHOD_SUMMARY
+
+
+def test_T3_half_split_keeps_its_level_on_short_white_noise():
+    """D-025 review R1: where a tau floor would bind (white noise, 40-60 samples) the half-split test must keep its 5 %
+    level. Its se uses the unfloored tau; flooring it widened se and dropped the false-rejection rate to ~1 %, which
+    let more drifting windows pass as stationary (and reach a claim). The reported N_eff is still capped at N - 1."""
+    rejected = decided = total = 0
+    for n in (40, 50, 60):
+        t = np.arange(float(n))
+        rng = np.random.default_rng(20261123)
+        for _ in range(1000):
+            st = stats.half_split_test(t, rng.standard_normal(n), (0.0, n - 1.0))
+            assert st.n_eff is None or st.n_eff <= n - 1  # None: no usable tau (undecidable), never a rejection
+            decided += st.stationary is not None
+            rejected += st.stationary is False
+            total += 1
+    assert decided > 0.9 * total
+    assert 0.025 <= rejected / total <= 0.075, rejected / total  # measured 0.039 (nominal alpha 0.05)
+
+
 def test_T3_stationarity_false_rejection_rate_at_small_n():
     rng = np.random.default_rng(20261122)
     t = np.arange(68, dtype=float)

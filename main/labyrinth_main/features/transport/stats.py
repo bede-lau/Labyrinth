@@ -30,8 +30,11 @@ Definitions (all pure functions of ``t``, ``Q`` and a window ``[a, b]``):
   ``dt = (b-a)/(N-1)``). ``rho_k`` is the FFT autocorrelation and
   ``tau_int(M) = 1/2 + sum_{k=1..M} rho_k``; the window is the first ``M < N/2`` with
   ``M >= C * tau_int(M)`` (Sokal, ``C = 5``). Convergence only at ``M >= N/2`` counts as NOT
-  converged (``stderr`` is ``None``). Then ``tau = tau_int * dt`` (time units),
-  ``N_eff = (b-a) / (2 tau)`` and ``stderr = s * sqrt(2 tau / (b-a))``. Confidence intervals use
+  converged (``stderr`` is ``None``). ``tau_int`` is then floored at ``TAU_INT_MIN`` = 1/2 sample,
+  the white-noise value (D-025): an estimate below it (negative lag-1 autocorrelation from a few
+  noisy samples) would make ``N_eff`` exceed the number of samples in the window and shrink the
+  stderr below ``s / sqrt(N - 1)``. Then ``tau = tau_int * dt`` (time units),
+  ``N_eff = (b-a) / (2 tau)`` (so ``N_eff <= N - 1``) and ``stderr = s * sqrt(2 tau / (b-a))``. Confidence intervals use
   Student-t critical values with ``df = N_eff - 1``. Below ``N_EFF_MIN`` (20) effective samples
   the Sokal estimate is known to be biased low (≈40 % at N_eff≈5), so the stderr is flagged
   *approximate* and no saturated-agreement claim is allowed.
@@ -40,10 +43,12 @@ Definitions (all pure functions of ``t``, ``Q`` and a window ``[a, b]``):
   window means of ``[a, h]`` and ``[h, b]``. ``sigma_r`` is the standard deviation of the
   residuals about each half's own mean on the uniform grid; ``tau`` is the larger of the Sokal
   ``tau_int`` of the full-window centred series and of those residuals (the residual estimate
-  alone is biased low and over-rejects). ``se = sigma_r * sqrt(2 tau (1/T_1 + 1/T_2))``,
+  alone is biased low and over-rejects). ``se = sigma_r * sqrt(2 tau (1/T_1 + 1/T_2))`` with that
+  ``tau`` unfloored (a floor would widen ``se`` and loosen the test); the reported ``N_eff`` and its
+  ``df`` are capped at ``N - 1`` (D-025),
   ``t = (m_1 - m_2) / se`` compared with the two-sided ``1 - ALPHA`` Student-t critical value
   with ``df = N_eff - 2`` (two means estimated). Stationary iff ``|t| < t_crit``. Undecidable
-  (``None``) if the full-window ``tau`` does not converge. When the test is only *indicative*
+  (``None``) if the full-window ``tau`` does not converge or is not positive. When the test is only *indicative*
   (``N_eff < N_EFF_MIN``, the uncorrected-tau fallback was needed, or the window's own stderr
   is approximate) ``window_stats`` reports
   ``stationary = None`` (undecidable); the t statistic and the indicative verdict stay in the
@@ -67,12 +72,15 @@ MAX_GAP_FACTOR = 10.0
 MIN_SAMPLES = 8
 REPEAT_RTOL = 1e-9
 MIN_BIAS_DENOM = 0.5  # bias correction may at most double tau; beyond that the estimate is not trusted
+# D-025: tau_int (in samples) is never taken below the white-noise value, so N_eff <= N - 1 samples in the window.
+TAU_INT_MIN = 0.5
 
 METHOD_SUMMARY = (
     "mean: time-weighted (1/(b-a)) * integral_a^b Q dt with Q linearly interpolated at the window "
     "edges (trapezoid rule, D-013); "
     "stderr: integrated autocorrelation time with Sokal automatic windowing (C=5, converged only for "
-    "M < N/2) on the trace resampled to a uniform grid over [a,b], stderr = s*sqrt(2*tau_int/(b-a)), "
+    "M < N/2) on the trace resampled to a uniform grid over [a,b], tau_int floored at 1/2 sample (D-025: N_eff "
+    "never exceeds the samples in the window), stderr = s*sqrt(2*tau_int/(b-a)), "
     f"N_eff = (b-a)/(2*tau_int), approximate when N_eff < {N_EFF_MIN:g}; "
     "stationarity: half-split Student-t test (df = N_eff-2, two-sided alpha 0.05) with tau = max(tau of "
     "the full-window centred series, tau of residuals about each half's mean), indicative when "
@@ -354,6 +362,7 @@ class SamplingError:
     window_lag: int
     converged: bool
     corrected: bool = True
+    floored: bool = False  # the tau_int estimate was below TAU_INT_MIN and was raised to it (D-025)
 
     @property
     def df(self) -> float | None:
@@ -373,29 +382,37 @@ def sampling_error(t: Sequence[float], q: Sequence[float], window: Sequence[floa
     _, x, dt = _uniform_grid(ta, qa, a, b)
     n = len(x)
     tau_int, lag, ok = integrated_autocorr_time(x)
-    if ok and math.isfinite(tau_int) and 0 < tau_int and 2.0 * tau_int < n:
+    # A converged estimate below 1/2 sample (also <= 0: lag-1 correlation <= -0.5) is floored below (D-025).
+    if ok and math.isfinite(tau_int) and 2.0 * tau_int < n:
         corrected = True
     else:
         # Fallback: uncorrected Sokal. Its tau is biased low, so the stderr is only a lower bound;
         # it is reported as approximate and can never support a claim (n_eff_lower = None).
         lag_c = lag
         tau_int, lag, ok = integrated_autocorr_time(x, bias_correct=False)
-        if not ok or not math.isfinite(tau_int) or tau_int <= 0 or 2.0 * tau_int >= n:
+        if not ok or not math.isfinite(tau_int) or 2.0 * tau_int >= n:
             # The Sokal criterion failed at every lag tried, so tau_int > M_last / C (lower bound).
             m = max(lag, lag_c)
             tau_lb = m / SOKAL_C * dt if m else None
             return SamplingError(None, tau_lb, None, None, float(np.std(x, ddof=1)), m, False, False)
+        floored = tau_int < TAU_INT_MIN
+        tau_int = max(tau_int, TAU_INT_MIN)  # D-025: N_eff never exceeds the samples in the window
         tau_time = tau_int * dt
         std = float(np.std(x, ddof=1))
         return SamplingError(float(std * math.sqrt(2.0 * tau_time / span)), float(tau_time),
-                             float(span / (2.0 * tau_time)), None, std, lag, True, False)
+                             float(span / (2.0 * tau_time)), None, std, lag, True, False, floored)
+    floored = tau_int < TAU_INT_MIN
+    tau_int = max(tau_int, TAU_INT_MIN)  # D-025: N_eff never exceeds the samples in the window
     # Variance about the sample mean is biased low by (1 - 2 tau / N) for correlated data.
     std = float(np.sqrt(np.mean((x - x.mean()) ** 2) / (1.0 - 2.0 * tau_int / n)))
     tau_time = tau_int * dt
     stderr = std * math.sqrt(2.0 * tau_time / span)
-    tau_upper = tau_time * (1.0 + math.sqrt(2.0 * (2 * lag + 1) / n))  # Madras-Sokal one-sigma
+    # Madras-Sokal one-sigma bound. A floored tau uses the Sokal window the floor itself needs (M >= C/2 = 3), not the
+    # smaller lag at which the raw estimate converged.
+    lag_ub = max(lag, math.ceil(SOKAL_C * TAU_INT_MIN)) if floored else lag
+    tau_upper = tau_time * (1.0 + math.sqrt(2.0 * (2 * lag_ub + 1) / n))
     return SamplingError(float(stderr), float(tau_time), float(span / (2.0 * tau_time)),
-                         float(span / (2.0 * tau_upper)), std, lag, True, corrected)
+                         float(span / (2.0 * tau_upper)), std, lag, True, corrected, floored)
 
 
 @dataclass(frozen=True)
@@ -443,7 +460,9 @@ def half_split_test(t: Sequence[float], q: Sequence[float], window: Sequence[flo
     se = math.sqrt(2.0 * tau_time * sigma**2 * (1.0 / (h - a) + 1.0 / (b - h)))
     if se <= 0:
         return none
-    n_eff = (b - a) / (2.0 * tau_time)
+    # D-025: the reported N_eff (and the df taken from it) never exceeds the samples in the window. The se keeps the
+    # unfloored tau: flooring it would widen se and loosen the test (white-noise false rejection 5% -> 1% at N = 40).
+    n_eff = min((b - a) / (2.0 * tau_time), n - 1.0)
     df = max(n_eff - 2.0, 1.0)
     t_crit = t_ppf(1.0 - alpha / 2.0, df)
     t_stat = (m1 - m2) / se
@@ -497,7 +516,8 @@ def window_stats(t: Sequence[float], q: Sequence[float], window: Sequence[float]
     st = half_split_test(ta, qa, (a, b))
     stationary = st.stationary
     if st.stationary is None:
-        verdict = "undecidable (full-window Sokal tau did not converge, corrected or uncorrected)"
+        verdict = ("undecidable (no usable full-window Sokal tau, corrected or uncorrected: not converged, or "
+                   "not positive)")
         t_txt = "t=n/a"
     else:
         verdict = "stationary" if st.stationary else "NOT stationary"
@@ -512,11 +532,13 @@ def window_stats(t: Sequence[float], q: Sequence[float], window: Sequence[float]
             stationary = None
         t_txt = (f"t={st.t_stat:+.2f} vs t_crit={st.t_crit:.3g} (df={st.df:.3g}, two-sided alpha {ALPHA:g}), "
                  f"tau={st.tau_time:.3g} time units")
+    floor_txt = (f", raised to the floor of {TAU_INT_MIN:g} sample (the estimate was lower; D-025)" if err.floored
+                 else "")
     if err.stderr is None:
         lb = "" if err.tau_time is None else f"; tau_int > {err.tau_time:.3g} time units"
         err_txt = f"stderr not finite (Sokal window not reached{lb})"
     elif not err.corrected:
-        err_txt = (f"tau_int={err.tau_time:.3g} time units from the UNCORRECTED Sokal fallback (the "
+        err_txt = (f"tau_int={err.tau_time:.3g} time units{floor_txt} from the UNCORRECTED Sokal fallback (the "
                    f"bias-corrected estimate did not converge, so tau is likely underestimated; lag "
                    f"{err.window_lag}), N_eff~{err.n_eff:.3g}, stderr~{err.stderr:.3g} — APPROXIMATE, a lower "
                    f"bound on the sampling uncertainty")
@@ -524,7 +546,7 @@ def window_stats(t: Sequence[float], q: Sequence[float], window: Sequence[float]
         flag = (f"APPROXIMATE (N_eff at the tau upper bound < {N_EFF_MIN:g}; Sokal stderr biased low at "
                 f"small N_eff)" if err.approximate else f"reliable (N_eff at the tau upper bound >= {N_EFF_MIN:g})")
         err_txt = (f"tau_int={err.tau_time:.3g} time units (bias-corrected Sokal, C={SOKAL_C:g}, lag "
-                   f"{err.window_lag}), N_eff={err.n_eff:.3g} (>= {err.n_eff_lower:.3g} at the one-sigma "
+                   f"{err.window_lag}{floor_txt}), N_eff={err.n_eff:.3g} (>= {err.n_eff_lower:.3g} at the one-sigma "
                    f"tau upper bound), stderr={err.stderr:.3g} — {flag}")
     claim = []
     if err.n_eff_lower is None or err.n_eff_lower < N_EFF_MIN:
