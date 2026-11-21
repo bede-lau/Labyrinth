@@ -29,6 +29,6 @@ Frontend:
 | T8–T13 | `renderer/src/features/transport/*.test.tsx`, one `test('T8 …')` per outcome |
 
 ## Status
-DONE
+VERIFYING
 
-Verified at commit 77fd8b6 (D-024 live comparison, new outcome T13): tasks/02-transport/VERIFY.md run 5, `Verdict: PASS` (external verifier, 2026-11-21). Reviewer APPROVE of the D-024 change (2026-11-21). Previously DONE at 3faed3a.
+Reopened 2026-11-21 for D-025 (τ_int floored at ½ sample in `transport/stats.py`, so N_eff never exceeds the samples in a window; 06 verifier finding F4-1). Previously DONE at 77fd8b6 (VERIFY.md run 5, `Verdict: PASS`).

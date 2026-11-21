@@ -7,7 +7,7 @@
 
 ## Current state
 
-**All ten tasks are `DONE`.** 02, 06 and 09 were reopened for D-024 (the PRD's live comparison, cross-RX-2) and re-verified at `77fd8b6` (`Verdict: PASS`
+**Nine of ten tasks are `DONE`; 02 is VERIFYING for D-025 (τ_int floor) until its verifier re-runs.** 02, 06 and 09 were reopened for D-024 (the PRD's live comparison, cross-RX-2) and re-verified at `77fd8b6` (`Verdict: PASS`
 each; reviewer APPROVE). The other seven are verified at `3faed3a`. Before D-024 each had a final external-verifier run at commit `3faed3a` ending in `Verdict: PASS`, with a `PASS` row for every outcome
 (`tasks/<NN>/VERIFY.md`), and the code passed the 2026-11-20 review round with all six areas approved. `scripts/check_docs.py` enforces this (D-022): any
 later change to a task's owned files reopens it until a verifier runs again. `verify.sh all` at `3faed3a`: exit 0, 11/11 stages — boundary self-test
@@ -17,7 +17,7 @@ later change to a task's owned files reopens it until a verifier runs again. `ve
 |---|---|---|---|
 | 00 | scaffold, boundary, gates | DONE | `3faed3a` |
 | 01 | geometry | DONE (acceptance-129 BLOCKED by design, D-007) | `3faed3a` |
-| 02 | transport | DONE (T13 live comparison, D-024) | `77fd8b6` |
+| 02 | transport | VERIFYING (D-025: τ_int floor, F4-1) | was `77fd8b6` |
 | 03 | forecast | DONE (PRD MAE mismatch shown, D-016) | `3faed3a` |
 | 04 | budget | DONE | `3faed3a` |
 | 05 | spatial | DONE (PRD-reported/blocked: no checkpoints in repo) | `3faed3a` |
@@ -33,11 +33,13 @@ in a separate session in this checkout and commits locally; push it only after i
 - **Live comparison (cross-RX-2) closed by D-024** (commit `77fd8b6`, DONE commit after it; both local, **not pushed** — ask the owner): live-status
   `comparison` (schema, `live_gx/comparison.py`, orchestrator snapshot, Check transport "Live comparison" panel, live-panel summary line, `liveContract.ts`
   validator); docs and TASK.md outcomes T13 / L11. With the committed archive every live verdict is "no claim" (D-017) — by design.
-- **F4-1 (06 verifier, affects `transport/stats.py` = task 02; needs a D-017 refinement):** the bias-corrected Sokal τ can fall below half a sample, so
-  N_eff exceeds the in-window sample count and a window with < 20 samples can open the claim gate (14 white-noise samples: nEff 51.6, nEffLower 25.8 →
-  `agree`; 15 samples: gate opened in 23 of 200 seeds). Invisible on the archive (its 200–400 windows never establish N_eff), but a sparse live GX trace could
-  claim agreement. Fix: cap N_eff (and its upper-bound value) at the in-window sample count / τ_int ≥ ½ sample, with a test; re-verify 02 (and 06).
-  F4-2: the half-split test misses small drifts (expected power limit).
+- **F4-1 fixed by D-025 (in flight):** the Sokal τ_int could fall below half a sample, so N_eff exceeded the in-window sample count and 12–25
+  white-noise samples opened the claim gate (13–38 of 200 seeds; a sparse live trace could claim "agree"). `transport/stats.py` now floors τ_int at
+  ½ sample in `sampling_error` (N_eff ≤ N − 1; τ ≤ 0 floored too; M = 3 in the upper bound); `half_split_test` only caps its reported N_eff, its se
+  stays unfloored (review R1: a floored se loosened the test to ≈ 1 % false rejection). No archive number changes (only `stationarityDetail` text).
+  Tests `test_T3_n_eff_never_exceeds_…`, `test_T3_half_split_keeps_its_level_…`, `test_L11_a_sparse_live_trace_never_claims_…`; 7/7 mutants caught.
+  Task 02 is VERIFYING until its verifier re-runs. F4-2: the half-split test misses small drifts (expected power limit, not changed). D-017 limit
+  (unchanged): positively correlated sparse traces can still open the gate below 20 true effective samples (AR(1) τ = 2, N = 60: ≈ 11 %).
 - Minors from D-024: RV-024-6 (owner's call: the comparison disappears once the session leaves `live`; option: keep the last one labelled "session ended");
   02 n1 (the "Live trace claim" column shows a green "Claim allowed" pill — the live gate — next to "No claim" verdicts; reword to "Live gate met"); 02 n2
   (live stderr printed to 3 decimals); 09 minor (no shell test sends a status with a broken `comparison` through the App); 06 F3-1 (TASK.md L10 wording

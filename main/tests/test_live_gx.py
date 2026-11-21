@@ -3252,6 +3252,25 @@ def test_L11_n_eff_gate_an_autocorrelated_live_trace_below_20_effective_samples_
         f"{_label(w['window'])}: live trace not shown stationary (N_eff {w['nEffLower']:.3g} < 20)" for w in c["windows"]) + "."
 
 
+def test_L11_a_sparse_live_trace_never_claims_agreement_even_against_an_archive_at_its_mean():
+    """D-025 (06 verifier F4-1): 14 white-noise live samples per window, against an archive that passes its gate at the
+    live mean. Before the tau_int floor, N_eff exceeded the sample count and "agree" came out for some seeds; now the
+    live gate (N_eff <= N - 1 < 20) stays shut for every seed and every verdict is "no claim"."""
+    archive = _synthetic_archive(400, 2.5, 500, 2.5)
+    t = np.concatenate([np.linspace(199.0, 300.0, 15, endpoint=False), np.linspace(300.0, 401.0, 15)])
+    established = 0
+    for seed in range(100):
+        q = 2.5 + 0.1 * np.random.default_rng(seed).standard_normal(len(t))
+        c = comparison.live_comparison(_samples(t, q), archive=archive)
+        for w in c["windows"]:
+            assert w["covered"] is True and w["saturatedClaimAllowed"] is False, seed
+            assert [x["verdict"] for x in w["archive"]] == ["no claim", "no claim"], seed
+            established += w["nEff"] is not None
+            assert w["nEff"] is None or w["nEff"] <= w["nSamples"] - 1 + 1e-9, (seed, w["nSamples"], w["nEff"])
+        assert c["saturatedClaimAllowed"] is False
+    assert established > 100  # most windows reach an N_eff estimate; it is never above the sample count
+
+
 def test_L11_injected_archive_agree_and_disagree_only_agree_opens_the_claim():
     t = _grid(150.0, 450.0, 0.1)
     q = _white(300, 2.5, 0.3, t)

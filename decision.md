@@ -242,6 +242,29 @@ for 100-unit archive windows, and the reason is shown. The live mean, its uncert
 shown. Tests drive the other verdicts with injected synthetic archive traces. `schemaVersion` stays 1 (optional field; saved runs written before
 this decision stay valid). The renderer's validator in `renderer/src/lib/liveContract.ts` changes, so tasks 02, 06 and 09 are re-verified.
 
+## D-025 · N_eff never exceeds the samples in the window: τ_int is floored at half a sample (refines D-017)
+**Context.** The 06 verifier (finding F4-1, 2026-11-21) showed that with a few noisy samples the bias-corrected Sokal estimate can
+converge at lag 1 with a negative lag-1 autocorrelation, giving τ_int below the white-noise value of ½ sample. N_eff = (N − 1)/(2 τ_int)
+then exceeded the number of samples in the window (up to ~250×), the stderr fell below s/√(N − 1), and the N_eff ≥ 20 claim gate opened on
+12–25 white-noise samples in 13–38 of 200 seeds; 14 live samples gave "agree" against an archive at the live mean in 19 of 200 seeds. The
+archive never showed it (its 200–400 windows never establish N_eff), but D-024 made it reachable: a sparse live GX trace could claim
+saturated agreement.
+**Decision.** `transport.stats.sampling_error` floors τ_int at `TAU_INT_MIN` = ½ sample once the Sokal window is accepted (bias-corrected path
+and uncorrected fallback; a converged estimate ≤ 0, i.e. lag-1 correlation ≤ −0.5, is floored too instead of being reported as "window not
+reached"). So N_eff ≤ N − 1 and the stderr is never below the independent-samples value. For a floored τ the Madras–Sokal upper bound uses the
+window the floor itself needs (M = ⌈5 × ½⌉ = 3), not the raw lag. The gate (N_eff at the τ upper bound ≥ 20) then needs ≈ 34+ white-noise samples.
+`half_split_test` caps only its reported N_eff (and the df taken from it) at N − 1; its se keeps the unfloored τ, because flooring it widened se
+and dropped the white-noise false-rejection rate from ≈ 5 % to ≈ 1 % at N = 40, letting more drifting windows pass as stationary (review R1).
+A floored estimate is named in the window's detail text ("raised to the floor of 0.5 sample … D-025") and in `METHOD_SUMMARY`. Anti-correlated
+traces whose true N_eff exceeds N are treated conservatively; heat-flux turbulence gives no reason to credit that.
+**Consequences.** No archive number, fixture or verdict changes (every archive estimate is above the floor): only text in the seven
+`stationarityDetail` strings of `transport.json` changes (METHOD clause; "no usable full-window Sokal tau … not converged, or not positive").
+Large-N behaviour is unchanged (the AR(1) N = 2000 calibration test is not floored and still claims). Tests: `test_T3_n_eff_never_exceeds_…`
+(1000 white-noise windows of 12–25 samples, the alternating case, the M = 3 bound), `test_T3_half_split_keeps_its_level_on_short_white_noise`
+(3000 windows, false rejection 0.039) and `test_L11_a_sparse_live_trace_never_claims_…`; 7/7 mutants caught. Task 02 is re-verified (its owned
+`transport/stats.py` changed); task 06's owned files are unchanged. Still open (D-017 limit, unchanged): positively correlated sparse traces can
+open the gate below 20 true effective samples (AR(1) τ = 2 samples, N = 60: ≈ 11 % of runs).
+
 ## D-014 · (not adopted) "Wave mode" for the orchestrator's Stop hook
 **Context.** With parallel agents editing one working tree, the Stop hook (`verify.sh all` on the shared tree)
 repeatedly blocked the orchestrator on files it must not touch. A proposal to verify committed HEAD in a clean

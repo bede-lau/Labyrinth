@@ -58,8 +58,8 @@ independent reference in one view. Replay costs $0; live GX is gated behind qual
   saved `EXPECTED_OUTPUT.vmec_geometry.geometry` (ρ 0.7, 25 samples) to printed precision, and its bmag against
   the same run's float64 `out.nc` to 1e-10 (`validation.float64Reference`). The PRD's 129-sample acceptance is blocked (D-007).
 * **Transport.** Benchmark h5 `compared/test5/{stella,GENE}`. Means are edge-interpolated time integrals on
-  closed windows (D-013). Uncertainty is autocorrelation-aware. "Saturated agreement" is only claimed for a
-  covered, stationary window with finite uncertainty and N_eff ≥ 20.
+  closed windows (D-013). Uncertainty is autocorrelation-aware (τ_int floored at ½ sample, so N_eff never exceeds the
+  samples in the window, D-025). "Saturated agreement" is only claimed for a covered, stationary window with finite uncertainty and N_eff ≥ 20.
 * **Units.** GX raw → archive: t × √2, Q ÷ 2√2, only with identical dimensional references.
 * **Forecast.** Persistence (previous window) vs frozen (initialisation window) on 50-unit windows.
 * **Budget.** PRD figures recomputed in exact decimals (`pricing.py` is the single source of PRD constants); PRD ranges are
