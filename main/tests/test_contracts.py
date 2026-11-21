@@ -4,6 +4,7 @@ Producer behaviour lives in each feature's own test file; this file proves what 
 """
 import copy
 import json
+import math
 from functools import lru_cache
 
 import jsonschema
@@ -16,6 +17,7 @@ from labyrinth_main.features.budget import artifact as budget_artifact
 from labyrinth_main.features.geometry import artifact as geometry_artifact
 from labyrinth_main.features.live_gx import budget_guard as guard
 from labyrinth_main.features.live_gx import rehearse, service
+from labyrinth_main.features.live_gx.comparison import live_comparison
 from labyrinth_main.features.live_gx.fake_backend import FakeBackend
 from labyrinth_main.features.spatial import artifact as spatial_artifact
 
@@ -227,3 +229,47 @@ def test_live_run_nested_shape_unchanged(saved_run):
     bad["checks"]["extra"] = True
     assert not valid(v, bad)
     assert not valid(v, {**rec, "phases": []})
+
+
+# ---- D-024 live-status `comparison` -------------------------------------------------------------------------------
+def test_live_status_comparison_is_optional_closed_and_keeps_its_rules():
+    """What the producer emits is valid (uncovered, covered, could-not-be-computed, no samples); the gate's snapshot
+    without one is valid too; and the schema rejects what D-024 forbids."""
+    v = validator("live-status.schema.json")
+    gate = {"schemaVersion": 1, "mode": "unavailable", "reason": "x",
+            "budget": guard.evaluate(guard.Ledger(0.0, 0.0, True)).budget_snapshot(), "workers": [],
+            "fallback": {"active": True, "label": "x", "savedRunId": None}}
+    assert valid(v, gate)
+    uncovered = live_comparison([{"t": 10.0 * i, "Q": 2.0} for i in range(1, 6)])
+    covered = live_comparison([{"t": 150.0 + 0.1 * i, "Q": 2.4 + 0.3 * math.sin(i)} for i in range(3000)])
+    failed = live_comparison([{"t": 1.0, "Q": 1.0}, {"t": 1.0, "Q": 2.0}])
+    assert [w["covered"] for w in covered["windows"]] == [True, True] and failed["windows"] == []
+    for c in (uncovered, covered, failed, live_comparison([])):
+        assert valid(v, {**gate, "comparison": c})
+
+    def changed(change) -> dict:
+        c = copy.deepcopy(uncovered)
+        change(c)
+        return {**gate, "comparison": c}
+
+    forbidden = {
+        "extra key": lambda c: c.update(extra=1),
+        "one window": lambda c: c["windows"].pop(),
+        "three windows": lambda c: c["windows"].append(copy.deepcopy(c["windows"][0])),
+        "GENE before stella": lambda c: c["windows"][0]["archive"].reverse(),
+        "one archive trace": lambda c: c["windows"][0]["archive"].pop(),
+        "uncovered with a mean": lambda c: c["windows"][0].update(mean=2.0),
+        "uncovered with nEffLower": lambda c: c["windows"][0].update(nEffLower=25.0),
+        "uncovered and not stationary": lambda c: c["windows"][0].update(stationary=False),
+        "uncovered with a claim": lambda c: c["windows"][0].update(saturatedClaimAllowed=True),
+        "unknown verdict": lambda c: c["windows"][0]["archive"][0].update(verdict="agrees"),
+        "closed archive entry": lambda c: c["windows"][0]["archive"][0].update(extra=1),
+        "closed window": lambda c: c["windows"][1].update(extra=1),
+        "negative count": lambda c: c.update(nSamples=-1),
+        "fractional count": lambda c: c.update(nSamples=1.5),
+        "triangular": lambda c: c.update(tube="triangular"),
+        "no reason": lambda c: c.pop("reason"),
+        "string mean": lambda c: c["windows"][0]["archive"][0].update(mean="2.55"),
+    }
+    for name, change in forbidden.items():
+        assert not valid(v, changed(change)), name

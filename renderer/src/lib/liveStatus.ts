@@ -8,8 +8,19 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import { SAVED_RUN_ID, validateLiveStatus, validateSavedRun, type LiveMode, type LiveStatus, type SavedRun } from './liveContract';
 
-export { LIVE_MODES, SAVED_RUN_ID, validateLiveStatus, validateSavedRun } from './liveContract';
-export type { LiveMode, LiveProvenance, LiveSample, LiveStatus, LiveWorker, SavedRun } from './liveContract';
+export { LIVE_MODES, LIVE_VERDICTS, SAVED_RUN_ID, validateLiveStatus, validateSavedRun } from './liveContract';
+export type {
+  LiveArchiveVerdict,
+  LiveComparison,
+  LiveComparisonWindow,
+  LiveMode,
+  LiveProvenance,
+  LiveSample,
+  LiveStatus,
+  LiveVerdict,
+  LiveWorker,
+  SavedRun,
+} from './liveContract';
 
 /** The last snapshot that passed validation, and when it arrived (ms since the epoch). */
 export interface LastKnown {

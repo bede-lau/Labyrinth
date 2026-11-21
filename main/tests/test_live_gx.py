@@ -1,4 +1,4 @@
-"""Task 06 · Advance plasma (live GX). Tests grouped per expected outcome L1–L8 (names start with the id).
+"""Task 06 · Advance plasma (live GX). Tests grouped per expected outcome L1–L8 and L11 (names start with the id).
 
 Everything here runs offline with the test-only fake backend; the real `modal` is never imported or needed (a
 local stub stands in for its API where ModalBackend is exercised). `modal_app.py` is never imported by this
@@ -13,6 +13,7 @@ import inspect
 import json
 import math
 import os
+import re
 import shutil
 import signal
 import socket
@@ -26,6 +27,7 @@ import types
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import pytest
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
@@ -33,7 +35,7 @@ from referencing import Registry, Resource
 from labyrinth_main.common.paths import CONTRACTS, REPO_ROOT
 from labyrinth_main.features.budget import pricing
 from labyrinth_main.features.live_gx import budget_guard as guard
-from labyrinth_main.features.live_gx import gx_input, modal_backend, orchestrator, rehearse, service
+from labyrinth_main.features.live_gx import comparison, gx_input, modal_backend, orchestrator, rehearse, service
 from labyrinth_main.features.live_gx.fake_backend import FakeBackend
 from labyrinth_main.features.live_gx.orchestrator import (
     KILL_SWITCH_ONLY,
@@ -50,6 +52,10 @@ from labyrinth_main.features.live_gx.orchestrator import (
     TerminationUnconfirmed,
     TransientBackendError,
 )
+from labyrinth_main.features.transport import artifact as transport_artifact
+from labyrinth_main.features.transport.archive import load_trace
+from labyrinth_main.features.transport.compare import compare_window
+from labyrinth_main.features.transport.stats import window_mean, window_stats
 from labyrinth_main.features.transport.units import HEAT_FLUX_DIVISOR, TIME_MULTIPLIER
 from labyrinth_main.server import __main__ as server_main
 
@@ -481,21 +487,10 @@ def test_L5_rehearsal_verifies_init_then_continuation_from_restart_file_time(tmp
         v = phase["provenance"]["verification"]
         assert phase["provenance"]["kind"] == "rehearsal" and v["outcome"] == "passed"
         assert "UNREHEARSED" not in v["details"] and rec["savedRunId"] in v["details"]
-        assert v["details"].endswith(orchestrator.COMPARISON_NOT_COMPUTED)  # cross-RX-2: the archive check is not done
+        assert v["details"].endswith(orchestrator.ARCHIVE_COMPARISON) and "NOT computed" not in v["details"]  # D-024
     assert service.LedgerStore(tmp_path / "ledger.json").load() == guard.Ledger(8.10, est, False)
     svc = service.LiveService(state_dir=tmp_path, availability_check=available)
     assert svc.status()["qualified"] is True
-
-
-def test_L5_qualified_live_provenance_says_the_archive_comparison_is_not_computed():
-    """cross-RX-2: the PRD's live-vs-archive transport comparison (window means on 200–300 and 300–400, coverage,
-    the saturated-agreement gate) is not computed yet, so the live provenance must say so instead of pointing the
-    reader at Check transport as if the comparison were there."""
-    v = Orchestrator(FakeBackend(), hard_timeout_s=60).snapshot(BUDGET, qualified=True)["provenance"]["verification"]
-    assert v["outcome"] == "not-applicable" and v["details"].endswith(orchestrator.COMPARISON_NOT_COMPUTED)
-    assert "compare with archived evidence" not in v["details"]
-    for words in ("NOT computed", "200–300", "300–400", "coverage", "saturated-agreement"):
-        assert words in orchestrator.COMPARISON_NOT_COMPUTED, words
 
 
 def test_L5_checkpoint_time_misreported_as_last_sample_fails_continuation(tmp_path):
@@ -3107,3 +3102,384 @@ def test_L1_state_files_nested_too_deep_to_parse_read_as_unusable_and_never_rais
     st = svc.status()
     assert st["mode"] == "unavailable" and st["reason"].startswith("Not qualified") and st["qualified"] is False
     assert svc.launch(guard.slot_estimate_usd()) == (False, st["reason"]) and built == []
+
+
+# ---------------------------------------------------------------- L11 live comparison with the archive (D-024)
+CMP_WINDOWS = [[200.0, 300.0], [300.0, 400.0]]
+ARCHIVE_GATE_SHUT = "archive stella and GENE not shown stationary (N_eff not established; D-017 gate)"
+AGREE_TAIL = ("both traces are covered, stationary and have N_eff >= 20, and the 90% CI of live - archive mean lies within "
+              "±0.1 x |archive mean| (TOST).")
+
+
+def _grid(t0: float, t1: float, dt: float) -> np.ndarray:
+    """Midpoint grid over [t0, t1] in archive time units: no sample sits on a window edge."""
+    return t0 + dt * (np.arange(int(round((t1 - t0) / dt))) + 0.5)
+
+
+def _samples(t, q) -> list[dict]:
+    return [{"t": float(a), "Q": float(b)} for a, b in zip(t, q, strict=True)]
+
+
+def _white(seed: int, mean: float, sigma: float, t) -> np.ndarray:
+    return mean + sigma * np.random.default_rng(seed).normal(size=len(t))
+
+
+def _synthetic_archive(stella_seed: int, stella_mean: float, gene_seed: int, gene_mean: float, sigma: float = 0.3) -> dict:
+    """Dense white-noise stand-ins for the archive that pass the claim gate on both windows (unlike the committed one)."""
+    t = _grid(0.0, 500.0, 0.1)
+    return {"stella": (t, _white(stella_seed, stella_mean, sigma, t)), "GENE": (t, _white(gene_seed, gene_mean, sigma, t))}
+
+
+def _transport_means() -> dict:
+    """The transport feature's own archive window means (transport.json `windows[]`), keyed (code, window)."""
+    by_id = {"stella-bean": "stella", "gene-bean": "GENE"}
+    return {(by_id[r["traceId"]], tuple(r["window"])): r["mean"] for r in transport_artifact.window_rows()}
+
+
+def _archive_stderr(code: str, window) -> float | None:
+    tr = load_trace(code)
+    return window_stats(tr.t, tr.q, window).stderr
+
+
+def _label(window) -> str:
+    return f"{window[0]:g}–{window[1]:g}"
+
+
+def test_L11_uncovered_session_has_null_statistics_no_claim_and_validates(validator):
+    """Default fake run: 5 bean samples at archive t 14.1..70.7, so neither PRD window is covered."""
+    _, snaps = run_session(FakeBackend())
+    final = snaps[-1]
+    bean = final["workers"][0]["samples"]
+    t = [s["t"] for s in bean]
+    c = final["comparison"]
+    assert final["mode"] == "terminated" and len(bean) == 5
+    assert (c["tube"], c["nSamples"], c["tStart"], c["tEnd"], c["marginFraction"]) == ("bean", 5, t[0], t[-1], 0.1)
+    assert [w["window"] for w in c["windows"]] == CMP_WINDOWS
+    means = _transport_means()
+    for w in c["windows"]:
+        a, b = w["window"]
+        assert (w["covered"], w["nSamples"], w["saturatedClaimAllowed"], w["stderrApproximate"]) == (False, 0, False, True)
+        assert (w["mean"], w["stderr"], w["nEff"], w["nEffLower"], w["stationary"]) == (None, None, None, None, None)
+        assert w["detail"] == f"not covered: trace spans t={t[0]:.10g}..{t[-1]:.10g}, window {a:g}-{b:g}; no mean, uncertainty or claim."
+        assert [x["code"] for x in w["archive"]] == ["stella", "GENE"]
+        for x in w["archive"]:
+            assert (x["verdict"], x["delta"]) == ("no claim", None)
+            assert x["mean"] == means[(x["code"], (a, b))] and x["stderr"] == _archive_stderr(x["code"], (a, b))  # still shown
+            assert x["reason"] == f"new trace does not cover {a:g}-{b:g}; archive trace not shown stationary on {a:g}-{b:g}"
+    assert c["saturatedClaimAllowed"] is False
+    assert c["reason"] == "No saturated-agreement claim. " + ". ".join(
+        f"{_label(w)}: live trace does not cover the window (trace spans t={t[0]:.10g}..{t[-1]:.10g}, window {w[0]:g}-{w[1]:g}); "
+        f"{ARCHIVE_GATE_SHUT}" for w in CMP_WINDOWS) + "."
+    assert snaps[0]["comparison"]["nSamples"] == 0 and snaps[0]["comparison"]["tStart"] is None
+    for snap in snaps:
+        json.dumps(snap, allow_nan=False)
+        assert_valid(validator, snap)
+
+
+def test_L11_covered_live_trace_against_the_committed_archive_is_no_claim_because_of_the_archive(validator):
+    """Dense seeded white noise past archive t 400: the live trace covers both windows and passes its own gate, so the
+    only thing that keeps every verdict at "no claim" is the committed archive (not shown stationary, D-017)."""
+    noise = np.random.default_rng(0).normal(size=3002)
+
+    def q_raw(tube, t_raw):  # 6.8 +- 0.85 raw = 2.40 +- 0.30 archive; looked up by step, so deterministic
+        return 6.8 + 0.85 * noise[round(t_raw / 0.1)]
+
+    _, snaps = run_session(FakeBackend(steps=3000, dt_raw=0.1, step_wall_s=0.0, q_raw_fn=q_raw))
+    final = snaps[-1]
+    bean = final["workers"][0]["samples"]
+    t, q = [s["t"] for s in bean], [s["Q"] for s in bean]
+    c = final["comparison"]
+    assert final["mode"] == "terminated" and len(bean) == 3000 and t[-1] > 400.0
+    assert (c["nSamples"], c["tStart"], c["tEnd"]) == (3000, t[0], t[-1])
+    means = _transport_means()
+    for w in c["windows"]:
+        a, b = w["window"]
+        own = window_stats(t, q, (a, b))
+        assert w["covered"] is True and w["nSamples"] == sum(a <= x <= b for x in t) == own.n_samples
+        assert w["mean"] == window_mean(t, q, (a, b))  # independent recomputation from the snapshot's own samples
+        assert (w["stderr"], w["nEff"], w["nEffLower"], w["detail"]) == (own.stderr, own.n_eff, own.n_eff_lower, own.detail)
+        assert w["stationary"] is True and w["stderrApproximate"] is False and w["nEffLower"] >= 20.0
+        assert w["saturatedClaimAllowed"] is True  # the live trace's own gate is open ...
+        for x in w["archive"]:
+            archive_mean = means[(x["code"], (a, b))]
+            assert x["mean"] == archive_mean and x["delta"] == w["mean"] - archive_mean
+            assert x["stderr"] == _archive_stderr(x["code"], (a, b))
+            assert x["verdict"] == "no claim"  # ... the archive's is not
+            assert x["reason"] == f"archive trace not shown stationary on {a:g}-{b:g}"
+    assert c["saturatedClaimAllowed"] is False
+    assert c["reason"] == "No saturated-agreement claim. " + ". ".join(f"{_label(w)}: {ARCHIVE_GATE_SHUT}" for w in CMP_WINDOWS) + "."
+    json.dumps(final, allow_nan=False)
+    assert_valid(validator, final)
+
+
+def test_L11_a_non_stationary_live_trace_never_opens_a_claim():
+    """A drift of 0.2 per window under 0.3 white noise, 2000 samples per window: N_eff is in the hundreds, so only the
+    half-split test shuts the gate. Even against an archive that passes its own gate, every verdict is "no claim"."""
+    t = _grid(150.0, 450.0, 0.05)
+    live = _samples(t, _white(0, 2.4, 0.3, t) + 0.002 * (t - 300.0))
+    for archive, archive_part in ((None, f"; {ARCHIVE_GATE_SHUT}"), (_synthetic_archive(400, 2.4, 500, 2.4), "")):
+        c = comparison.live_comparison(live, archive=archive)
+        for w in c["windows"]:
+            a, b = w["window"]
+            assert (w["covered"], w["stationary"], w["stderrApproximate"], w["saturatedClaimAllowed"]) == (True, False, False, False)
+            assert w["nEffLower"] >= 20.0 and w["stderr"] is not None
+            assert [x["verdict"] for x in w["archive"]] == ["no claim", "no claim"]
+            for x in w["archive"]:
+                assert x["reason"].startswith(f"new trace not shown stationary on {a:g}-{b:g}")
+        assert c["saturatedClaimAllowed"] is False
+        assert c["reason"] == "No saturated-agreement claim. " + ". ".join(
+            f"{_label(w)}: live trace not stationary (half-split test){archive_part}" for w in CMP_WINDOWS) + "."
+
+
+def test_L11_n_eff_gate_an_autocorrelated_live_trace_below_20_effective_samples_has_no_claim():
+    """AR(1) with phi 0.9 every 0.5 time units (tau ~ 5 time units): stationary in law, but N_eff at the tau upper bound
+    is below 20 on both windows, so the stderr is a lower bound, stationarity undecidable and no claim is allowed —
+    even against an archive that passes its gate."""
+    t = _grid(150.0, 450.0, 0.5)
+    e = np.random.default_rng(202).normal(size=len(t))
+    x = np.zeros(len(t))
+    for i in range(1, len(t)):
+        x[i] = 0.9 * x[i - 1] + e[i]
+    c = comparison.live_comparison(_samples(t, 2.4 + 0.1 * x), archive=_synthetic_archive(400, 2.4, 500, 2.4))
+    for w in c["windows"]:
+        a, b = w["window"]
+        assert w["covered"] is True and w["stderr"] is not None and w["nEffLower"] < 20.0
+        assert (w["stderrApproximate"], w["stationary"], w["saturatedClaimAllowed"]) == (True, None, False)
+        assert [x["verdict"] for x in w["archive"]] == ["no claim", "no claim"]
+        assert [x["reason"] for x in w["archive"]] == [f"new trace not shown stationary on {a:g}-{b:g}"] * 2
+    assert c["saturatedClaimAllowed"] is False
+    assert c["reason"] == "No saturated-agreement claim. " + ". ".join(
+        f"{_label(w['window'])}: live trace not shown stationary (N_eff {w['nEffLower']:.3g} < 20)" for w in c["windows"]) + "."
+
+
+def test_L11_injected_archive_agree_and_disagree_only_agree_opens_the_claim():
+    t = _grid(150.0, 450.0, 0.1)
+    q = _white(300, 2.5, 0.3, t)
+    archive = _synthetic_archive(400, 2.5, 500, 3.0)  # stella at the live mean, GENE 0.5 above (margin ~0.25-0.30)
+    c = comparison.live_comparison(_samples(t, q), archive=archive)
+    for w in c["windows"]:
+        assert w["covered"] is True and w["saturatedClaimAllowed"] is True
+        assert [x["verdict"] for x in w["archive"]] == ["agree", "disagree"]
+        for x in w["archive"]:  # compare_window unchanged, field for field
+            res = compare_window((t, q), archive[x["code"]], w["window"])
+            assert (x["verdict"], x["delta"], x["reason"]) == (res["verdict"], res["delta"], res["reason"])
+            assert (x["mean"], x["stderr"]) == (res["archive"]["mean"], res["archive"]["stderr"])
+            assert x["delta"] == w["mean"] - x["mean"]
+    assert c["saturatedClaimAllowed"] is True
+    assert c["reason"] == (f"Saturated-agreement claim allowed for 200–300 vs stella, 300–400 vs stella: {AGREE_TAIL} "
+                           "Other verdicts: 200–300 vs GENE: disagree; 300–400 vs GENE: disagree.")
+    # both archive traces 0.5 above the live mean: disagree everywhere, and no claim
+    c = comparison.live_comparison(_samples(t, q), archive=_synthetic_archive(400, 3.0, 500, 3.0))
+    assert [[x["verdict"] for x in w["archive"]] for w in c["windows"]] == [["disagree", "disagree"]] * 2
+    assert c["saturatedClaimAllowed"] is False
+    assert c["reason"] == ("No saturated-agreement claim. 200–300: disagree vs stella; disagree vs GENE. "
+                           "300–400: disagree vs stella; disagree vs GENE.")
+
+
+def test_L11_injected_archive_inconclusive_is_no_claim():
+    """A mean of 0.1 under unit noise: the 10% margin (0.01) is far inside the uncertainty, which still includes 0."""
+    t = _grid(150.0, 450.0, 0.1)
+    c = comparison.live_comparison(_samples(t, _white(600, 0.1, 1.0, t)), archive=_synthetic_archive(700, 0.1, 800, 0.1, sigma=1.0))
+    assert all(w["saturatedClaimAllowed"] is True for w in c["windows"])  # both gates open: the TOST itself is undecided
+    assert [[x["verdict"] for x in w["archive"]] for w in c["windows"]] == [["inconclusive", "inconclusive"]] * 2
+    assert c["saturatedClaimAllowed"] is False
+    assert c["reason"] == ("No saturated-agreement claim. 200–300: inconclusive vs stella; inconclusive vs GENE. "
+                           "300–400: inconclusive vs stella; inconclusive vs GENE.")
+
+
+def test_L11_mixed_windows_name_exactly_the_agreeing_window_and_code():
+    t = _grid(150.0, 450.0, 0.1)
+    archive = _synthetic_archive(10, 2.5, 20, 3.0)
+    stepped = _white(0, 2.5, 0.3, t) + np.where(t >= 300.0, 0.5, 0.0)  # at stella's mean, then at GENE's
+    c = comparison.live_comparison(_samples(t, stepped), archive=archive)
+    assert [[x["verdict"] for x in w["archive"]] for w in c["windows"]] == [["agree", "disagree"], ["disagree", "agree"]]
+    assert c["saturatedClaimAllowed"] is True
+    assert c["reason"] == (f"Saturated-agreement claim allowed for 200–300 vs stella, 300–400 vs GENE: {AGREE_TAIL} "
+                           "Other verdicts: 200–300 vs GENE: disagree; 300–400 vs stella: disagree.")
+    # a live trace that ends at 350: 200–300 agrees with stella, 300–400 is not covered
+    t2 = _grid(150.0, 350.0, 0.1)
+    c = comparison.live_comparison(_samples(t2, _white(0, 2.5, 0.3, t2)), archive=archive)
+    first, second = c["windows"]
+    assert (first["covered"], second["covered"]) == (True, False)
+    assert [x["verdict"] for x in first["archive"]] == ["agree", "disagree"]
+    assert [x["verdict"] for x in second["archive"]] == ["no claim", "no claim"] and second["mean"] is None
+    assert c["saturatedClaimAllowed"] is True
+    assert c["reason"] == (f"Saturated-agreement claim allowed for 200–300 vs stella: {AGREE_TAIL} "
+                           "Other verdicts: 200–300 vs GENE: disagree; 300–400 vs stella: no claim; 300–400 vs GENE: no claim.")
+
+
+def test_L11_recomputed_as_bean_samples_arrive_and_always_matches_its_snapshot():
+    _, snaps = run_session(FakeBackend(steps=40, step_wall_s=0.005))
+    counts = [s["comparison"]["nSamples"] for s in snaps]
+    for s in snaps:
+        bean = s["workers"][0]["samples"]
+        assert s["comparison"]["nSamples"] == len(bean)
+        assert (s["comparison"]["tStart"], s["comparison"]["tEnd"]) == ((bean[0]["t"], bean[-1]["t"]) if bean else (None, None))
+    assert counts[0] == 0 and counts[-1] == 40 and counts == sorted(counts)
+
+
+def test_L11_cached_while_the_bean_sample_count_is_unchanged_and_never_shared(monkeypatch):
+    calls = []
+    real = comparison.live_comparison
+    monkeypatch.setattr(comparison, "live_comparison", lambda samples: calls.append(len(samples)) or real(samples))
+    orch = Orchestrator(FakeBackend(), hard_timeout_s=60)
+    first = orch.snapshot(BUDGET, qualified=False)
+    second = orch.snapshot(BUDGET, qualified=False)
+    assert calls == [0] and first["comparison"] == second["comparison"] and first["comparison"] is not second["comparison"]
+    first["comparison"]["saturatedClaimAllowed"] = True  # a consumer that mutates its snapshot changes nothing else
+    first["comparison"]["windows"][0]["archive"][0]["verdict"] = "agree"
+    third = orch.snapshot(BUDGET, qualified=False)
+    assert calls == [0] and third["comparison"] == second["comparison"]
+    assert third["comparison"]["saturatedClaimAllowed"] is False and third["comparison"]["windows"][0]["archive"][0]["verdict"] == "no claim"
+    with orch._lock:
+        orch.workers[0].samples.extend({"t": 200.0 + i, "Q": 2.5} for i in range(3))
+    fourth = orch.snapshot(BUDGET, qualified=False)
+    assert calls == [0, 3] and fourth["comparison"]["nSamples"] == 3 and fourth["comparison"]["tEnd"] == 202.0
+    orch.snapshot(BUDGET, qualified=False)
+    assert calls == [0, 3]
+    with orch._lock:  # triangular samples are not compared: no recomputation
+        orch.workers[1].samples.append({"t": 1.0, "Q": 2.0})
+    orch.snapshot(BUDGET, qualified=False)
+    assert calls == [0, 3]
+
+
+def test_L11_the_comparison_is_computed_outside_the_orchestrator_lock(monkeypatch):
+    """RV-024-2: a slow comparison must never hold the lock that the terminate and settle paths take."""
+    real = comparison.live_comparison
+    started, release = threading.Event(), threading.Event()
+
+    def slow(samples):
+        started.set()
+        release.wait(10)
+        return real(samples)
+
+    monkeypatch.setattr(comparison, "live_comparison", slow)
+    orch = Orchestrator(FakeBackend(), hard_timeout_s=60)
+    snaps, results = [], []
+    snapper = threading.Thread(target=lambda: snaps.append(orch.snapshot(BUDGET, qualified=True)), daemon=True)
+    snapper.start()
+    try:
+        assert started.wait(5)
+        stopper = threading.Thread(target=lambda: results.append((orch.stop_and_terminate(), orch.reason)), daemon=True)
+        stopper.start()
+        stopper.join(2)
+        assert not stopper.is_alive(), "stop_and_terminate blocked behind a comparison in progress"
+        assert results[0][0] is True
+    finally:
+        release.set()
+        snapper.join(10)
+    assert not snapper.is_alive() and snaps[0]["comparison"]["nSamples"] == 0
+
+
+def test_L11_the_modal_worker_import_chain_does_not_load_the_archive_stack():
+    """RV-024-1: modal_app imports these modules in every GPU container; none of them may load the comparison, the
+    transport archive or h5py (the worker never compares anything)."""
+    code = ("import sys, labyrinth_main.common.paths, labyrinth_main.features.live_gx.budget_guard, "
+            "labyrinth_main.features.live_gx.gx_input, labyrinth_main.features.live_gx.modal_backend, "
+            "labyrinth_main.features.live_gx.orchestrator, labyrinth_main.features.live_gx.service; "
+            "bad = [m for m in ('h5py', 'labyrinth_main.features.live_gx.comparison', "
+            "'labyrinth_main.features.transport.archive', 'labyrinth_main.features.transport.compare') if m in sys.modules]; "
+            "print(bad); sys.exit(1 if bad else 0)")
+    proc = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT / "main", capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_L11_a_comparison_that_cannot_be_computed_gives_no_windows_and_a_reason():
+    c = comparison.live_comparison([{"t": 210.0, "Q": 1.0}, {"t": 210.0, "Q": 2.0}])
+    assert (c["windows"], c["saturatedClaimAllowed"], c["nSamples"], c["tStart"], c["tEnd"]) == ([], False, 2, 210.0, 210.0)
+    assert c["reason"] == ("Live comparison could not be computed: ValueError: the live bean trace has divergent repeated "
+                           "sample times: 1 of 1 non-increasing samples do not repeat an earlier sample (first: index 1, "
+                           "t=210, Q=2)")
+    t = _grid(150.0, 450.0, 0.1)
+    live = _samples(t, _white(0, 2.4, 0.3, t))
+    # a harmless restart repeat (identical t and Q) is dropped, not an error
+    assert comparison.live_comparison(live + live[-5:])["windows"] == comparison.live_comparison(live)["windows"] != []
+    broken = comparison.live_comparison(live, archive={"stella": (t, np.ones(len(t)))})
+    assert broken["windows"] == [] and broken["reason"] == "Live comparison could not be computed: KeyError: 'GENE'"
+    with np.errstate(all="ignore"):
+        huge = comparison.live_comparison(_samples(t, np.full(len(t), 1e308)))  # the window mean overflows to inf
+    assert huge["windows"] == [] and huge["reason"] == "Live comparison could not be computed: ValueError: live mean on 200–300 is not finite (inf)"
+    for out in (c, broken, huge):
+        assert list(out) == ["tube", "nSamples", "tStart", "tEnd", "marginFraction", "method", "saturatedClaimAllowed", "reason", "windows"]
+        json.dumps(out, allow_nan=False)
+
+
+def test_L11_status_answers_and_validates_when_the_comparison_fails(validator, monkeypatch, qualified_template, tmp_path):
+    state = tmp_path / "state"
+    shutil.copytree(qualified_template, state)
+    write_ledger(state)
+
+    def broken(*a, **k):
+        raise RuntimeError("statistics unavailable")
+
+    monkeypatch.setattr(comparison, "window_stats", broken)
+    svc = service.LiveService(state_dir=state, availability_check=available, poll_interval_s=0.01,
+                              backend_factory=lambda rid, t: FakeBackend(steps=10**6, step_wall_s=0.01))
+    assert svc.launch(guard.slot_estimate_usd())[0]
+    try:
+        deadline = time.monotonic() + 10
+        st = svc.status()
+        while not st["workers"][0]["samples"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+            st = svc.status()
+    finally:
+        assert svc.shutdown() is True
+    c = st["comparison"]
+    assert c["windows"] == [] and c["saturatedClaimAllowed"] is False and c["nSamples"] == len(st["workers"][0]["samples"]) > 0
+    assert c["reason"] == "Live comparison could not be computed: RuntimeError: statistics unavailable"
+    json.dumps(st, allow_nan=False)
+    assert_valid(validator, st)
+
+
+def test_L11_only_session_snapshots_carry_the_comparison(validator, qualified_template, tmp_path):
+    unavailable = service.LiveService(state_dir=tmp_path / "none", availability_check=lambda: (False, "test: no credentials.")).status()
+    assert unavailable["mode"] == "unavailable" and "comparison" not in unavailable
+    state = tmp_path / "state"
+    shutil.copytree(qualified_template, state)
+    write_ledger(state)
+    svc = service.LiveService(state_dir=state, availability_check=available, poll_interval_s=0.005,
+                              backend_factory=lambda rid, t: FakeBackend(steps=50, step_wall_s=0.02))
+    idle = svc.status()
+    assert idle["mode"] == "idle" and "comparison" not in idle
+    assert svc.launch(guard.slot_estimate_usd())[0]
+    deadline = time.monotonic() + 10
+    session = svc.status()  # the session thread may not have left `idle` yet: wait for it to stream
+    while session["mode"] != "live" and time.monotonic() < deadline:
+        time.sleep(0.005)
+        session = svc.status()
+    assert session["mode"] == "live" and [w["window"] for w in session["comparison"]["windows"]] == CMP_WINDOWS
+    assert session["comparison"]["nSamples"] == len(session["workers"][0]["samples"])
+    svc._thread.join(timeout=10)
+    after = svc.status()
+    assert after["mode"] == "idle" and after["reason"].startswith("Last session ended") and "comparison" not in after
+    for snap in (unavailable, idle, session, after):
+        assert_valid(validator, snap)
+
+
+def test_L11_qualified_live_and_rehearsal_provenance_describe_the_comparison_without_a_claim():
+    """The "Live comparison NOT computed" sentence is gone (D-024); what replaces it names the check and points at the
+    snapshot's `comparison`, and never says that anything agrees."""
+    v = Orchestrator(FakeBackend(), hard_timeout_s=60).snapshot(BUDGET, qualified=True)["provenance"]["verification"]
+    assert v == {"outcome": "not-applicable", "details": f"Qualified by a recorded rehearsal. {orchestrator.ARCHIVE_COMPARISON}"}
+    r = Orchestrator(FakeBackend(), hard_timeout_s=60, kind="rehearsal").snapshot(BUDGET, qualified=False)["provenance"]["verification"]
+    assert r["outcome"] == "not-applicable" and r["details"].endswith(orchestrator.ARCHIVE_COMPARISON)
+    sentence = orchestrator.ARCHIVE_COMPARISON
+    for words in ("stella", "GENE", "200–300", "300–400", "coverage", "stationarity", "N_eff ≥ 20", "D-024", "comparison"):
+        assert words in sentence, words
+    assert "NOT computed" not in sentence and re.search(r"\bagree(s|d|ing)?\b", sentence) is None
+    assert not hasattr(orchestrator, "COMPARISON_NOT_COMPUTED") and not hasattr(rehearse, "COMPARISON_NOT_COMPUTED")
+    for path in sorted(LIVE_GX.glob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        assert "NOT computed" not in text and "COMPARISON_NOT_COMPUTED" not in text, path.name
+
+
+def test_L11_saved_rehearsal_phases_carry_the_comparison_and_the_new_wording(validator, qualified_template):
+    rec = service.load_saved_run(qualified_template, service.load_qualification(qualified_template)["savedRunId"])
+    assert len(rec["phases"]) == 2
+    for phase in rec["phases"]:
+        c, bean = phase["comparison"], phase["workers"][0]["samples"]
+        assert c["nSamples"] == len(bean) == 3 and (c["tStart"], c["tEnd"]) == (bean[0]["t"], bean[-1]["t"])
+        assert [w["window"] for w in c["windows"]] == CMP_WINDOWS and c["saturatedClaimAllowed"] is False
+        details = phase["provenance"]["verification"]["details"]
+        assert details.endswith(orchestrator.ARCHIVE_COMPARISON) and "NOT computed" not in json.dumps(phase)
+        assert_valid(validator, phase)

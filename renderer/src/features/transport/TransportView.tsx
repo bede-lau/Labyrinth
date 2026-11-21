@@ -1,7 +1,8 @@
-// Check transport (task 02, T8–T12): the verdict first (late means, Δ, the PRD-reported reduced run
+// Check transport (task 02, T8–T13): the verdict first (late means, Δ, the PRD-reported reduced run
 // beside the archive means, the saturated-agreement gate), then the archived stella + GENE bean
 // traces, the discrepancy and triangular cards, window statistics and fixtures. A GX overlay appears
-// ONLY when /api/live/status reports mode "live".
+// ONLY when /api/live/status reports mode "live", and the backend's live comparison with the archive
+// (D-024) only on a fresh live snapshot that carries it.
 import { useId, useMemo } from 'react';
 import {
   Callout,
@@ -19,7 +20,7 @@ import {
   type Source,
 } from '../../design';
 import { useArtifact } from '../../lib/artifacts';
-import { useLiveStatus } from '../../lib/liveStatus';
+import { useLiveStatus, type LiveComparison } from '../../lib/liveStatus';
 import {
   FLUX_UNIT,
   MEAN_DECIMALS,
@@ -30,6 +31,7 @@ import {
   discrepancy,
   gapSentence,
   lateComparison,
+  liveComparison,
   liveGxSamples,
   parseWindowDetail,
   referenceWindowNote,
@@ -39,6 +41,7 @@ import {
   type Discrepancy,
   type LateComparison,
 } from './model';
+import { LiveComparisonPanel } from './LiveComparison';
 import { PlotlyChart } from './PlotlyChart';
 import type { TransportArtifact } from './types';
 import './transport.css';
@@ -68,7 +71,7 @@ export function TransportView({ livePollMs = 5000 }: TransportViewProps = {}) {
       </Panel>
     );
   }
-  return <TransportBody a={state.data} gx={liveGxSamples(live)} />;
+  return <TransportBody a={state.data} gx={liveGxSamples(live)} comparison={liveComparison(live)} />;
 }
 
 /** A source is a link only when it is a web address; a repository path (PRD.md) is not served by this app. */
@@ -208,7 +211,16 @@ function Verdict({ a, claims, late, disc }: { a: TransportArtifact; claims: Clai
   );
 }
 
-function TransportBody({ a, gx }: { a: TransportArtifact; gx: ReturnType<typeof liveGxSamples> }) {
+function TransportBody({
+  a,
+  gx,
+  comparison,
+}: {
+  a: TransportArtifact;
+  gx: ReturnType<typeof liveGxSamples>;
+  /** Non-null only for a fresh live snapshot that carries one (liveComparison). */
+  comparison: LiveComparison | null;
+}) {
   const theme = useResolvedTheme();
   const fig = useMemo(() => buildTransportFigure(a, theme, gx), [a, theme, gx]);
   const rows = useMemo(() => windowRows(a), [a]);
@@ -269,6 +281,8 @@ function TransportBody({ a, gx }: { a: TransportArtifact; gx: ReturnType<typeof 
           </Callout>
         )}
       </Panel>
+
+      {comparison && <LiveComparisonPanel comparison={comparison} />}
 
       <div className="tr-grid">
         <Panel

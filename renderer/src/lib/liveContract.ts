@@ -27,6 +27,52 @@ export interface LiveProvenance {
   verification: { outcome: 'passed' | 'failed' | 'blocked' | 'not-applicable'; details: string };
   sources: { label: string; url: string; sha256: string; path?: string }[];
 }
+/** live-status `$defs/archiveVerdict`: `transport.compare.compare_window(live, archive, window)` for one archive trace. */
+export type LiveVerdict = 'agree' | 'disagree' | 'inconclusive' | 'no claim';
+export interface LiveArchiveVerdict {
+  code: 'stella' | 'GENE';
+  /** Archive time-weighted mean on the window. */
+  mean: number | null;
+  stderr: number | null;
+  /** Live mean minus archive mean; null when either is missing. */
+  delta: number | null;
+  verdict: LiveVerdict;
+  reason: string;
+}
+/** live-status `$defs/comparisonWindow`. `covered: false` ⇒ mean/stderr/nEff/nEffLower/stationary null and no claim. */
+export interface LiveComparisonWindow {
+  window: [number, number];
+  covered: boolean;
+  /** Live samples inside the window. */
+  nSamples: number;
+  mean: number | null;
+  stderr: number | null;
+  /** The stderr is a lower bound (N_eff at the tau upper bound below 20, or not established). */
+  stderrApproximate: boolean;
+  nEff: number | null;
+  /** N_eff at the one-sigma tau upper bound: the value the >= 20 gate uses. */
+  nEffLower: number | null;
+  /** null = undecidable. */
+  stationary: boolean | null;
+  /** The live trace's own gate on this window. */
+  saturatedClaimAllowed: boolean;
+  detail: string;
+  /** Exactly two: stella, then GENE. */
+  archive: [LiveArchiveVerdict & { code: 'stella' }, LiveArchiveVerdict & { code: 'GENE' }];
+}
+/** live-status `comparison` (D-024): this session's bean samples against the archived stella and GENE traces. */
+export interface LiveComparison {
+  tube: 'bean';
+  nSamples: number;
+  tStart: number | null;
+  tEnd: number | null;
+  marginFraction: number;
+  method: string;
+  saturatedClaimAllowed: boolean;
+  reason: string;
+  /** 200–300 then 300–400, or empty when the comparison could not be computed. */
+  windows: [] | [LiveComparisonWindow, LiveComparisonWindow];
+}
 export interface LiveStatus {
   schemaVersion: 1;
   mode: LiveMode;
@@ -36,6 +82,8 @@ export interface LiveStatus {
   workers: LiveWorker[];
   fallback: { active: boolean; label: string; savedRunId: string | null };
   provenance?: LiveProvenance;
+  /** Optional, never null: present on every snapshot of a session, absent without one (D-024). */
+  comparison?: LiveComparison;
 }
 
 /** contracts/live-run.schema.json (GET /api/live/runs/<savedRunId>). */
@@ -70,6 +118,9 @@ const bool: Check = (v, p) => (typeof v === 'boolean' ? null : `${p}: expected a
  */
 const num: Check = (v, p) => (typeof v === 'number' && Number.isFinite(v) ? null : `${p}: expected a finite number, got ${describe(v)}`);
 const int: Check = (v, p) => (typeof v === 'number' && Number.isInteger(v) ? null : `${p}: expected an integer, got ${describe(v)}`);
+/** `{ "type": "integer", "minimum": 0 }`. */
+const count: Check = (v, p) => int(v, p) ?? ((v as number) < 0 ? `${p}: expected an integer >= 0, got ${String(v)}` : null);
+const isNull: Check = (v, p) => (v === null ? null : `${p}: expected null, got ${describe(v)}`);
 const nullable =
   (inner: Check): Check =>
   (v, p) =>
@@ -113,6 +164,19 @@ function array(item: Check, limits: { min?: number; max?: number } = {}): Check 
   };
 }
 
+/** `prefixItems` + `items: false` (and min = max = the prefix length): exactly these items, in this order. */
+function tuple(items: readonly Check[]): Check {
+  return (v, p) => {
+    if (!Array.isArray(v)) return `${p}: expected an array, got ${describe(v)}`;
+    if (v.length !== items.length) return `${p}: expected exactly ${items.length} item(s), got ${v.length}`;
+    for (const [i, check] of items.entries()) {
+      const problem = check(v[i], `${p}[${i}]`);
+      if (problem) return problem;
+    }
+    return null;
+  };
+}
+
 /* ---- contracts/common.schema.json#/$defs/provenance ------------------------------------------ */
 const provenance = object({
   kind: oneOf(['archive', 'derived', 'prd-reported', 'live', 'rehearsal']),
@@ -122,6 +186,67 @@ const provenance = object({
   runtime: str,
   verification: object({ outcome: oneOf(['passed', 'failed', 'blocked', 'not-applicable']), details: str }),
   sources: array(object({ label: str, url: str, sha256: matching(/^[0-9a-f]{64}$|^n\/a$/) }, { path: str })),
+});
+
+/* ---- contracts/common.schema.json#/$defs/window: [lo, hi] (the schema cannot order them; neither does this) */
+const timeWindow = array(num, { min: 2, max: 2 });
+
+/* ---- contracts/live-status.schema.json `comparison` (D-024) ----------------------------------- */
+export const LIVE_VERDICTS: readonly LiveVerdict[] = ['agree', 'disagree', 'inconclusive', 'no claim'];
+
+/** `$defs/archiveVerdict` with the `code` const its prefixItems slot adds. */
+const archiveVerdict = (code: LiveArchiveVerdict['code']) =>
+  object({ code: oneOf([code]), mean: nullable(num), stderr: nullable(num), delta: nullable(num), verdict: oneOf(LIVE_VERDICTS), reason: str });
+
+const comparisonWindowShape = object({
+  window: timeWindow,
+  covered: bool,
+  nSamples: count,
+  mean: nullable(num),
+  stderr: nullable(num),
+  stderrApproximate: bool,
+  nEff: nullable(num),
+  nEffLower: nullable(num),
+  stationary: nullable(bool),
+  saturatedClaimAllowed: bool,
+  detail: str,
+  archive: tuple([archiveVerdict('stella'), archiveVerdict('GENE')]),
+});
+
+/** The fields the schema's `if covered: false / then` forces to null. */
+const NULL_WHEN_UNCOVERED = ['mean', 'stderr', 'nEff', 'nEffLower', 'stationary'] as const;
+
+/** `$defs/comparisonWindow`, its `if/then` included: a window that is not covered has no statistics and no claim. */
+const comparisonWindow: Check = (v, p) => {
+  const problem = comparisonWindowShape(v, p);
+  if (problem) return problem;
+  const w = v as Record<string, unknown>;
+  if (w.covered !== false) return null;
+  for (const key of NULL_WHEN_UNCOVERED) {
+    const field = isNull(w[key], `${p}.${key}`);
+    if (field) return `${field} (window not covered)`;
+  }
+  return w.saturatedClaimAllowed === false ? null : `${p}.saturatedClaimAllowed: expected false, got true (window not covered)`;
+};
+
+/** `maxItems: 2` and `anyOf [maxItems 0, minItems 2]`: none or both PRD windows. */
+const comparisonWindows: Check = (v, p) => {
+  const problem = array(comparisonWindow, { max: 2 })(v, p);
+  if (problem) return problem;
+  return (v as unknown[]).length === 1 ? `${p}: expected 0 or 2 items, got 1` : null;
+};
+
+/** Optional and closed; `null` is not allowed (the field is absent without a session, never null). */
+const comparison = object({
+  tube: oneOf(['bean']),
+  nSamples: count,
+  tStart: nullable(num),
+  tEnd: nullable(num),
+  marginFraction: num,
+  method: str,
+  saturatedClaimAllowed: bool,
+  reason: str,
+  windows: comparisonWindows,
 });
 
 /* ---- contracts/live-status.schema.json ------------------------------------------------------- */
@@ -150,7 +275,7 @@ const liveStatus = object(
     ),
     fallback: object({ active: bool, label: str, savedRunId: nullable(matching(SAVED_RUN_ID)) }),
   },
-  { qualified: bool, provenance },
+  { qualified: bool, provenance, comparison },
 );
 
 /* ---- contracts/live-run.schema.json (closed at every level since D-023 item 6) -------------- */

@@ -1,13 +1,13 @@
 # Labyrinth · status
 
 > **Single source of truth for handoff. Read "Current state" first, then `interface.md`, `architecture.md`, `decision.md`.**
-> Last updated: 2026-11-20 ~23:10 by the maintainer (Claude Code in the owner's checkout `D:\Labyrinth`, Windows + WSL).
+> Last updated: 2026-11-21 by the maintainer's live-comparison session (D-024) (Claude Code in the owner's checkout `D:\Labyrinth`, Windows + WSL).
 > Branch **`main`**. Everything below "Current state" is history, newest first.
 > Every command runs inside WSL through `scripts/dev.sh` — CLAUDE.md "Running commands on this machine" (D-020).
 
 ## Current state
 
-**All ten tasks are `DONE`.** Each has a final external-verifier run at commit `3faed3a` ending in `Verdict: PASS`, with a `PASS` row for every outcome
+**Seven of ten tasks are `DONE`; 02, 06, 09 are back in VERIFYING for D-024 (live comparison) until their verifiers re-run.** Before D-024 each had a final external-verifier run at commit `3faed3a` ending in `Verdict: PASS`, with a `PASS` row for every outcome
 (`tasks/<NN>/VERIFY.md`), and the code passed the 2026-11-20 review round with all six areas approved. `scripts/check_docs.py` enforces this (D-022): any
 later change to a task's owned files reopens it until a verifier runs again. `verify.sh all` at `3faed3a`: exit 0, 11/11 stages — boundary self-test
 134 violation shapes, 71 gate tests, 331 backend tests, artifacts schema-valid and byte-fresh, tsc clean, 1350 frontend tests, vite build.
@@ -16,22 +16,25 @@ later change to a task's owned files reopens it until a verifier runs again. `ve
 |---|---|---|---|
 | 00 | scaffold, boundary, gates | DONE | `3faed3a` |
 | 01 | geometry | DONE (acceptance-129 BLOCKED by design, D-007) | `3faed3a` |
-| 02 | transport | DONE | `3faed3a` |
+| 02 | transport | VERIFYING (D-024: T13 live comparison) | was `3faed3a` |
 | 03 | forecast | DONE (PRD MAE mismatch shown, D-016) | `3faed3a` |
 | 04 | budget | DONE | `3faed3a` |
 | 05 | spatial | DONE (PRD-reported/blocked: no checkpoints in repo) | `3faed3a` |
-| 06 | live GX | DONE against fakes — **never run on Modal** (§6 runbook) | `3faed3a` |
+| 06 | live GX | VERIFYING (D-024: L11 comparison) against fakes — **never run on Modal** (§6 runbook) | was `3faed3a` |
 | 07 | HTTP server | DONE | `3faed3a` |
 | 08 | design system | DONE | `3faed3a` |
-| 09 | app shell | DONE | `3faed3a` |
+| 09 | app shell | VERIFYING (D-024: `liveContract.ts` validator) | was `3faed3a` |
 
-**GitHub:** `origin/main` is still `f0ca8e6`. Local `main` carries every session-2/3 commit plus the DONE commit; **the owner said "先不推送"
-(don't push yet) — ask before pushing.**
+**GitHub:** `origin/main` = `03bd626` (pushed 2026-11-20 on the owner's "Push to main"; fast-forward from `f0ca8e6`). The live-comparison work runs
+in a separate session in this checkout and commits locally; push it only after its review and verification, and ask the owner first.
 
 **Open, not blocking DONE** (details in the Session 3 log below and in each VERIFY.md "Findings"):
-- **PRD gap — live comparison (cross-RX-2):** new GX bean samples are converted and can be overlaid, but the PRD's live comparison against the archive
-  (time-weighted means on 200–300 / 300–400 when covered, stationarity, saturated-agreement gate) is not computed; the backend says so in `reason`.
-  Next step: a decision entry + live-status contract field, then apply the transport statistics to the live trace. (`interface.md` §10)
+- **Live comparison (cross-RX-2) closed by D-024, awaiting re-verification:** live-status `comparison` (schema, `live_gx/comparison.py`, orchestrator
+  snapshot, Check transport "Live comparison" panel, live-panel summary line, `liveContract.ts` validator); docs and TASK.md outcomes T13 / L11. Reviewer
+  APPROVE (one round; minors RV-024-1/2/3/4/7 fixed by the maintainer, each fix probed). `verify.sh all` green. Committed locally, **not pushed**.
+  Next: verifiers for 02, 06, 09 at that commit → DONE. With the committed archive every live verdict is "no claim" (D-017) — by design.
+  Open: RV-024-6 (owner's call) — the comparison disappears when the session leaves `live`; option: keep the last session's comparison labelled "session
+  ended". CLAUDE.md "Current stage" still names this PRD gap (left for the owner to edit).
 - Minors from the final reviews (FR-FE-LIVE-1/2, design-r3-N1, RV-G21/22/23, RV-G5 part, be-live-r4-1) and the verifiers' minors (2–3 per task, mostly
   test wording and doc lines).
 

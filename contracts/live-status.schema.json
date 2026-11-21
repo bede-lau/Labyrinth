@@ -63,6 +63,86 @@
         "savedRunId": { "type": ["string", "null"], "pattern": "^(rehearsal|live)-[0-9a-f]{12}$", "description": "null when no qualified rehearsal recording exists; otherwise the id the server serves at /api/live/runs/<id> (D-023 follow-up)." }
       }
     },
-    "provenance": { "$ref": "common.schema.json#/$defs/provenance" }
+    "provenance": { "$ref": "common.schema.json#/$defs/provenance" },
+    "comparison": {
+      "description": "D-024: this session's bean-tube GX samples (archive units) compared with the archived stella and GENE traces on the PRD windows 200–300 and 300–400 (transport.stats / transport.compare). Present on every snapshot of a session; absent when no session exists.",
+      "type": "object",
+      "required": ["tube", "nSamples", "tStart", "tEnd", "marginFraction", "method", "saturatedClaimAllowed", "reason", "windows"],
+      "additionalProperties": false,
+      "properties": {
+        "tube": { "const": "bean" },
+        "nSamples": { "type": "integer", "minimum": 0, "description": "Bean samples received in this session." },
+        "tStart": { "type": ["number", "null"], "description": "First bean sample time (archive units); null without samples." },
+        "tEnd": { "type": ["number", "null"], "description": "Last bean sample time (archive units); null without samples." },
+        "marginFraction": { "type": "number", "description": "TOST equivalence margin as a fraction of |archive mean| (compare_window)." },
+        "method": { "type": "string" },
+        "saturatedClaimAllowed": {
+          "type": "boolean",
+          "description": "True only when some window's verdict against some archive trace is \"agree\". Consumers show a claim only when an agree verdict is present too."
+        },
+        "reason": { "type": "string", "description": "Why a saturated-agreement claim is or is not allowed (or why the comparison could not be computed)." },
+        "windows": {
+          "description": "Exactly the two PRD windows (200–300, then 300–400), or empty when the comparison could not be computed (reason says why).",
+          "type": "array",
+          "maxItems": 2,
+          "anyOf": [{ "maxItems": 0 }, { "minItems": 2 }],
+          "items": { "$ref": "#/$defs/comparisonWindow" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "comparisonWindow": {
+      "type": "object",
+      "required": ["window", "covered", "nSamples", "mean", "stderr", "stderrApproximate", "nEff", "nEffLower", "stationary", "saturatedClaimAllowed", "detail", "archive"],
+      "additionalProperties": false,
+      "properties": {
+        "window": { "$ref": "common.schema.json#/$defs/window" },
+        "covered": { "type": "boolean" },
+        "nSamples": { "type": "integer", "minimum": 0, "description": "Live samples inside the window." },
+        "mean": { "type": ["number", "null"], "description": "Live time-weighted mean (D-013); null when not covered." },
+        "stderr": { "type": ["number", "null"], "description": "Autocorrelation-corrected sampling uncertainty; null when not finite or not covered." },
+        "stderrApproximate": { "type": "boolean", "description": "True when N_eff at the tau upper bound is below 20 or not established: the stderr is a lower bound." },
+        "nEff": { "type": ["number", "null"] },
+        "nEffLower": { "type": ["number", "null"], "description": "N_eff at the one-sigma tau upper bound: the value the >= 20 gate uses." },
+        "stationary": { "type": ["boolean", "null"], "description": "null = undecidable (indicative only)." },
+        "saturatedClaimAllowed": { "type": "boolean", "description": "The live trace's own gate on this window: covered, stationary, finite stderr, nEffLower >= 20." },
+        "detail": { "type": "string" },
+        "archive": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            { "$ref": "#/$defs/archiveVerdict", "properties": { "code": { "const": "stella" } } },
+            { "$ref": "#/$defs/archiveVerdict", "properties": { "code": { "const": "GENE" } } }
+          ],
+          "items": false
+        }
+      },
+      "if": { "properties": { "covered": { "const": false } }, "required": ["covered"] },
+      "then": {
+        "properties": {
+          "mean": { "type": "null" },
+          "stderr": { "type": "null" },
+          "nEff": { "type": "null" },
+          "nEffLower": { "type": "null" },
+          "stationary": { "type": "null" },
+          "saturatedClaimAllowed": { "const": false }
+        }
+      }
+    },
+    "archiveVerdict": {
+      "type": "object",
+      "required": ["code", "mean", "stderr", "delta", "verdict", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "enum": ["stella", "GENE"] },
+        "mean": { "type": ["number", "null"], "description": "Archive time-weighted mean on the window." },
+        "stderr": { "type": ["number", "null"] },
+        "delta": { "type": ["number", "null"], "description": "Live mean minus archive mean; null when either is missing." },
+        "verdict": { "enum": ["agree", "disagree", "inconclusive", "no claim"] },
+        "reason": { "type": "string" }
+      }
+    }
   }
 }

@@ -5,7 +5,9 @@ path without Modal. The server never selects it: there is no environment flag or
 enables it. Device IDs are prefixed `FAKE-` so a leaked snapshot cannot be mistaken for a GPU.
 
 Each launched worker is a real thread so concurrency (overlapping wall-clock intervals) is real.
-Flux values are a fixed formula, not physics.
+Flux values are a fixed formula, not physics: `q_raw_fn(tube, t_raw)` (default `fake_q_raw`). A test may pass its own
+to drive noise, trends or offsets; it must be a deterministic function of its arguments (seeded noise looked up by
+time, never drawn per call), so a run's samples do not depend on thread scheduling.
 
 Restart files are modelled like GX's: written every `ckpt_every` steps, so the checkpoint time is
 usually EARLIER than the last flux sample. `restart_store` maps checkpoint ref -> the time actually
@@ -25,6 +27,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .orchestrator import TUBES, Checkpoint
@@ -66,8 +69,10 @@ class FakeBackend:
                  fail: dict[str, int] | None = None, fail_launch: set[str] | None = None,
                  ignore_checkpoint: bool = False, ckpt_every: int = 2, misreport_checkpoint_time: bool = False,
                  restart_store: dict[str, float] | None = None, events: list | None = None,
-                 startup_s: float = 0.0, run_for_s: float | None = None):
+                 startup_s: float = 0.0, run_for_s: float | None = None,
+                 q_raw_fn: Callable[[str, float], float] | None = None):
         self.steps, self.dt_raw, self.step_wall_s = steps, dt_raw, step_wall_s
+        self.q_raw_fn = fake_q_raw if q_raw_fn is None else q_raw_fn
         self.fail = fail or {}
         self.fail_launch = fail_launch or set()
         self.ignore_checkpoint = ignore_checkpoint
@@ -115,7 +120,7 @@ class FakeBackend:
                     w.state, w.error = "failed", f"simulated GX crash on {w.tube} at step {step}"
                     break
                 w.sim_time_raw += w.dt_raw
-                w.samples_raw.append([w.sim_time_raw, fake_q_raw(w.tube, w.sim_time_raw)])
+                w.samples_raw.append([w.sim_time_raw, self.q_raw_fn(w.tube, w.sim_time_raw)])
                 if self.ckpt_every and step % self.ckpt_every == 0:
                     restart_t = w.sim_time_raw
         if w.state == "running":  # about to finish: not before the sibling has started (the pair overlaps)

@@ -6,7 +6,17 @@
 import Ajv2020 from 'ajv/dist/2020';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { LIVE_MODES, SAVED_RUN_ID, validateLiveStatus, validateSavedRun, type LiveStatus, type SavedRun } from './liveContract';
+import {
+  LIVE_MODES,
+  LIVE_VERDICTS,
+  SAVED_RUN_ID,
+  validateLiveStatus,
+  validateSavedRun,
+  type LiveComparison,
+  type LiveComparisonWindow,
+  type LiveStatus,
+  type SavedRun,
+} from './liveContract';
 
 const CONTRACTS = resolve(__dirname, '../../../contracts');
 const schema = (file: string) => JSON.parse(readFileSync(resolve(CONTRACTS, file), 'utf8'));
@@ -224,4 +234,217 @@ test('validateSavedRun agrees with contracts/live-run.schema.json (phases are fu
   expect(validateSavedRun({ savedRunId: 'rehearsal-0123456789ab', initVerified: true })).toBe('$: missing required property "continuationVerified"');
   expect(validateSavedRun({ ...savedRun, phases: [] })).toBe('$.phases: expected at least 1 item(s), got 0');
   expect(validateSavedRun({ ...savedRun, savedRunId: 'not a valid id!' })).toMatch(/^\$\.savedRunId/);
+});
+
+/* ---- D-024: live-status `comparison` ---------------------------------------------------------- */
+const coveredWindow: LiveComparisonWindow = {
+  window: [200, 300],
+  covered: true,
+  nSamples: 71,
+  mean: 2.612,
+  stderr: 0.031,
+  stderrApproximate: true,
+  nEff: 14.2,
+  nEffLower: 9.8,
+  stationary: null,
+  saturatedClaimAllowed: false,
+  detail: 'Half-split test: … -> undecidable. Saturated claim NOT allowed: N_eff (at the tau upper bound) below 20, not shown stationary.',
+  archive: [
+    { code: 'stella', mean: 2.9, stderr: null, delta: -0.288, verdict: 'no claim', reason: 'new trace not shown stationary on 200-300; archive trace not shown stationary on 200-300' },
+    { code: 'GENE', mean: 2.75, stderr: 0.021, delta: -0.138, verdict: 'no claim', reason: 'new trace not shown stationary on 200-300' },
+  ],
+};
+const uncoveredWindow: LiveComparisonWindow = {
+  window: [300, 400],
+  covered: false,
+  nSamples: 0,
+  mean: null,
+  stderr: null,
+  stderrApproximate: true,
+  nEff: null,
+  nEffLower: null,
+  stationary: null,
+  saturatedClaimAllowed: false,
+  detail: 'trace ends at t = 290.1; no mean, uncertainty or claim.',
+  archive: [
+    { code: 'stella', mean: 2.55, stderr: null, delta: null, verdict: 'no claim', reason: 'new trace does not cover 300-400' },
+    { code: 'GENE', mean: 2.68, stderr: 0.021, delta: null, verdict: 'no claim', reason: 'new trace does not cover 300-400' },
+  ],
+};
+const comparison: LiveComparison = {
+  tube: 'bean',
+  nSamples: 85,
+  tStart: 182.4,
+  tEnd: 290.1,
+  marginFraction: 0.1,
+  method: 'transport.stats window_stats + transport.compare compare_window (TOST)',
+  saturatedClaimAllowed: false,
+  reason: 'No window has an "agree" verdict.',
+  windows: [coveredWindow, uncoveredWindow],
+};
+const liveCompared: LiveStatus = { ...live, comparison };
+// Every verdict and both stationarity booleans, a covered window whose own gate is open, and the top-level flag set.
+const liveAgree: LiveStatus = {
+  ...live,
+  comparison: {
+    ...comparison,
+    saturatedClaimAllowed: true,
+    reason: 'Saturated agreement claim allowed on 200-300 against stella.',
+    windows: [
+      {
+        ...coveredWindow,
+        stationary: true,
+        stderrApproximate: false,
+        nEffLower: 24.5,
+        saturatedClaimAllowed: true,
+        archive: [
+          { ...coveredWindow.archive[0], verdict: 'agree' },
+          { ...coveredWindow.archive[1], verdict: 'disagree' },
+        ],
+      },
+      {
+        ...coveredWindow,
+        window: [300, 400],
+        stationary: false,
+        archive: [
+          { ...coveredWindow.archive[0], verdict: 'inconclusive' },
+          { ...coveredWindow.archive[1], verdict: 'no claim' },
+        ],
+      },
+    ],
+  },
+};
+const liveNotComputed: LiveStatus = {
+  ...live,
+  comparison: { ...comparison, nSamples: 0, tStart: null, tEnd: null, windows: [], reason: "Live comparison could not be computed: KeyError: 'GENE'" },
+};
+
+/** A copy of `liveCompared` whose comparison `edit` changed (the edit works on a deep copy). */
+function withComparison(edit: (c: Record<string, any>) => void): unknown {
+  const doc = clone(liveCompared) as unknown as { comparison: Record<string, any> };
+  edit(doc.comparison);
+  return doc;
+}
+
+test('D-024 validateLiveStatus agrees with the schema on snapshots carrying a comparison and on every corruption of them', () => {
+  const a = ajv();
+  const oracle = (doc: unknown) => a.validate('live-status.schema.json', doc) as boolean;
+  for (const base of [liveCompared, liveAgree, liveNotComputed]) {
+    expect(oracle(base), JSON.stringify(a.errors)).toBe(true);
+    expect(validateLiveStatus(base)).toBeNull();
+  }
+  // The verdict list in the code is the schema's.
+  expect([...LIVE_VERDICTS]).toEqual(schema('live-status.schema.json').$defs.archiveVerdict.properties.verdict.enum);
+
+  const corpus = [liveCompared, liveAgree, liveNotComputed].flatMap((b) => corruptions(b));
+  const disagreements: string[] = [];
+  let rejected = 0;
+  let insideComparison = 0;
+  for (const [what, doc] of corpus) {
+    const expected = oracle(doc);
+    const problem = validateLiveStatus(doc);
+    if (!expected) rejected += 1;
+    if (!expected && what.startsWith('comparison.')) insideComparison += 1;
+    if ((problem === null) !== expected) disagreements.push(`${what}: schema says ${expected ? 'valid' : 'invalid'}, validator says ${problem ?? 'valid'}`);
+  }
+  expect(disagreements).toEqual([]);
+  expect(corpus.length).toBeGreaterThan(2500);
+  expect(insideComparison).toBeGreaterThan(900);
+  expect(corpus.length - rejected).toBeGreaterThan(50);
+});
+
+// Each rule of the comparison schema, broken (or kept) on purpose: [what, document, valid by the schema].
+const COMPARISON_RULES: [string, unknown, boolean][] = [
+  ['comparison absent (optional)', idle, true],
+  ['comparison: null (optional, not nullable)', { ...live, comparison: null }, false],
+  ['comparison is closed', withComparison((c) => (c.note = 'x')), false],
+  ['comparison without reason', withComparison((c) => delete c.reason), false],
+  ['tube const "bean"', withComparison((c) => (c.tube = 'triangular')), false],
+  ['nSamples 0', withComparison((c) => (c.nSamples = 0)), true],
+  ['nSamples −1', withComparison((c) => (c.nSamples = -1)), false],
+  ['nSamples 1.5', withComparison((c) => (c.nSamples = 1.5)), false],
+  ['nSamples "85"', withComparison((c) => (c.nSamples = '85')), false],
+  ['tStart / tEnd null', withComparison((c) => ((c.tStart = null), (c.tEnd = null))), true],
+  ['tStart "182"', withComparison((c) => (c.tStart = '182')), false],
+  ['marginFraction null', withComparison((c) => (c.marginFraction = null)), false],
+  ['windows: []', withComparison((c) => (c.windows = [])), true],
+  ['windows: one', withComparison((c) => (c.windows = [c.windows[0]])), false],
+  ['windows: three', withComparison((c) => c.windows.push(c.windows[0])), false],
+  ['windows: four', withComparison((c) => c.windows.push(...c.windows)), false],
+  ['window is closed', withComparison((c) => (c.windows[0].extra = 1)), false],
+  ['window without detail', withComparison((c) => delete c.windows[0].detail), false],
+  ['window.window one number', withComparison((c) => (c.windows[0].window = [200])), false],
+  ['window.window three numbers', withComparison((c) => (c.windows[0].window = [200, 300, 400])), false],
+  ['window.window reversed (the schema cannot order it)', withComparison((c) => (c.windows[0].window = [300, 200])), true],
+  ['window nSamples −1', withComparison((c) => (c.windows[0].nSamples = -1)), false],
+  ['window nSamples 2.5', withComparison((c) => (c.windows[0].nSamples = 2.5)), false],
+  ['stationary true', withComparison((c) => (c.windows[0].stationary = true)), true],
+  ['stationary false', withComparison((c) => (c.windows[0].stationary = false)), true],
+  ['stationary "undecidable"', withComparison((c) => (c.windows[0].stationary = 'undecidable')), false],
+  ['stderrApproximate null', withComparison((c) => (c.windows[0].stderrApproximate = null)), false],
+  ['archive: one entry', withComparison((c) => c.windows[0].archive.pop()), false],
+  ['archive: three entries', withComparison((c) => c.windows[0].archive.push(c.windows[0].archive[1])), false],
+  ['archive: GENE then stella', withComparison((c) => c.windows[0].archive.reverse()), false],
+  ['archive: stella twice', withComparison((c) => (c.windows[0].archive[1] = { ...c.windows[0].archive[0] })), false],
+  ['archive: GENE twice', withComparison((c) => (c.windows[0].archive[0] = { ...c.windows[0].archive[1] })), false],
+  ['archive code "gene"', withComparison((c) => (c.windows[0].archive[1].code = 'gene')), false],
+  ['archive entry is closed', withComparison((c) => (c.windows[0].archive[0].ci = [0, 1])), false],
+  ['archive entry without reason', withComparison((c) => delete c.windows[0].archive[0].reason), false],
+  ['archive delta null', withComparison((c) => (c.windows[0].archive[0].delta = null)), true],
+  ['archive mean "2.9"', withComparison((c) => (c.windows[0].archive[0].mean = '2.9')), false],
+  ...LIVE_VERDICTS.map((v): [string, unknown, boolean] => [`verdict "${v}"`, withComparison((c) => (c.windows[0].archive[0].verdict = v)), true]),
+  ['verdict "agrees"', withComparison((c) => (c.windows[0].archive[0].verdict = 'agrees')), false],
+  ['verdict "No claim"', withComparison((c) => (c.windows[0].archive[0].verdict = 'No claim')), false],
+  ['verdict null', withComparison((c) => (c.windows[0].archive[0].verdict = null)), false],
+  // if covered: false then mean, stderr, nEff, nEffLower, stationary null and saturatedClaimAllowed false.
+  ['uncovered: mean 2.5', withComparison((c) => (c.windows[1].mean = 2.5)), false],
+  ['uncovered: stderr 0.1', withComparison((c) => (c.windows[1].stderr = 0.1)), false],
+  ['uncovered: nEff 3', withComparison((c) => (c.windows[1].nEff = 3)), false],
+  ['uncovered: nEffLower 3', withComparison((c) => (c.windows[1].nEffLower = 3)), false],
+  ['uncovered: stationary true', withComparison((c) => (c.windows[1].stationary = true)), false],
+  ['uncovered: stationary false', withComparison((c) => (c.windows[1].stationary = false)), false],
+  ['uncovered: saturatedClaimAllowed true', withComparison((c) => (c.windows[1].saturatedClaimAllowed = true)), false],
+  ['uncovered: stderrApproximate false (not constrained)', withComparison((c) => (c.windows[1].stderrApproximate = false)), true],
+  ['uncovered: nSamples 3 (not constrained)', withComparison((c) => (c.windows[1].nSamples = 3)), true],
+  ['covered with null statistics (allowed)', withComparison((c) => (c.windows[1].covered = true)), true],
+  ['covered: saturatedClaimAllowed true (allowed by the schema)', withComparison((c) => (c.windows[0].saturatedClaimAllowed = true)), true],
+];
+
+test('D-024 every comparison rule: the schema and the validator give the same verdict, alone and inside a saved run', () => {
+  const a = ajv();
+  const status = (doc: unknown) => a.validate('live-status.schema.json', doc) as boolean;
+  const run = (doc: unknown) => a.validate('live-run.schema.json', doc) as boolean;
+  const verdicts = COMPARISON_RULES.map(([what, doc]) => {
+    const inRun = { ...savedRun, phases: [liveCompared, doc] };
+    return [what, status(doc), validateLiveStatus(doc) === null, run(inRun), validateSavedRun(inRun) === null];
+  });
+  // What the schema says is what each case was written for (so no case is vacuous) …
+  expect(verdicts.map(([what, schemaSays]) => [what, schemaSays])).toEqual(COMPARISON_RULES.map(([what, , valid]) => [what, valid]));
+  // … and the validator says the same, on its own and inside a saved run's phases.
+  expect(verdicts).toEqual(COMPARISON_RULES.map(([what, , valid]) => [what, valid, valid, valid, valid]));
+  // A saved run written before D-024 (no comparison anywhere) stays valid.
+  expect(validateSavedRun(savedRun)).toBeNull();
+  expect(validateSavedRun({ ...savedRun, phases: [liveAgree, liveNotComputed] })).toBeNull();
+});
+
+test('D-024 validateLiveStatus names what is wrong in a comparison', () => {
+  expect(validateLiveStatus({ ...live, comparison: null })).toBe('$.comparison: expected an object, got null');
+  expect(validateLiveStatus(withComparison((c) => (c.windows = [c.windows[0]])))).toBe('$.comparison.windows: expected 0 or 2 items, got 1');
+  expect(validateLiveStatus(withComparison((c) => c.windows.push(c.windows[0])))).toBe('$.comparison.windows: expected at most 2 item(s), got 3');
+  expect(validateLiveStatus(withComparison((c) => (c.nSamples = -1)))).toBe('$.comparison.nSamples: expected an integer >= 0, got -1');
+  expect(validateLiveStatus(withComparison((c) => (c.windows[1].mean = 2.5)))).toBe('$.comparison.windows[1].mean: expected null, got 2.5 (window not covered)');
+  expect(validateLiveStatus(withComparison((c) => (c.windows[1].saturatedClaimAllowed = true)))).toBe(
+    '$.comparison.windows[1].saturatedClaimAllowed: expected false, got true (window not covered)',
+  );
+  expect(validateLiveStatus(withComparison((c) => c.windows[0].archive.reverse()))).toBe(
+    '$.comparison.windows[0].archive[0].code: expected one of "stella", got "GENE"',
+  );
+  expect(validateLiveStatus(withComparison((c) => c.windows[0].archive.pop()))).toBe('$.comparison.windows[0].archive: expected exactly 2 item(s), got 1');
+  expect(validateLiveStatus(withComparison((c) => (c.windows[0].archive[0].verdict = 'agrees')))).toMatch(
+    /^\$\.comparison\.windows\[0\]\.archive\[0\]\.verdict: expected one of "agree", "disagree", "inconclusive", "no claim", got "agrees"$/,
+  );
+  // Non-finite numbers are refused here too (the documented tightening, FE2-5).
+  const text = JSON.stringify(liveCompared).replace('"marginFraction":0.1', '"marginFraction":1e400');
+  expect(text).toMatch(/1e400/);
+  expect(validateLiveStatus(JSON.parse(text))).toBe('$.comparison.marginFraction: expected a finite number, got Infinity');
 });

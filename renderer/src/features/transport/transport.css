@@ -130,6 +130,27 @@
 .tr-details p { margin-top: var(--lab-space-1); max-width: 72ch; }
 .tr-details--row { margin-top: var(--lab-space-1); }
 
+/* Live comparison (D-024, T13). The facts reflow to one column on a phone; its two tables reuse the
+   window table's well, so they turn into labelled cards in a narrow well, as the archive table does. */
+.tr-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: var(--lab-space-2) var(--lab-space-4);
+  margin: 0;
+}
+.tr-facts > div { min-width: 0; }
+.tr-facts__wide { grid-column: 1 / -1; }
+.tr-facts dt {
+  font-size: var(--lab-font-size-2xs);
+  line-height: var(--lab-line-height-2xs);
+  font-weight: var(--lab-font-weight-semibold);
+  letter-spacing: 0.04em;
+  color: var(--lab-color-text-muted);
+}
+.tr-facts dd { margin: 0; font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text); overflow-wrap: anywhere; }
+.tr-subhead { margin-top: var(--lab-space-4); font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); font-weight: var(--lab-font-weight-semibold); color: var(--lab-color-text); }
+.tr-live .tr-claim__why, .tr-live .tr-details p, .tr-live .lab-callout__body { overflow-wrap: anywhere; }
+
 .tr-tri-label { margin-top: var(--lab-space-3); font-size: var(--lab-font-size-sm); line-height: var(--lab-line-height-sm); color: var(--lab-color-text-muted); }
 
 .tr-fixtures { display: flex; flex-direction: column; gap: var(--lab-space-2); }

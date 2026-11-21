@@ -20,14 +20,15 @@ Frontend:
 - T10. Discrepancy card: reduced Modal 5.79 vs archive values with delta; fixture rows (claimed vs computed, ✓/✗).
 - T11. Triangular card separate from the bean plot, labelled "published mean, raw trace unverified".
 - T12. When the live API reports GX samples, they overlay in archive units with a LIVE label; otherwise no GX series is drawn.
+- T13. Live comparison (D-024): only when a valid, fresh live-status snapshot has mode `live` and carries `comparison`, a "Live comparison" section shows per window (200–300, 300–400) the live coverage, mean ± stderr (approximate marked as a lower bound, "—" for null), N_eff vs the gate 20, stationarity ("Undecidable" for null), the live trace's own claim gate, and for stella and GENE the archive mean, the signed Δ and the verdict (Agree / Disagree / Inconclusive / No claim); "Saturated agreement: claim allowed" only when the backend flag is true **and** an `agree` verdict is present (a flag without one is shown as an inconsistency); empty `windows` shows "could not be computed" with the reason; nothing in any other state.
 
 ## Tests
 | # | Test |
 |---|---|
 | T1–T7 | `main/tests/test_transport.py::test_T1_*` … `test_T7_*` |
-| T8–T12 | `renderer/src/features/transport/*.test.tsx`, one `test('T8 …')` per outcome |
+| T8–T13 | `renderer/src/features/transport/*.test.tsx`, one `test('T8 …')` per outcome |
 
 ## Status
-DONE
+VERIFYING
 
-Verified at commit 3faed3a: tasks/02-transport/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).
+Reopened 2026-11-20 for D-024 (live comparison, new outcome T13; `renderer/src/features/transport/` changed). Previously DONE at commit 3faed3a (VERIFY.md run of that date, `Verdict: PASS`).

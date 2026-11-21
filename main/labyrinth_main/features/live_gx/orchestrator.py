@@ -10,7 +10,8 @@ does the real work (Modal in production, `fake_backend` in tests); this module o
   to `fallback`, preserves the error and terminates the other worker from the failure path itself,
 * always terminates every launched worker after retrieval (also on exception), retrying with backoff;
   a termination that cannot be confirmed is reported loudly and never shown as `terminated`,
-* renders snapshots in the shape of contracts/live-status.schema.json.
+* renders snapshots in the shape of contracts/live-status.schema.json, each with the bean samples' comparison
+  against the archived stella and GENE traces (`comparison.live_comparison`, D-024; cached per bean sample count).
 
 Termination invariant. A launched worker counts as terminated only when `backend.terminate(handle)` RETURNED
 (the backend confirmed the stop: for Modal, the cancel of the spawned call succeeded) or a queued cancel
@@ -46,6 +47,7 @@ It never imports `modal` and makes no network calls itself.
 """
 from __future__ import annotations
 
+import copy
 import math
 import threading
 import time
@@ -56,17 +58,21 @@ from typing import Any, Protocol
 
 from ..transport.units import gx_to_archive
 
+# `comparison` (D-024) is imported where a snapshot needs it, not here: modal_app imports this module for TUBES, and a
+# GPU worker must not load the archive stack (h5py, the transport statistics) it never uses (RV-024-1).
+
 TUBES: tuple[tuple[int, str], ...] = ((0, "bean"), (1, "triangular"))
 WORKER_STATES = {"pending", "initializing", "running", "checkpointed", "failed", "done"}
 EXECUTING = {"running", "checkpointed", "done"}
 UNITS = ("archive units: t in a/v_th,i (GX raw t x sqrt(2)), Q in Q_gB,i (GX raw Q / 2 sqrt(2)); "
          "conversion assumes identical dimensional references (UNREHEARSED)")
 NO_REHEARSAL_LABEL = "No qualified GX rehearsal recorded — showing archived stella/GENE evidence"
-# The PRD's live transport comparison is not wired yet (cross-RX-2: needs a live-status contract field): every GX
-# provenance says so rather than implying the samples were checked against the archive.
-COMPARISON_NOT_COMPUTED = ("Live comparison NOT computed: Labyrinth does not yet compare these GX samples with the "
-                           "archive (time-weighted means on 200–300 and 300–400, coverage, saturated-agreement gate); "
-                           "any overlay on Check transport is visual only.")
+# D-024 (closes cross-RX-2): what the qualified-live and rehearsal provenance says about the archive comparison that
+# every session snapshot carries in `comparison`. It names the check, never its outcome: nothing here says anything agrees.
+ARCHIVE_COMPARISON = ("The bean samples are compared with the archived stella and GENE traces on 200–300 and 300–400 "
+                      "(time-weighted means; coverage, stationarity and the N_eff ≥ 20 gate; a TOST verdict per archive "
+                      "trace, D-024): see this snapshot's comparison for the verdicts and whether a saturated-agreement "
+                      "claim is allowed.")
 TERMINATE_FAILED = "TERMINATE FAILED — check Modal dashboard; GPUs may still be billing"
 TERMINATE_PENDING = "TERMINATION PENDING — cancel queued, not yet confirmed; GPUs may still be billing"
 # A fallback whose terminate round has not returned a verdict yet (the cancels are being sent).
@@ -331,6 +337,7 @@ class Orchestrator:
         self._term_lock = threading.Lock()
         self._stop_requested = False  # plain flag, no lock: request_stop() may run inside a signal handler
         self.terminate_rounds = 0     # terminate rounds that called the backend (the service runs one per stop)
+        self._comparison: tuple[int, dict] | None = None  # (bean sample count, live_comparison of those samples)
 
     def _open(self) -> list[WorkerRecord]:
         """Launched workers whose termination is not confirmed (call with the lock held)."""
@@ -658,11 +665,12 @@ class Orchestrator:
     def _verification(self, qualified: bool) -> dict:
         if self.kind == "rehearsal":
             return {"outcome": "not-applicable",
-                    "details": "Qualification rehearsal phase; its init / continuation checks are recorded with the saved run."}
+                    "details": ("Qualification rehearsal phase; its init / continuation checks are recorded with the saved "
+                                f"run. {ARCHIVE_COMPARISON}")}
         if not qualified:
             return {"outcome": "blocked", "details": "UNREHEARSED: no recorded rehearsal has verified initialization and "
                                                      "checkpoint continuation (D-011)."}
-        return {"outcome": "not-applicable", "details": f"Qualified by a recorded rehearsal. {COMPARISON_NOT_COMPUTED}"}
+        return {"outcome": "not-applicable", "details": f"Qualified by a recorded rehearsal. {ARCHIVE_COMPARISON}"}
 
     def intervals(self) -> dict[str, tuple[float | None, float | None]]:
         """Wall-clock intervals on the orchestrator's own clock."""
@@ -680,7 +688,37 @@ class Orchestrator:
 
     def snapshot(self, budget: dict, *, qualified: bool, saved_run_available: bool = True) -> dict:
         """`saved_run_available=False`: the saved run this session would play is no longer served (its file was
-        removed or no longer qualifies), so the fallback must not name it."""
+        removed or no longer qualifies), so the fallback must not name it.
+
+        Every snapshot carries `comparison` (D-024): exactly this snapshot's bean samples against the archive. It is
+        recomputed only when the bean sample count differs from the cached one (samples only ever append), outside the
+        lock (the terminate and settle paths take it) from a copy of the samples taken under it; every snapshot gets
+        its own deep copy, so nothing it holds is shared with the cache or with another snapshot."""
+        with self._lock:  # one critical section: the comparison is computed from exactly this snapshot's bean samples
+            out = self._snapshot_body(budget, qualified=qualified, saved_run_available=saved_run_available)
+            n, cached, pending = self._comparison_input()
+        if pending is None:
+            comparison = cached
+        else:
+            from . import comparison as _comparison  # lazy: see the note at the imports
+            comparison = _comparison.live_comparison(pending)
+            with self._lock:
+                if self._comparison is None or self._comparison[0] < n:
+                    self._comparison = (n, comparison)
+        out["comparison"] = copy.deepcopy(comparison)
+        return out
+
+    def _comparison_input(self) -> tuple[int, dict | None, list[dict] | None]:
+        """-> (bean sample count, the cached comparison when it is for that count else None, a copy of the samples to
+        compute from when it is not else None)."""
+        with self._lock:
+            bean = next(r for r in self.workers if r.tube == "bean")
+            n, cached = len(bean.samples), self._comparison
+            if cached is not None and cached[0] == n:
+                return n, cached[1], None
+            return n, None, list(bean.samples)  # the sample dicts are never mutated once appended
+
+    def _snapshot_body(self, budget: dict, *, qualified: bool, saved_run_available: bool) -> dict:
         with self._lock:
             saved = self.saved_run_id if saved_run_available else None
             label = self._label(saved) if self.mode == "fallback" else self.fallback_label

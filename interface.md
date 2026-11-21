@@ -121,6 +121,17 @@ once the session thread has ended the API is back at the gate's `idle`/`unavaila
 - `fallback.label`: `<Worker failed | Hard timeout reached> — playing saved GX run <id>` only while that qualified run is still served (`fallback.savedRunId` non-null); otherwise
   `<…>. No qualified GX rehearsal recorded — showing archived stella/GENE evidence`. In `unavailable`: `Live GX unavailable — playing saved GX run <id>` or the no-rehearsal text.
 - Worker samples are already converted to **archive units** (t×√2, Q÷2√2) by the backend.
+- **`comparison`** (D-024, optional, closed): present on every snapshot of a session, absent from the gate's snapshot with no session. The session's bean samples
+  vs the archived stella and GENE traces, computed by the backend with `transport.stats` / `transport.compare` only (recomputed when the bean sample count changes).
+  Top level: `tube` `"bean"`, `nSamples`, `tStart`/`tEnd` (null without samples), `marginFraction` 0.10, `method`, `saturatedClaimAllowed`, `reason`, `windows`.
+  `windows` = exactly 200–300 then 300–400, or `[]` when the comparison could not be computed (`reason` says why). Each window: `window`, `covered`, `nSamples`, `mean`,
+  `stderr`, `stderrApproximate` (stderr is a lower bound), `nEff`, `nEffLower` (the N_eff ≥ 20 gate's value), `stationary` (`true|false|null`, null = undecidable),
+  `saturatedClaimAllowed` (the live trace's own gate on that window, as in transport `windows[]`), `detail`, `archive` = `[stella, GENE]` each
+  `{code, mean, stderr, delta (live − archive), verdict: agree|disagree|inconclusive|no claim, reason}` = `compare_window` unchanged. Schema `if/then`: `covered: false` ⇒
+  mean/stderr/nEff/nEffLower/stationary null and the window claim false. Top-level `saturatedClaimAllowed` is true **only** when some verdict is `agree`; consumers show a
+  claim only when the flag is true **and** an `agree` verdict is present (a flag without one is an inconsistency, never a claim). **With the committed archive every verdict
+  is "no claim"**: the archive's 200–300 / 300–400 windows are undecidable and their N_eff is not established, so the ≥ 20 gate is not met (D-017); the flag stays false; live means, uncertainty and deltas are still shown.
+  The renderer shows it only when `isLive` (Check transport, "Live comparison").
 - `budget` in the snapshot comes from the guard (D-015): `slotEstimateUsd` $2.65, `hardTimeoutS` 1500 s (less when the remaining budget is short). With `budget.json` `guardPlan`
   ($2.65 / $7.73 / $26.21) it **differs from the PRD's GPU-only $1.53/$13.73/$21.83** — show both, labelled.
 
@@ -130,8 +141,9 @@ once the session thread has ended the API is back at the gate's `idle`/`unavaila
 
 **Data access (only `renderer/src/lib/`):**
 - `artifacts.ts` — `useArtifact<T>(id)` → `{status:'loading'} | {status:'error',file,message} | {status:'ready',data}` (never blank), `fetchArtifact` (non-2xx or `schemaVersion !== 1` → error), `artifactUrl(id)` = `/artifacts/<id>.json`.
-- `liveContract.ts` — TS mirrors of both live contracts (`LiveMode, LiveSample, LiveWorker, LiveProvenance, LiveStatus, SavedRun`), `LIVE_MODES`, `SAVED_RUN_ID` (the schema's `^[A-Za-z0-9_.-]{1,80}$`),
-  dependency-free validators `validateLiveStatus` / `validateSavedRun` → `null` or the first problem; every object is closed, as in the schemas.
+- `liveContract.ts` — TS mirrors of both live contracts (`LiveMode, LiveSample, LiveWorker, LiveProvenance, LiveVerdict, LiveComparison, LiveComparisonWindow, LiveArchiveVerdict, LiveStatus, SavedRun`), `LIVE_MODES`, `LIVE_VERDICTS`, `SAVED_RUN_ID` (the schemas' `^(rehearsal|live)-[0-9a-f]{12}$`),
+  dependency-free validators `validateLiveStatus` / `validateSavedRun` → `null` or the first problem; every object is closed, as in the schemas, and the `comparison` rules (windows 0 or 2,
+  archive `[stella, GENE]`, the `covered: false` ⇒ nulls if/then) are mirrored.
 - `liveStatus.ts` — **every** `/api/live/*` call, and **one shared store** behind the header and every view: `liveStatusStore`, `createLiveStatusStore({fetchImpl, now, timeoutMs, backoff})`,
   `liveStatusStoreFor(fetchImpl?)`, `useLiveStatus(intervalMs = DEFAULT_POLL_MS (2000), fetchImpl?)` → `LiveState` = `connecting` | `unreachable{message, cause: network|http|invalid|timeout|stale, lastKnown?}` |
   `ready{data, receivedAt, freshForMs}`, each with `launchLocked?` / `launchPhase?` (`sent|accepted|refused|unknown`). The fastest subscriber sets the poll rate; a request aborts after
@@ -199,6 +211,10 @@ Tests: vitest, jsdom, `pool: 'vmThreads'`, `maxWorkers` = `VITEST_MAX_WORKERS` (
     `backend.request_stop`), `stop_and_terminate()`, `confirm_stop()`, `terminate_all(retry=True)`, `wait_terminated(timeout_s)` (waits only while a cancel is queued), `launched_any`, `termination_confirmed`,
     `termination_pending`, `terminate_rounds`, `reason`, `snapshot(budget, *, qualified, saved_run_available=True)`. Strings `TERMINATE_FAILED`, `TERMINATE_PENDING`, `TERMINATING`, `KILL_SWITCH_ONLY`, `STOPPING`,
     `NO_REHEARSAL_LABEL`; `TERMINATE_BACKOFF_S` = (0.5, 1, 2, 4). **A worker is reported terminated only after a cancel succeeded.**
+    Every session snapshot carries `comparison` (D-024), cached until the bean sample count changes.
+  - `comparison`: `live_comparison(samples, *, archive=None) → dict` (the live-status `comparison` object; `WINDOWS` 200–300, 300–400; `ARCHIVE_CODES` stella, GENE; `archive` maps code → (t, Q)
+    for tests, default `transport.archive.load_trace`). Live side: `drop_restart_repeats` + `window_stats`; each verdict `transport.compare.compare_window` unchanged; never raises (an error gives
+    `windows: []` and the reason).
   - `modal_backend` (only module importing `modal`, lazily): `ModalBackend(*, run_id, hard_timeout_s, kind)`, `availability()`. Every Modal client call is bounded by `CALL_TIMEOUT_S` = 20 s
     (`LAUNCH_CALLS`, `POLL_CALLS`, `TERMINATE_CALLS` = 2 each). `terminate` raises the run kill switch (`<run_id>/abort` in Dict `labyrinth-gx-progress`) **first**, every time, then
     `FunctionCall.cancel(terminate_containers=True)`; `request_stop()` makes a launch that has not sent its spawn send none.
@@ -257,9 +273,5 @@ Helper scripts (D-020): `dev.sh` (toolchain PATH wrapper, caps `VITEST_MAX_WORKE
 
 ## 10. Known interface gaps
 
-- **Live comparison is not computed (PRD "Check transport", review finding cross-RX-2).** New GX bean samples are converted to archive units and
-  can be overlaid, but nothing computes the PRD's live comparison (time-weighted means on 200–300 and 300–400 when covered, stationarity,
-  saturated-agreement gate) for them; the backend says so in `reason` ("Live comparison NOT computed: …") and the UI must not imply otherwise.
-  Closing it needs a live-status contract field for the comparison (decision entry first) and the transport statistics applied to the live trace.
 - `common.verification.outcome` still permits `passed` for geometry `provenance.verification`; only a backend test (`test_geometry.py`) keeps it `blocked`/`failed`. `acceptance129` itself is schema-fixed.
 - Modal API details (`cancel(terminate_containers=True)`, `startup_timeout`, `(request, limit)` tuples, `scaledown_window`, `Image.env`, `modal.is_local()`) were written against knowledge of modal 1.x, **not an installed `modal==1.6.4`**.

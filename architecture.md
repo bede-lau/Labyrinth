@@ -72,6 +72,9 @@ independent reference in one view. Replay costs $0; live GX is gated behind qual
 → `modal_backend` (the only module importing `modal`, lazily; every client call bounded by 20 s) → `modal_app` (two Modal functions, `gx_worker_live` /
 `gx_worker_rehearsal`, A100-40GB, `retries=0`, deployed by hand; never imported by the server, replay or the test process).
 `rehearse` (CLI) qualifies live mode through the same guard and orchestrator: phase 1 from initialization, phase 2 from its checkpoints.
+`comparison.live_comparison` (D-024) compares the session's bean samples (archive units) with the archived stella and GENE traces on 200–300 and 300–400
+using the transport statistics unchanged (`transport.stats`, `transport.compare`); every session snapshot carries the result as live-status `comparison`, and
+Check transport shows it only while live. With the committed archive every verdict is "no claim" (on its 100-unit windows N_eff is not established, so the ≥ 20 gate is not met, D-017).
 `budget_guard` approves every allocation: ledger reconciled, billed + pending + estimate ≤ $40, exact-cent confirmation; each launch reserves its
 estimate under an O_EXCL ledger lock and marks the ledger unreconciled again. Time is priced in stages: Modal `startup_timeout` (300 s) + execution
 (planned − 300 s) = the orchestrator's hard timeout, so billed time per container ≤ planned.
