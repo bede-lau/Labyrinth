@@ -1,7 +1,7 @@
-// Hash routes for the six views. `#gallery` is not a route: main.tsx handles it at load time.
+// Hash routes for the three views. `#gallery` is not a route: main.tsx handles it at load time.
 import type { ArtifactId } from '../lib/artifacts';
 
-export type RouteId = 'locate' | 'advance' | 'transport' | 'forecast' | 'spatial' | 'budget';
+export type RouteId = 'locate' | 'forecast' | 'spatial';
 
 export interface RouteDef {
   id: RouteId;
@@ -17,12 +17,8 @@ const artifactFile = (id: ArtifactId) => `artifacts/${id}.json`;
 
 export const ROUTES: readonly RouteDef[] = [
   { id: 'locate', label: 'Locate the tubes', source: 'replay', files: [artifactFile('geometry')] },
-  // The live panel reads the status API and replays the archived traces from the transport artifact.
-  { id: 'advance', label: 'Advance plasma', source: 'live', files: ['/api/live/status', artifactFile('transport')] },
-  { id: 'transport', label: 'Check transport', source: 'replay', files: [artifactFile('transport')] },
   { id: 'forecast', label: 'Forecast replay', source: 'replay', files: [artifactFile('forecast')] },
   { id: 'spatial', label: 'Spatial parallelism', source: 'replay', files: [artifactFile('spatial')] },
-  { id: 'budget', label: 'Budget', source: 'replay', files: [artifactFile('budget')] },
 ];
 
 export const DEFAULT_ROUTE: RouteId = 'locate';

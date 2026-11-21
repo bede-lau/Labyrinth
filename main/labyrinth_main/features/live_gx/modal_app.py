@@ -85,17 +85,17 @@ CHECKPOINT_MARGIN_S = SPAWN_LAG_S + POLL_S + GX_STOP_WAIT_S + FINALIZE_S + REPOR
 WORK_ROOT = "/work"                       # container-local scratch, one sub-directory per call
 CKPT_MOUNT = "/ckpt"                      # where the checkpoint Volume is mounted
 GX_REVISION_FILE = "/opt/gx/REVISION"     # written by the image build: the GX commit actually built
-CUDA_IMAGE = "nvidia/cuda:12.4.1-devel-ubuntu22.04"
+CUDA_IMAGE = "nvidia/cuda:12.8.1-devel-ubuntu24.04"
 
 image = (
-    modal.Image.from_registry(CUDA_IMAGE, add_python="3.11")
-    .apt_install("git", "build-essential", "cmake", "libnetcdf-dev", "libhdf5-dev", "libgsl-dev",
-                 "libopenmpi-dev", "openmpi-bin", "libcutensor-dev", "libnccl-dev")
+    modal.Image.from_registry(CUDA_IMAGE, add_python="3.12")
+    .apt_install("git", "build-essential", "cmake", "libnetcdf-mpi-dev", "libhdf5-openmpi-dev", "libgsl-dev",
+                 "libopenmpi-dev", "openmpi-bin", "cutensor-cuda-12", "libnccl-dev=2.25.1-1+cuda12.8")
     .pip_install("numpy==2.5.3", "netCDF4==1.7.5.1.post1", "h5py==3.16.0")
     .env({"LABYRINTH_GX_REF": GX_REF})
     .run_commands(
         f"git clone {GX_GIT_URL} /opt/gx && cd /opt/gx && git checkout {GX_REF}",
-        "cd /opt/gx && make -j8 GK_SYSTEM=linux_generic && install -m 755 gx /usr/local/bin/gx",
+        "cd /opt/gx && make -j4 GK_SYSTEM=ubuntu CUDAARCH=80 && install -m 755 gx /usr/local/bin/gx",
         f"cd /opt/gx && git rev-parse HEAD > {GX_REVISION_FILE}",
     )
     .add_local_file(str(WOUT_W7X_KJM), "/inputs/wout_w7x_kjm.nc")

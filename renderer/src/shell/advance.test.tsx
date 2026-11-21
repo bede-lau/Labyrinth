@@ -36,11 +36,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test.each([
-  ['{"schemaVersion":1}', 'no traces at all'],
-  ['{"schemaVersion":1,"traces":{"bean":[]}}', 'traces is not a list'],
-  ['{"schemaVersion":1,"traces":[{"id":"x","code":"stella","tube":"bean","t":7,"Q":[1]}]}', 'a trace with t that is not a list'],
-])('FE2-1 #/advance with transport %s (%s) during TERMINATE FAILED: Terminate is present and enabled', async (transport) => {
+test.each(['locate', 'forecast', 'spatial'])('existing billing alert offers Terminate on %s', async route => {
+  history.replaceState(null, '', '#/' + route);
   const posts: string[] = [];
   vi.stubGlobal(
     'fetch',
@@ -51,21 +48,12 @@ test.each([
         return new Response(JSON.stringify({ ok: false, reason: REASON }), { status: 502 });
       }
       if (url === '/api/live/status') return new Response(JSON.stringify(STATUS));
-      if (url === '/artifacts/transport.json') return new Response(transport);
       return new Response('', { status: 404 });
     }),
   );
   render(<App pollMs={60_000} />);
-  const main = screen.getByRole('main');
-  const panelAlert = await within(main).findByRole('alert', { name: 'Danger: TERMINATE FAILED — GPUs may still be billing' });
-  const retry = within(panelAlert).getByRole('button', { name: 'Retry terminate' });
-  expect(retry).toBeEnabled();
-  // The broken file is named where the replay would be; the view itself did not fail.
-  expect(await within(main).findByRole('note', { name: /artifacts\/transport\.json has an unexpected shape/ })).toBeInTheDocument();
-  expect(within(main).queryByRole('heading', { name: /^Could not load/ })).toBeNull();
-  // So the header's pointer to the panel is true (the app header; the view's Panels have <header>s of their own).
-  const header = document.querySelector<HTMLElement>('header.shell-header')!;
-  expect(await within(header).findByRole('alert')).toHaveTextContent('Use Terminate in the Advance plasma panel below.');
+  const alert = await screen.findByRole('alert', { name: 'Danger: TERMINATE FAILED — GPUs may still be billing' });
+  const retry = within(alert).getByRole('button', { name: 'Retry terminate' });
   await userEvent.setup().click(retry);
   await waitFor(() => expect(posts).toEqual(['/api/live/terminate']));
 });

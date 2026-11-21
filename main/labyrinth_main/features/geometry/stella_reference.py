@@ -27,10 +27,6 @@ FLOAT64_TOLERANCE = 1e-10  # absolute, on bmag = |B|/B_ref, vs stella's float64 
 FLOAT64_BOUND_HEADROOM = 1.2  # published float64 errors: computed error x 1.2, rounded UP to 1 significant figure
 _NUM = re.compile(r"^-?\d\.(\d+)E([+-]\d+)$")
 
-GEOMETRY_COLUMNS = ["alpha", "zed", "zeta", "bmag", "bdot_grad_z", "gds2", "gds21", "gds22", "gds23",
-                    "gds24", "gbdrift", "cvdrift", "gbdrift0", "bmag_psi0"]
-
-
 @dataclass(frozen=True)
 class Printed:
     value: float
@@ -131,19 +127,22 @@ def read_geometry_file(path: Path) -> dict:
     header_names = lines[0].lstrip("#").split()
     header_values = (float(t) for t in lines[1].lstrip("#").split())
     header = dict(zip(header_names, header_values, strict=True))
+    # Later stella releases renamed and removed some drift columns. Only parse the columns used here.
+    columns = lines[2].lstrip().removeprefix("#").split()
+    index = {field: columns.index(field) for field in ("zeta", "bmag")}
     rows = []
-    for ln in lines[2:]:
+    for ln in lines[3:]:
         if ln.lstrip().startswith("#"):
             continue
         toks = ln.split()
-        if len(toks) != len(GEOMETRY_COLUMNS):
+        if len(toks) != len(columns):
             raise ValueError(f"bad geometry row: {ln!r}")
-        rows.append({c: parse_printed(t) for c, t in zip(GEOMETRY_COLUMNS, toks, strict=True)})
+        rows.append({field: parse_printed(toks[i]) for field, i in index.items()})
     return {"header": header, "rows": rows}
 
 
 def compare(eq: VmecEquilibrium, geometry_path: Path, input_path: Path) -> dict:
-    """Recompute stella test_2 with our tracer and compare zeta and bmag sample by sample."""
+    """Recompute the saved stella run with our tracer and compare zeta and bmag sample by sample."""
     ref = read_geometry_file(geometry_path)
     params = run_parameters(input_path)
     rhoc = ref["header"]["rhoc"]

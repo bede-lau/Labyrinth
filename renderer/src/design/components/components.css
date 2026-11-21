@@ -10,7 +10,7 @@
   min-width: 0;
   background: var(--lab-color-surface);
   border: 1px solid var(--lab-color-border);
-  border-radius: var(--lab-radius-md);
+  border-radius: var(--lab-radius-lg);
 }
 .lab-panel__header {
   display: flex;
@@ -30,13 +30,15 @@
   color: var(--lab-color-text-subtle);
 }
 .lab-panel__title {
-  font-size: var(--lab-font-size-lg);
-  line-height: var(--lab-line-height-lg);
+  font-size: var(--lab-font-size-xl);
+  line-height: var(--lab-line-height-xl);
   font-weight: var(--lab-font-weight-semibold);
-  letter-spacing: -0.005em;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
   color: var(--lab-color-text);
 }
 .lab-panel__subtitle {
+  max-width: 78ch;
   font-size: var(--lab-font-size-sm);
   line-height: var(--lab-line-height-sm);
   color: var(--lab-color-text-muted);

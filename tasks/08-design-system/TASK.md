@@ -16,6 +16,6 @@ design-lead (`renderer/src/design/`)
 | D1–D5 | `renderer/src/design/**/*.test.ts(x)` |
 
 ## Status
-DONE
+VERIFYING
 
 Verified at commit 3faed3a: tasks/08-design-system/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).

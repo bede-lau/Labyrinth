@@ -287,11 +287,10 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
   const provenance = data?.provenance;
 
   return (
-    <div className="lg-view">
+    <div className="lg-view" data-split={!isLiveNow && !data?.workers.length && alerts.length === 0}>
       <Panel
-        eyebrow="Advance plasma"
-        title="Nonlinear GX on two A100s: GPU 0 bean tube, GPU 1 triangular tube"
-        subtitle="Status from /api/live/status. Nothing launches without an explicit, cost-confirmed request; replay costs $0."
+        title="Nonlinear GX on two A100s"
+        subtitle="Each GPU advances one local flux tube independently. Launch requires cost confirmation."
         status={
           <div className="lg-pills" data-testid="mode-pills">
             {mv.pills.map((p) => (
@@ -699,7 +698,6 @@ function ReplayPanel({
       : `archived stella/GENE evidence (${because})`;
   return (
     <Panel
-      eyebrow="Advance plasma"
       title="Replay: archived stella and GENE bean traces"
       subtitle={`${billing ? 'Saved evidence played back.' : 'Saved evidence played back at $0.'} No GX run is shown: none is live, and ${because}.`}
       status={<StatusPill status="replay">{billing ? 'Replay' : 'Replay · $0'}</StatusPill>}

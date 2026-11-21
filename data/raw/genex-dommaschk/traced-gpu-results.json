@@ -1,0 +1,302 @@
+{
+  "execution": {
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_seconds": 146.011837543
+  },
+  "atol": 1e-14,
+  "rtol": 0.0001,
+  "labels": [
+    "time",
+    "L2_ions",
+    "L2_electrons",
+    "L2_es_pot",
+    "L2_A_par",
+    "L2_B_par",
+    "L2_E_par",
+    "Linf_ions",
+    "Linf_electrons",
+    "Linf_es_pot",
+    "Linf_A_par",
+    "Linf_B_par",
+    "Linf_E_par"
+  ],
+  "reference_rows": [
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.1333,
+      0.09119,
+      0.005119,
+      0.0,
+      0.0,
+      0.0,
+      0.257,
+      0.1222,
+      0.005658,
+      0.0
+    ],
+    [
+      0.0313,
+      0.1297,
+      0.1278,
+      0.08146,
+      0.09119,
+      0.009791,
+      1.0,
+      0.2745,
+      0.2312,
+      0.1369,
+      0.1222,
+      0.007318,
+      1.0
+    ],
+    [
+      0.0625,
+      0.1203,
+      0.1174,
+      0.1001,
+      0.09119,
+      0.005811,
+      0.06487,
+      0.2647,
+      0.1669,
+      0.1705,
+      0.1222,
+      0.005943,
+      0.09071
+    ]
+  ],
+  "test_rows": [
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.1333,
+      0.09119,
+      0.005119,
+      0.0,
+      0.0,
+      0.0,
+      0.257,
+      0.1222,
+      0.005658,
+      0.0
+    ],
+    [
+      0.0313,
+      0.1297,
+      0.1278,
+      0.08146,
+      0.09119,
+      0.009791,
+      1.0,
+      0.2745,
+      0.2312,
+      0.1369,
+      0.1222,
+      0.007318,
+      1.0
+    ],
+    [
+      0.0625,
+      0.1203,
+      0.1174,
+      0.1001,
+      0.09119,
+      0.005811,
+      0.06487,
+      0.2647,
+      0.1669,
+      0.1705,
+      0.1222,
+      0.005943,
+      0.09071
+    ]
+  ],
+  "simulation_finished": true,
+  "numerical_pass": true,
+  "gpu_evidence_pass": true,
+  "notifications": {
+    "0": {
+      "kernel_launch_count": 9390,
+      "non_probe_launch_count": 9389,
+      "non_probe_device_counts": {
+        "0": 9389
+      },
+      "kernel_functions": {
+        "_ZNK13op_copy_acc_t5applyElPKdPd": 3011,
+        "_ZNK20op_set_uniform_acc_t5applyEldPd": 602,
+        "_ZNK24op_mom_maxwells_eq_acc_t5applyERK9mesh_5d_tRK15dcomm_handler_tRK12data_array_tIKdLm5EERS6_IdLm2EESC_SC_SC_": 402,
+        "_ZN13mailbox_acc_t4packERKSt5arrayIiLm5EES3_RK12data_array_tIdLm5EEi": 1206,
+        "_ZN13mailbox_acc_t4packERKSt5arrayIiLm2EES3_RK12data_array_tIdLm2EEi": 1206,
+        "_ZN13mailbox_acc_t6unpackERKSt5arrayIiLm2EES3_R12data_array_tIdLm2EEi": 1206,
+        "_ZN13mailbox_acc_t6unpackERKSt5arrayIiLm5EES3_R12data_array_tIdLm5EEi": 402,
+        "_ZNK29op_rhs_vlasov_eq_static_acc_t5applyERK9mesh_5d_tRK12data_array_tIKdLm5EERKS3_IS4_Lm2EESA_SA_RS3_IdLm5EE": 402,
+        "_ZNK21op_mom_ohms_law_acc_t5applyERK9mesh_5d_tRK15dcomm_handler_tRK12data_array_tIKdLm5EESA_RS6_IdLm2EESC_": 402,
+        "_ZNK30op_rhs_vlasov_eq_dynamic_acc_t5applyERK9mesh_5d_tRK12data_array_tIKdLm5EERKS3_IS4_Lm2EERS3_IdLm5EE": 200,
+        "_ZNK13op_axpy_acc_t5applyEldPKdPd": 200,
+        "_ZNK17op_lin_comb_acc_t5applyElddPKdS1_Pd": 150
+      },
+      "sample_non_probe_launches": [
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/arithmetic_operators/op_copy_acc.hxx function=_ZNK13op_copy_acc_t5applyElPKdPd line=24 device=0 threadid=1 num_gangs=6805 num_workers=1 vector_length=128 grid=6805 block=128",
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/arithmetic_operators/op_set_uniform_acc.hxx function=_ZNK20op_set_uniform_acc_t5applyEldPd line=23 device=0 threadid=1 num_gangs=105 num_workers=1 vector_length=128 grid=105 block=128",
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/op_mom_maxwells_eq_acc.hxx function=_ZNK24op_mom_maxwells_eq_acc_t5applyERK9mesh_5d_tRK15dcomm_handler_tRK12data_array_tIKdLm5EERS6_IdLm2EESC_SC_SC_ line=77 device=0 threadid=1 num_gangs=540 num_workers=1 vector_length=128 grid=540 block=128",
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/op_mom_maxwells_eq_acc.hxx function=_ZNK24op_mom_maxwells_eq_acc_t5applyERK9mesh_5d_tRK15dcomm_handler_tRK12data_array_tIKdLm5EERS6_IdLm2EESC_SC_SC_ line=108 device=0 threadid=1 num_gangs=1080 num_workers=1 vector_length=128 grid=1080 block=128",
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/arithmetic_operators/op_copy_acc.hxx function=_ZNK13op_copy_acc_t5applyElPKdPd line=24 device=0 threadid=1 num_gangs=27 num_workers=1 vector_length=128 grid=27 block=128",
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/arithmetic_operators/op_copy_acc.hxx function=_ZNK13op_copy_acc_t5applyElPKdPd line=24 device=0 threadid=1 num_gangs=6805 num_workers=1 vector_length=128 grid=6805 block=128",
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/arithmetic_operators/op_copy_acc.hxx function=_ZNK13op_copy_acc_t5applyElPKdPd line=24 device=0 threadid=1 num_gangs=6805 num_workers=1 vector_length=128 grid=6805 block=128",
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/arithmetic_operators/op_copy_acc.hxx function=_ZNK13op_copy_acc_t5applyElPKdPd line=24 device=0 threadid=1 num_gangs=61 num_workers=1 vector_length=128 grid=61 block=128"
+      ],
+      "dominant_device_ordinal": "0"
+    },
+    "1": {
+      "kernel_launch_count": 9390,
+      "non_probe_launch_count": 9389,
+      "non_probe_device_counts": {
+        "1": 9389
+      },
+      "kernel_functions": {
+        "_ZNK13op_copy_acc_t5applyElPKdPd": 3011,
+        "_ZNK20op_set_uniform_acc_t5applyEldPd": 602,
+        "_ZNK24op_mom_maxwells_eq_acc_t5applyERK9mesh_5d_tRK15dcomm_handler_tRK12data_array_tIKdLm5EERS6_IdLm2EESC_SC_SC_": 402,
+        "_ZN13mailbox_acc_t4packERKSt5arrayIiLm5EES3_RK12data_array_tIdLm5EEi": 1206,
+        "_ZN13mailbox_acc_t4packERKSt5arrayIiLm2EES3_RK12data_array_tIdLm2EEi": 1206,
+        "_ZN13mailbox_acc_t6unpackERKSt5arrayIiLm2EES3_R12data_array_tIdLm2EEi": 1206,
+        "_ZN13mailbox_acc_t6unpackERKSt5arrayIiLm5EES3_R12data_array_tIdLm5EEi": 402,
+        "_ZNK29op_rhs_vlasov_eq_static_acc_t5applyERK9mesh_5d_tRK12data_array_tIKdLm5EERKS3_IS4_Lm2EESA_SA_RS3_IdLm5EE": 402,
+        "_ZNK21op_mom_ohms_law_acc_t5applyERK9mesh_5d_tRK15dcomm_handler_tRK12data_array_tIKdLm5EESA_RS6_IdLm2EESC_": 402,
+        "_ZNK30op_rhs_vlasov_eq_dynamic_acc_t5applyERK9mesh_5d_tRK12data_array_tIKdLm5EERKS3_IS4_Lm2EERS3_IdLm5EE": 200,
+        "_ZNK13op_axpy_acc_t5applyEldPKdPd": 200,
+        "_ZNK17op_lin_comb_acc_t5applyElddPKdS1_Pd": 150
+      },
+      "sample_non_probe_launches": [
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/arithmetic_operators/op_copy_acc.hxx function=_ZNK13op_copy_acc_t5applyElPKdPd line=24 device=1 threadid=1 num_gangs=6805 num_workers=1 vector_length=128 grid=6805 block=128",
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/arithmetic_operators/op_set_uniform_acc.hxx function=_ZNK20op_set_uniform_acc_t5applyEldPd line=23 device=1 threadid=1 num_gangs=105 num_workers=1 vector_length=128 grid=105 block=128",
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/op_mom_maxwells_eq_acc.hxx function=_ZNK24op_mom_maxwells_eq_acc_t5applyERK9mesh_5d_tRK15dcomm_handler_tRK12data_array_tIKdLm5EERS6_IdLm2EESC_SC_SC_ line=77 device=1 threadid=1 num_gangs=540 num_workers=1 vector_length=128 grid=540 block=128",
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/op_mom_maxwells_eq_acc.hxx function=_ZNK24op_mom_maxwells_eq_acc_t5applyERK9mesh_5d_tRK15dcomm_handler_tRK12data_array_tIKdLm5EERS6_IdLm2EESC_SC_SC_ line=108 device=1 threadid=1 num_gangs=1080 num_workers=1 vector_length=128 grid=1080 block=128",
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/arithmetic_operators/op_copy_acc.hxx function=_ZNK13op_copy_acc_t5applyElPKdPd line=24 device=1 threadid=1 num_gangs=27 num_workers=1 vector_length=128 grid=27 block=128",
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/arithmetic_operators/op_copy_acc.hxx function=_ZNK13op_copy_acc_t5applyElPKdPd line=24 device=1 threadid=1 num_gangs=6805 num_workers=1 vector_length=128 grid=6805 block=128",
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/arithmetic_operators/op_copy_acc.hxx function=_ZNK13op_copy_acc_t5applyElPKdPd line=24 device=1 threadid=1 num_gangs=6805 num_workers=1 vector_length=128 grid=6805 block=128",
+        "launch CUDA kernel  file=/work/src/src/cxx/operators/arithmetic_operators/op_copy_acc.hxx function=_ZNK13op_copy_acc_t5applyElPKdPd line=24 device=1 threadid=1 num_gangs=61 num_workers=1 vector_length=128 grid=61 block=128"
+      ],
+      "dominant_device_ordinal": "1"
+    }
+  },
+  "final_comparison": [
+    {
+      "name": "time",
+      "reference": 0.0625,
+      "actual": 0.0625,
+      "absolute_difference": 0.0,
+      "allowed_difference": 6.25000001e-06,
+      "pass": true
+    },
+    {
+      "name": "L2_ions",
+      "reference": 0.1203,
+      "actual": 0.1203,
+      "absolute_difference": 0.0,
+      "allowed_difference": 1.2030000010000002e-05,
+      "pass": true
+    },
+    {
+      "name": "L2_electrons",
+      "reference": 0.1174,
+      "actual": 0.1174,
+      "absolute_difference": 0.0,
+      "allowed_difference": 1.1740000010000001e-05,
+      "pass": true
+    },
+    {
+      "name": "L2_es_pot",
+      "reference": 0.1001,
+      "actual": 0.1001,
+      "absolute_difference": 0.0,
+      "allowed_difference": 1.001000001e-05,
+      "pass": true
+    },
+    {
+      "name": "L2_A_par",
+      "reference": 0.09119,
+      "actual": 0.09119,
+      "absolute_difference": 0.0,
+      "allowed_difference": 9.11900001e-06,
+      "pass": true
+    },
+    {
+      "name": "L2_B_par",
+      "reference": 0.005811,
+      "actual": 0.005811,
+      "absolute_difference": 0.0,
+      "allowed_difference": 5.811000100000001e-07,
+      "pass": true
+    },
+    {
+      "name": "L2_E_par",
+      "reference": 0.06487,
+      "actual": 0.06487,
+      "absolute_difference": 0.0,
+      "allowed_difference": 6.48700001e-06,
+      "pass": true
+    },
+    {
+      "name": "Linf_ions",
+      "reference": 0.2647,
+      "actual": 0.2647,
+      "absolute_difference": 0.0,
+      "allowed_difference": 2.647000001e-05,
+      "pass": true
+    },
+    {
+      "name": "Linf_electrons",
+      "reference": 0.1669,
+      "actual": 0.1669,
+      "absolute_difference": 0.0,
+      "allowed_difference": 1.669000001e-05,
+      "pass": true
+    },
+    {
+      "name": "Linf_es_pot",
+      "reference": 0.1705,
+      "actual": 0.1705,
+      "absolute_difference": 0.0,
+      "allowed_difference": 1.705000001e-05,
+      "pass": true
+    },
+    {
+      "name": "Linf_A_par",
+      "reference": 0.1222,
+      "actual": 0.1222,
+      "absolute_difference": 0.0,
+      "allowed_difference": 1.2220000010000001e-05,
+      "pass": true
+    },
+    {
+      "name": "Linf_B_par",
+      "reference": 0.005943,
+      "actual": 0.005943,
+      "absolute_difference": 0.0,
+      "allowed_difference": 5.943000100000001e-07,
+      "pass": true
+    },
+    {
+      "name": "Linf_E_par",
+      "reference": 0.09071,
+      "actual": 0.09071,
+      "absolute_difference": 0.0,
+      "allowed_difference": 9.07100001e-06,
+      "pass": true
+    }
+  ],
+  "upstream_raw_exit_code": 0,
+  "upstream_extracted_row_exit_code": 0,
+  "pass": true,
+  "limitations": [
+    "No physical SBI-5/W7-X validation or coil-update validation.",
+    "GPU evidence covers observed OpenACC kernels; CPU field solver remains enabled.",
+    "Toroidal ownership follows input/source decomposition; no per-cell ownership instrumentation added.",
+    "No speedup claim: notification tracing perturbs timings."
+  ]
+}

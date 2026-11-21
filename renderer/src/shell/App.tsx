@@ -1,31 +1,37 @@
 import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
 import { GeometryView } from '../features/geometry/GeometryView';
-import { LiveView } from '../features/live-gx/LiveView';
-import { TransportView } from '../features/transport/TransportView';
 import { ForecastView } from '../features/forecast/ForecastView';
 import { SpatialView } from '../features/spatial/SpatialView';
-import { BudgetView } from '../features/budget/BudgetView';
 import { useLiveStatus } from '../lib/liveStatus';
 import { ViewErrorBoundary } from './ArtifactGate';
 import { HeaderBoundary } from './Boundary';
-import { ModeAlert, ModeIndicator } from './ModeIndicator';
+import { ModeAlert } from './ModeIndicator';
 import { centeredScrollLeft, fadeEdges, type FadeEdges } from './navScroll';
-import { ProvenanceLegend } from './ProvenanceLegend';
 import { ROUTES, hrefFor, routeDef, type RouteId } from './routes';
 import { ThemeSwitch } from './ThemeSwitch';
 import { useHashRoute } from './useHashRoute';
 import './shell.css';
 
-export const DECISION_QUESTION = 'Is this W7-X heat-flux estimate accurate enough to justify a longer simulation?';
 
 const VIEWS: Record<RouteId, ComponentType> = {
   locate: GeometryView,
-  advance: LiveView,
-  transport: TransportView,
   forecast: ForecastView,
   spatial: SpatialView,
-  budget: BudgetView,
 };
+
+// Each navigation glyph describes the view beside it. Text carries the accessible name.
+const ROUTE_GLYPHS: Record<RouteId, string> = {
+  locate: 'M12 3c6 0 9 5 7 10s-9 10-14 6-2-9 1-12 4-4 6-4Z M15 7c3 2 0 7-3 9s-6 1-5-2 4-9 8-7Z',
+  forecast: 'M3 17l5-6 4 2 3-6m3-2 1-1m1 5 1-1M14 7l-1 4',
+  spatial: 'M12 2.5 21 7l-9 4.5L3 7zM3 12l9 4.5 9-4.5M3 17l9 4.5 9-4.5',
+};
+
+function Wordmark() {
+  return <p className="shell-wordmark">
+    <img alt="" src="/labyrinth-mark.png" width="44" height="44" />
+    Labyrinth
+  </p>;
+}
 
 export interface AppProps {
   /** Live-status poll interval (ms). */
@@ -44,14 +50,6 @@ export function App({ pollMs = 2000 }: AppProps) {
   const shownRoute = useRef(route);
   const [announcement, setAnnouncement] = useState('');
   const [fade, setFade] = useState<FadeEdges>('none');
-  // FE2-1: the route whose view failed to render (its boundary is keyed by route, so a new visit starts clean).
-  const [failedRoute, setFailedRoute] = useState<RouteId | null>(null);
-  const [visited, setVisited] = useState(route);
-  if (visited !== route) {
-    setVisited(route);
-    setFailedRoute(null);
-  }
-
   useEffect(() => {
     document.title = `${def.label} · Labyrinth`;
   }, [def.label]);
@@ -102,49 +100,36 @@ export function App({ pollMs = 2000 }: AppProps) {
         Skip to content
       </a>
       <header className="shell-header">
-        <div className="shell-header__brand">
-          <p className="shell-header__product">Labyrinth</p>
-          <h1 className="shell-header__question">{DECISION_QUESTION}</h1>
-          <p className="shell-header__sub">
-            The sampled field line, the solver output and an independent reference, side by side. Replay costs $0; live GX
-            runs only when the backend qualifies and the $40 budget guard approves.
-          </p>
-        </div>
-        <div className="shell-header__controls">
-          <HeaderBoundary what="mode indicator" resetKey={live}>
-            <ModeIndicator state={live} />
-          </HeaderBoundary>
-          <ThemeSwitch />
-        </div>
-        <HeaderBoundary what="live-session alert" resetKey={live}>
-          <ModeAlert state={live} route={route} viewFailed={failedRoute === route} />
-        </HeaderBoundary>
+        <Wordmark />
+        <nav ref={navRef} className="shell-nav" aria-label="Views">
+          <div ref={scrollRef} className="shell-nav__scroll" data-fade={fade}>
+            <ul className="shell-nav__list">
+              {ROUTES.map((r) => (
+                <li key={r.id}>
+                  <a className="shell-nav__link" href={hrefFor(r.id)} aria-current={r.id === route ? 'page' : undefined}>
+                    <svg className="shell-nav__icon" viewBox="0 0 24 24" aria-hidden="true"><path d={ROUTE_GLYPHS[r.id]} /></svg>
+                    <span className="shell-nav__label">{r.label}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </nav>
+        <ThemeSwitch />
       </header>
-      <nav ref={navRef} className="shell-nav" aria-label="Views">
-        <div ref={scrollRef} className="shell-nav__scroll" data-fade={fade}>
-          <ul className="shell-nav__list">
-            {ROUTES.map((r) => (
-              <li key={r.id}>
-                <a className="shell-nav__link" href={hrefFor(r.id)} aria-current={r.id === route ? 'page' : undefined}>
-                  <span className="shell-nav__label">{r.label}</span>
-                  <span className="shell-nav__source">{r.source === 'live' ? 'GX run · gated' : 'replay'}</span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </nav>
+      <HeaderBoundary what="live-session alert" resetKey={live}>
+        <ModeAlert state={live} />
+      </HeaderBoundary>
       <div className="lab-visually-hidden" aria-live="polite" aria-atomic="true" data-testid="route-announcer">
         {announcement}
       </div>
       <main ref={mainRef} id="main" className="shell-main" tabIndex={-1} aria-label={def.label}>
-        <ViewErrorBoundary key={route} view={def.label} files={def.files} onError={() => setFailedRoute(route)}>
+        <h1 className="shell-title">{def.label}</h1>
+        <ViewErrorBoundary key={route} view={def.label} files={def.files}>
           <View />
         </ViewErrorBoundary>
       </main>
-      <footer className="shell-footer">
-        <ProvenanceLegend />
-      </footer>
+
     </div>
   );
 }

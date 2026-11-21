@@ -21,6 +21,8 @@ Frontend:
 | F4–F5 | `renderer/src/features/forecast/*.test.tsx` |
 
 ## Status
-DONE
+VERIFYING
+
+The local graph redesign supersedes the separate score panel in F5. The saved artifact retains its claimed and computed scores. The overview graphs all eight windows. Replay reveals archived observations on request.
 
 Verified at commit 3faed3a: tasks/03-forecast/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).

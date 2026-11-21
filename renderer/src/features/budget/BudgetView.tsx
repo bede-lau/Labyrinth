@@ -1,5 +1,5 @@
 // Budget (task 04, B6–B7): PRD ledger to the $40 ceiling, the guard's own plan from the artifact and
-// its live estimate when the API answers (both distinct from the PRD's GPU-only figures), and scenario
+// its live estimate when the API answers (both distinct from the PRD base estimate), and scenario
 // cards with headline, derivation and interpretation. Every fixture row, PRD ranges included, is the
 // design system's FixtureCheck fed straight from the artifact (D-023): never a midpoint.
 import {
@@ -15,7 +15,6 @@ import {
 } from '../../design';
 import { useArtifact } from '../../lib/artifacts';
 import { launchMayBeRunning, liveDanger, sessionMayBeBilling, useLiveStatus, type LiveState } from '../../lib/liveStatus';
-import { hrefFor } from '../../shell/routes';
 import {
   checkBudget,
   claimUsd,
@@ -117,7 +116,7 @@ function Ledger({ a, replay }: { a: BudgetArtifact; replay: string }) {
     <Panel
       eyebrow="Budget"
       title={`Modal spend against the ${usd(a.ceilingUsd)} ceiling`}
-      subtitle="PRD plan, recomputed: the earlier posted spend, the rehearsals and one live slot. GPU time only."
+      subtitle="PRD plan, recomputed: the earlier posted spend, the rehearsals and one live slot. Includes GPU, CPU and RAM."
       status={
         <div className="bg-badges">
           <KindPill kind={kind} />
@@ -292,7 +291,7 @@ function GuardUnreachable({ live }: { live: LiveState }) {
           ? (danger?.title ?? 'NO FRESH STATUS — a session may be billing')
           : 'Live budget guard not answering — no current guard estimate'
       }
-      action={mayBill ? <a href={hrefFor('advance')}>Open Advance plasma to send Terminate</a> : undefined}
+      action={mayBill ? <a href="https://modal.com/apps">Open Modal dashboard</a> : undefined}
     >
       <span data-testid="guard-last-known">
         The live API stopped answering ({live.message}). Its last status, received at {clock(last.receivedAt)}, reported mode
@@ -316,7 +315,7 @@ function GuardPanel({ a, guard, live }: { a: BudgetArtifact; guard: GuardView | 
     <Panel
       eyebrow="Budget"
       title="Live budget guard: setup, idle and storage included"
-      subtitle="The guard prices more than GPU time before every allocation, so its figures are higher than the PRD's GPU-only plan."
+      subtitle="The guard adds setup, idle time and storage allowances to the base resource estimate before each allocation."
       status={
         guard ? (
           <StatusPill status="derived">Guard · /api/live/status</StatusPill>
@@ -341,11 +340,11 @@ function GuardPanel({ a, guard, live }: { a: BudgetArtifact; guard: GuardView | 
       ) : (
         <GuardUnreachable live={live} />
       )}
-      <div className="bg-compare" role="table" aria-label="Guard pricing compared with the PRD's GPU-only figures">
+      <div className="bg-compare" role="table" aria-label="Guard pricing compared with the PRD base estimate">
         <div role="rowgroup">
           <div role="row" className="bg-compare__row bg-compare__row--head">
             <span role="columnheader">Item</span>
-            <span role="columnheader">PRD (GPU time only)</span>
+            <span role="columnheader">PRD base estimate</span>
             <span role="columnheader">Guard (incl. setup, idle, storage)</span>
           </div>
         </div>
@@ -402,7 +401,7 @@ const liveDemoInput = (a: BudgetArtifact, key: string): number => {
   return v === undefined || v === '' ? Number.NaN : Number(v);
 };
 
-/** PRD GPU-only price of one rehearsal, recomputed from the live-demo scenario inputs (rate × hours). */
+/** PRD base estimate price of one rehearsal, recomputed from the live-demo scenario inputs (rate × hours). */
 function rehearsalGpuOnly(a: BudgetArtifact): string {
   const rate = liveDemoInput(a, 'rateUsdPerH');
   const hours = liveDemoInput(a, 'rehearsalH');

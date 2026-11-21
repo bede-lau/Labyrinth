@@ -26,11 +26,13 @@ if [[ $# -ne 1 || ! "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
 fi
 [[ -n "${LABYRINTH_PROBE_DIR:-}" || -n "${HOME:-}" ]] || fail "HOME is not set: set HOME or LABYRINTH_PROBE_DIR"
 BASE="${LABYRINTH_PROBE_DIR:-$HOME/.cache/labyrinth-probes}"
-BASE="$(realpath -m -- "$BASE")" || fail "cannot resolve $BASE"
+BASE="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$BASE")" || fail "cannot resolve $BASE"
 DEST="$BASE/$1"
 # within A B: A is B or lies inside it - same spelling in any letter case, or B is A or one of A's existing ancestors.
 within() {
-  local a="${1,,}/" b="${2,,}/" p="$1"
+  local a b p="$1"
+  a="$(printf '%s/' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  b="$(printf '%s/' "$2" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
   [[ "$a" == "$b"* ]] && return 0
   while [[ -n "$p" ]]; do
     [[ -e "$p" && "$p" -ef "$2" ]] && return 0
@@ -49,7 +51,7 @@ if [[ -e "$DEST" ]]; then
 fi
 mkdir -- "$DEST" && : >"$DEST/$MARKER" || fail "cannot create $DEST"
 tar -C "$ROOT" \
-    --exclude=./.git --exclude=./renderer/node_modules --exclude=./renderer/dist \
+    --exclude=.git --exclude=renderer/node_modules --exclude=renderer/dist --exclude=.venv \
     --exclude='*.bundle' --exclude=__pycache__ --exclude=.pytest_cache --exclude=.ruff_cache \
     --exclude=./.claude/state --exclude="./$MARKER" -cf - . \
   | tar -C "$DEST" -xf - || fail "copy failed"

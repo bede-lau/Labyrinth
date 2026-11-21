@@ -7,6 +7,16 @@
 
 ## Current state
 
+**Local forecast update (21 November 2026).** Forecast opens on all eight saved windows with heat-flux and absolute-error graphs. The step-through still reveals observations on request. Locate omits the field-strength caption. Task 03 is VERIFYING locally.
+
+**Local three-view redesign (21 November 2026).** Locate the tubes pairs tube selection with the GPU assignments. Forecast and Spatial parallelism complete the public navigation. Spatial separates the saved GENE-X Dommaschk timing comparison, a proposed control loop, and the published W7-X compute example. Termination stays accessible across views when a session is active or termination is uncertain. This interface update ran locally without cloud jobs.
+
+**Local Modal launch qualification (21 November 2026).** The owner’s `labyrinth` profile deployed `labyrinth-gx` with GX commit `3865a53778862e1686f414bf6f416339e24887c9`. The native `vmec_c` input reads the same pinned W7-X equilibrium for the bean and triangular tubes. Rehearsal `rehearsal-a4d206c6b7df` passed initialization, checkpoint continuation, distinct-device and execution-overlap checks in two phases of 400 steps each at the live grid resolution. Earlier attempt `rehearsal-595d25ed7f2f` stopped on a missing dependency in the Python geometry reader. All rehearsal workers stopped. The local API returned qualified and idle, and the browser opened and canceled the real live-slot confirmation. The ledger at handoff showed $8.22 in posted project usage and $9.73 reserved for unposted costs. The local session and its records under `~/.labyrinth` supersede the historical unrehearsed status for this checkout. Saturated heat-flux agreement requires separate evidence.
+
+**Local interface update (21 November 2026).** Desktop navigation now uses a persistent rail. Advance plasma pairs planned GPU assignments drawn from the saved field lines with the archived heat-flux replay and a full-trace control. Browser checks covered all six views at 390, 900 and 1440 pixels, keyboard navigation, both full plotted traces, playback and tube selection. Tasks 06, 08 and 09 are VERIFYING locally.
+
+**Local checkout update (21 November 2026, D-026).** Imported the saved Modal geometry and GENE-X evidence, corrected the budget label, and addressed the macOS tooling failures. The macOS local gate passed all 11 stages and Chromium confirmed the Geometry, Spatial Parallelism and Budget changes. Tasks 00, 01, 04 and 05 are in VERIFYING locally pending the repository's commit-based verification workflow. Historical statuses and results below describe the remote baseline.
+
 **All ten tasks are `DONE`.** 02 was re-verified at `8a85c67` for D-025 (τ_int floor). 02, 06 and 09 were reopened for D-024 (the PRD's live comparison, cross-RX-2) and re-verified at `77fd8b6` (`Verdict: PASS`
 each; reviewer APPROVE). The other seven are verified at `3faed3a`. Before D-024 each had a final external-verifier run at commit `3faed3a` ending in `Verdict: PASS`, with a `PASS` row for every outcome
 (`tasks/<NN>/VERIFY.md`), and the code passed the 2026-11-20 review round with all six areas approved. `scripts/check_docs.py` enforces this (D-022): any

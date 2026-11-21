@@ -1,9 +1,8 @@
 // Locate the tubes (replay): W7-X high-mirror geometry at rho 0.8 from artifacts/geometry.json.
-import { useId, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Panel,
   ProvenanceBadge,
-  SegmentedControl,
   Stat,
   StatusPill,
   VERIFICATION_STATUS,
@@ -17,10 +16,10 @@ import { ArtifactGate } from '../../shell/ArtifactGate';
 import { ColorBar } from './ColorBar';
 import { CrossSectionInset } from './CrossSectionInset';
 import { FluxScene } from './FluxScene';
-import { bmagChartSpec, buildSceneModel, isWebUrl, tracerPassed, tubeById, tubeMarkers } from './model';
+import { bmagChartSpec, buildSceneModel, tracerPassed, tubeById, tubeMarkers } from './model';
 import { PlotlyChart } from './PlotlyChart';
 import { checkGeometry, type GeometryArtifact, type TubeId } from './types';
-import { ValidationPanel } from './ValidationPanel';
+import { TubePlan } from './TubePlan';
 import './geometry.css';
 
 const VIEW = 'Locate the tubes';
@@ -43,20 +42,14 @@ const ACCEPTANCE_WORD: Record<VerificationOutcome, string> = {
   'not-applicable': 'not applicable',
 };
 
-const TUBE_OPTIONS = [
-  { value: 'bean', label: 'Bean · ζ 0°', ariaLabel: 'Bean tube, ζ 0 degrees' },
-  { value: 'triangular', label: 'Triangular · ζ 36°', ariaLabel: 'Triangular tube, ζ 36 degrees' },
-] as const;
-
 export function GeometryContent({ g }: { g: GeometryArtifact }) {
   const [selected, setSelected] = useState<TubeId>('bean');
   const theme = useResolvedTheme();
-  const ids = { scene: useId(), chart: useId() };
   const tube = tubeById(g, selected);
   const other = tubeById(g, selected === 'bean' ? 'triangular' : 'bean');
   const model = useMemo(() => buildSceneModel(g, selected, theme), [g, selected, theme]);
   const chart = useMemo(() => bmagChartSpec(tube, theme), [tube, theme]);
-  const [start, centre, end] = tubeMarkers(tube);
+  const [, centre] = tubeMarkers(tube);
   const s = g.surface;
   const n = tube.samples.length;
   // Eyebrows are uppercased by CSS, which would turn ζ into a capital zeta that reads as "Z".
@@ -75,9 +68,7 @@ export function GeometryContent({ g }: { g: GeometryArtifact }) {
     <div className="geo-layout" data-selected={selected}>
       <Panel
         className="geo-layout__scene"
-        eyebrow={`${VIEW} · replay`}
         title={`Field lines on the ρ = ${formatNumber(s.rho, 1)} flux surface`}
-        subtitle={`${g.equilibrium.configuration} VMEC equilibrium, ${g.equilibrium.nfp} field periods, ι = ${formatNumber(s.iota, 3)}. Gray is the flux surface (context, not data); the selected line is coloured by |B|.`}
         status={
           <>
             {/* Both validation verdicts, named, above the fold; the full record is in the Validation panel. */}
@@ -88,30 +79,8 @@ export function GeometryContent({ g }: { g: GeometryArtifact }) {
             <ProvenanceBadge provenance={g.provenance} subject="field-line geometry" />
           </>
         }
-        actions={
-          <SegmentedControl<TubeId> label="Field line" options={TUBE_OPTIONS} value={selected} onChange={setSelected} />
-        }
-        footer={
-          <>
-            Equilibrium:{' '}
-            {/* A link only for a web address (as ValidationPanel's SourceRef): a repository path is named, never
-                linked, since a relative href would open the app shell. */}
-            {isWebUrl(g.equilibrium.source.url) ? (
-              <a href={g.equilibrium.source.url} target="_blank" rel="noreferrer noopener">
-                {g.equilibrium.source.label}
-              </a>
-            ) : (
-              <span data-testid="equilibrium-source">
-                {g.equilibrium.source.label} <span className="lab-mono">{g.equilibrium.source.url}</span>
-              </span>
-            )}{' '}
-            <span className="lab-mono" title={`sha256 ${g.equilibrium.source.sha256}`}>
-              sha256 {g.equilibrium.source.sha256.slice(0, 10)}…
-            </span>
-          </>
-        }
       >
-        <FluxScene model={model} label={`3D view of the ${tube.label} field line on the gray ρ ${formatNumber(s.rho, 1)} surface`} describedBy={ids.scene} />
+        <FluxScene model={model} label={`3D view of the ${tube.label} field line on the gray ρ ${formatNumber(s.rho, 1)} surface`} />
         <div className="geo-scene__keys">
           <ColorBar range={range} theme={theme} tubeLabel={tube.label} />
           <ul className="geo-markers" aria-label="Scene key">
@@ -132,13 +101,6 @@ export function GeometryContent({ g }: { g: GeometryArtifact }) {
             </li>
           </ul>
         </div>
-        <p id={ids.scene} className="geo-summary">
-          {`Selected: ${tube.label}, ${n} samples along one poloidal turn (θ* −π to π), α = ${formatNumber(tube.alpha, 4)} rad, ` +
-            `coloured by |B| / B_ref from ${formatNumber(range[0], 3)} to ${formatNumber(range[1], 3)}. ` +
-            `Start at ζ ${formatNumber(start!.sample.zeta, 3)} rad, centre on the outboard midplane at ζ ${formatNumber(centre!.sample.zeta, 3)} rad ` +
-            `(R ${formatNumber(centre!.sample.R, 3)} m), end at ζ ${formatNumber(end!.sample.zeta, 3)} rad. ` +
-            `The ${other.label} line is drawn muted for context.`}
-        </p>
       </Panel>
 
       <Panel
@@ -162,20 +124,16 @@ export function GeometryContent({ g }: { g: GeometryArtifact }) {
         className="geo-layout__chart"
         eyebrow={eyebrow}
         title="Field strength along the line, |B|(θ*)"
-        subtitle={`${n} samples over one poloidal turn. |B| in units of stella’s B_ref; θ* is the straight-field-line angle (stella zed).`}
         status={kindPill}
       >
         <figure className="geo-chart">
-          <PlotlyChart className="geo-chart__plot" data={chart.data} layout={chart.layout} ariaLabel={chart.ariaLabel} describedBy={ids.chart} />
-          <figcaption id={ids.chart} className="geo-summary">
-            {chart.summary}
-          </figcaption>
+          <PlotlyChart className="geo-chart__plot" data={chart.data} layout={chart.layout} ariaLabel={chart.ariaLabel} />
         </figure>
       </Panel>
 
-      <div className="geo-layout__validation">
-        <ValidationPanel g={g} />
-      </div>
+      <Panel className="geo-layout__plan" title="GPU assignments" density="compact">
+        <TubePlan geometry={g} selected={selected} onSelect={setSelected} />
+      </Panel>
     </div>
   );
 }
