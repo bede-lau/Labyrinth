@@ -964,3 +964,354 @@ probe copy removed
 **Why PASS.** The maintainer's gates exit 0 at 3faed3a. All 14 backend tests and 32 frontend transport tests pass. Each outcome has a test that can fail: five of five mutations went red, including four that survived run 3. My probes agree with the artifact and with the view.
 
 Verdict: PASS
+
+---
+
+## Run 5 — whole task
+Verifier run: 2026-11-21, commit 77fd8b6
+
+Scope: T1–T13 after D-024 (the live comparison of GX bean samples with the archive; new outcome T13). The owner asked for a short run: targeted tests, one independent probe per outcome, at most five mutations. Every mutation and every probe test ran in an isolated copy.
+
+Tree state:
+- `git status --short` (whole tree) was empty at the start and at the end. HEAD was 77fd8b6 both times.
+- `git diff --stat 3faed3a HEAD` on the owned and related paths: the backend (`main/labyrinth_main/features/transport/`), `main/tests/test_transport.py` and `artifacts/transport.json` are unchanged. The frontend changed in `LiveComparison.tsx` (new), `TransportView.tsx`, `TransportView.test.tsx`, `model.ts` and `transport.css`. In `model.ts` the only edit to code that existed before is the parameter type of `stationarityText` (now a `Pick` of covered and stationary). Everything else in the file is new T13 code.
+
+Where each step ran:
+- Shared tree, read-only: `pytest main/tests/test_transport.py`, the transport vitest directory, `check_boundaries.py` and my backend probe.
+- Isolated copy from `scripts/probe-copy.sh vt02r5` (deleted at the end): `verify.sh all`, my generator of real backend `comparison` objects, my two probe test files and the five mutations. The copy was restored after each mutation, and the restored `model.ts` was byte-identical to the shared tree.
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| T1 | Traces from `compared/test5/{stella,GENE}/{t,Q}` of the pinned h5, units, tgrad 3 / ngrad 1 in provenance | two `test_T1_*`: pass | My own h5py read and dedup give stella 1441 raw → 1433 and GENE 1106, equal to the artifact. Units are `Q_i/Q_gB,i` and `t v_th,i/a`. Both provenances carry "tgrad=3, ngrad=1" | PASS |
+| T2 | Edge-interpolated means reproduce 2.242 (stella 1500–1900) and 2.474 (GENE 1500–1893.765) | two `test_T2_*`: pass | My integrator gives 2.2421269 and 2.4738618. The largest difference from the artifact over the six covered windows is 4.74e-07 | PASS |
+| T3 | Coverage, mean, autocorrelation-corrected stderr, stationarity, claim gate per window | four `test_T3_*`: pass | The artifact has 7 rows. Every `stationary` is null and every claim is false. GENE 1500–1900 is `covered: false`, and my integrator refuses it too. The backend has been byte-identical since round 2, so the Monte-Carlo was not repeated | PASS |
+| T4 | Reduced Modal 5.79 on 300–400 against archive means; 2.55 / 2.68 fixtures; sample-span 2.674 note | `test_T4_*`: pass | My means: 2.5545375 → 2.55 and 2.6750657 → 2.68. `reducedModalRun.archive` equals the rows. 5.79 is `prd-reported` with computed null. "2.674" is in the fixture notes | PASS |
+| T5 | `gx_to_archive` = (t·√2, Q/(2√2)); raises unless identical references are asserted | `test_T5_*`: pass | t [0, 1.4142135623730951, 141.4213562373095] is as expected. It refuses False, None, 1 and 'yes' with ValueError | PASS |
+| T6 | `compare_window` returns verdict, delta and combined uncertainty, and "no claim" when uncovered or non-stationary | three `test_T6_*`: pass | stella vs GENE on 1500–1893.765 gives no claim with Δ −0.2333, equal to my integrator's −0.2333. Through the new live path, the real backend gave agree (Δ +0.0024) and disagree (Δ −0.4916) against my injected archives | PASS |
+| T7 | Triangular 2.22 over 1200–1500, `rawTraceStatus: unverified`, no triangular trace | `test_T7_*`: pass | `triangular` is 2.22, [1200, 1500], `unverified`. The only trace tube is `bean` | PASS |
+| T8 | Plotly overlay of stella and GENE bean traces, shared unit-labelled axes, bands 200–300 / 300–400 / 1500–1900 | four T8 tests (two in `lazyLoad.test.ts`): pass | V5-F: the plotted stella (1433) and GENE (1106) arrays equal the artifact element by element. The bands are 200–300, 300–400 and 1500–1900. The axis titles carry a/v_th,i and Q_gB,i | PASS |
+| T9 | Window table: mean ± stderr, coverage, stationarity, explicit claim allowed / not allowed per row | three T9 tests, FF-15, FF-2: pass | V5-F: all seven rows read "Undecidable" or "Not covered", and every row reads "Claim not allowed" | PASS |
+| T10 | Discrepancy card: 5.79 vs archive values with delta; fixture rows claimed vs computed with ✓/✗ | three T10 tests, FF-3, FB-3: pass | V5-F: the card shows Δ "+3.24" and "+3.11" (my integrator gives +3.2355 and +3.1149; backend unchanged) | PASS |
+| T11 | Triangular card separate from the bean plot, labelled published mean, raw trace unverified | two T11 tests: pass | V5-F: the label reads "Published mean 2.22 over 1200–1500 — PRD-reported, raw trace unverified.", and the plot has no triangular series | PASS |
+| T12 | GX samples overlay in archive units with a LIVE label only when the live API reports them | eleven T12 tests: pass | V5-G: in live mode "GX · LIVE (archive units)" is drawn at exactly the delivered x and y, with the "LIVE · GX bean" label. In fallback mode, the same samples produce neither | PASS |
+| T13 | Live comparison (D-024) only for a fresh, valid `live` snapshot carrying `comparison`: per-window coverage, mean ± stderr, N_eff vs 20, stationarity, the live gate, archive means, signed Δ, verdicts; claim pill only with flag and agree; "could not be computed" for empty windows; nothing otherwise | fifteen T13 tests in `TransportView.test.tsx`: pass. Five of five mutations red | V5-A/B: four `comparison` objects from the real backend `live_comparison`, rendered through the real view: committed archive; a partial trace; injected archives giving agree and disagree; divergent repeats giving empty windows. Every cell equals my own formatting of the backend numbers. V5-C/D: hidden in five other modes, on HTTP 502, on a network error, for three invalid payloads, for a live snapshot without the field, and after a stale hang; shown again when live returns. V5-E: the claim pill appears only with the flag and a backed agree; four contradictory variants show the inconsistency callout | PASS |
+
+### Real output
+ANSI colour codes are removed. Commands ran through `scripts/dev.sh` in WSL, from small scripts in my scratch directory. Long outputs are shortened by leaving lines out (marked `...` or stated below a block); every line shown is verbatim.
+
+#### Gates: `verify.sh all` in the isolated copy (HEAD 77fd8b6, clean tree copied)
+```
+$ wsl.exe -e bash scripts/probe-copy.sh vt02r5
+/home/qqbot/.cache/labyrinth-probes/vt02r5
+$ cd ~/.cache/labyrinth-probes/vt02r5 && bash scripts/verify.sh all        # start 2026-11-21T00:18:42Z
+boundary self-test: OK (134 violations caught, 25 clean files passed, 3 OS flavours agree)
+boundary: OK (169 files scanned)
+DOCS WARNING: tasks/00-scaffold/TASK.md: no .git in this probe copy - whether the verdict (commit 3faed3a) is current was NOT checked
+  ... (same warning for 01, 03, 04, 05, 07, 08)
+docs: OK (10 task folders)
+71 passed in 10.02s
+All checks passed!
+347 passed in 39.96s
+artifacts: schema-valid
+artifacts: fresh (byte-identical rebuild)
+ ✓ src/features/transport/TransportView.test.tsx (45 tests) 3991ms
+ ✓ src/lib/liveContract.test.ts (9 tests) 857ms
+ Test Files  30 passed (30)
+      Tests  1370 passed (1370)
+✓ built in 2.06s
+━━━ verify.sh summary (scope: all)
+  PASS  boundary:self-test (0s)
+  PASS  boundary:scan (0s)
+  PASS  docs:handoff (0s)
+  PASS  scripts:tests (10s)
+  PASS  main:lint (0s)
+  PASS  main:tests (37s)
+  PASS  artifacts:schema (0s)
+  PASS  artifacts:fresh (1s)
+  PASS  renderer:typecheck (15s)
+  PASS  renderer:tests (68s)
+  PASS  renderer:build (4s)
+verify.sh: all stages passed.
+exit=0 end 2026-11-21T00:20:57Z
+```
+
+#### Tree state and targeted tests (shared tree, read-only)
+```
+HEAD 77fd8b6
+### git status --short (owned + test + artifact paths)
+(end status)
+### git diff --stat 3faed3a HEAD -- owned paths
+ renderer/src/features/transport/LiveComparison.tsx | 215 ++++++++++++
+ .../src/features/transport/TransportView.test.tsx  | 371 ++++++++++++++++++++-
+ renderer/src/features/transport/TransportView.tsx  |  24 +-
+ renderer/src/features/transport/model.ts           | 217 +++++++++++-
+ renderer/src/features/transport/transport.css      |  21 ++
+ 5 files changed, 840 insertions(+), 8 deletions(-)
+(end diff)
+$ python3 -m pytest -v -p no:cacheprovider main/tests/test_transport.py
+main/tests/test_transport.py::test_T1_traces_read_from_pinned_h5_with_units_and_gradients PASSED [  7%]
+main/tests/test_transport.py::test_T1_divergent_restart_is_refused_not_silently_dropped PASSED [ 14%]
+main/tests/test_transport.py::test_T2_time_weighted_means_reproduce_fixtures PASSED [ 21%]
+main/tests/test_transport.py::test_T2_window_mean_equals_analytic_integral_for_piecewise_linear_Q PASSED [ 28%]
+main/tests/test_transport.py::test_T3_window_stats_coverage_stderr_stationarity_and_claim_gate PASSED [ 35%]
+main/tests/test_transport.py::test_T3_edge_hole_window_not_covered PASSED [ 42%]
+main/tests/test_transport.py::test_T3_claim_gate_and_stderr_calibration_monte_carlo PASSED [ 50%]
+main/tests/test_transport.py::test_T3_stationarity_false_rejection_rate_at_small_n PASSED [ 57%]
+main/tests/test_transport.py::test_T4_reduced_modal_run_against_archive_and_fixtures PASSED [ 64%]
+main/tests/test_transport.py::test_T5_gx_to_archive_converts_and_refuses_without_identical_references PASSED [ 71%]
+main/tests/test_transport.py::test_T6_compare_window_tost_verdicts_and_no_claim PASSED [ 78%]
+main/tests/test_transport.py::test_T6_compare_window_dedups_repeats_and_refuses_divergent PASSED [ 85%]
+main/tests/test_transport.py::test_T6_null_false_disagree_rate_near_nominal PASSED [ 92%]
+main/tests/test_transport.py::test_T7_triangular_published_mean_only PASSED [100%]
+============================== 14 passed in 3.85s ==============================
+exit=0
+$ npm --prefix renderer run -s test -- src/features/transport --reporter=verbose
+ ✓ src/features/transport/lazyLoad.test.ts > T8 Plotly stays lazy-loaded: no static import of plotly.js-dist-min anywhere in renderer/src 842ms
+ ✓ src/features/transport/lazyLoad.test.ts > T8 the lazy-load guard recognises every static import form and ignores type-only and dynamic ones 2ms
+ ✓ src/features/transport/TransportView.test.tsx > T8 overlays stella and GENE bean traces on shared, unit-labelled axes with the three window bands 186ms
+ ✓ src/features/transport/TransportView.test.tsx > T8 window bands, the chart name and the clipped flux axis are read from the artifact, not typed in 4ms
+ ✓ src/features/transport/TransportView.test.tsx > T9 window table shows mean, stderr (— / ≈), coverage, stationarity and an explicit claim verdict per row 87ms
+ ✓ src/features/transport/TransportView.test.tsx > T9 claim verdict and stationarity follow the artifact in both directions (synthetic allowed / true / false rows) 61ms
+ ✓ src/features/transport/TransportView.test.tsx > T9 an artifact flag that contradicts its own row is never shown as an allowed claim 33ms
+ ✓ src/features/transport/TransportView.test.tsx > FF-15 T9 a row that reports N_eff below 20 never shows "Claim allowed", whatever the artifact flag says 33ms
+ ✓ src/features/transport/TransportView.test.tsx > FF-2 the "not allowed" callout blames the autocorrelation time only when every covered window reports N_eff below 20 26ms
+ ✓ src/features/transport/TransportView.test.tsx > FF-3 the discrepancy callout weighs the gap against the reported stderr, from the numbers 52ms
+ ✓ src/features/transport/TransportView.test.tsx > FF-4 the late-window note says ± is approximate only when a late stderr is flagged approximate 76ms
+ ✓ src/features/transport/TransportView.test.tsx > T10 discrepancy card: PRD-reported 5.79 vs archive 300–400 means with deltas; fixture rows with ✓/✗ 28ms
+ ✓ src/features/transport/TransportView.test.tsx > T10 a fixture the artifact marks as not matching is shown as a mismatch, and the deltas follow the artifact 21ms
+ ✓ src/features/transport/TransportView.test.tsx > FB-3 what a fixture match is backed by comes from the fixture basis (D-023), data when absent 19ms
+ ✓ src/features/transport/TransportView.test.tsx > T10 the label on the 5.79 figure is the provenance kind in the artifact, and an artifact can never make it LIVE 25ms
+ ✓ src/features/transport/TransportView.test.tsx > T10 stella and GENE are stated as not shown to agree, with the sign convention and both windows 17ms
+ ✓ src/features/transport/TransportView.test.tsx > T11 triangular card is separate from the bean plot: published mean 2.22, PRD-reported, raw trace unverified 22ms
+ ✓ src/features/transport/TransportView.test.tsx > T11 a triangular trace present in the artifact is still never drawn or badged on the bean plot 18ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for mode unavailable 57ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for mode idle 66ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for mode launching 65ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for mode fallback 58ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for mode terminated 57ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for an unreachable API (HTTP 502) 63ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for an unreachable API (network error) 65ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for mode live with no bean samples 60ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 no GX series and no LIVE label for mode live with triangular samples only 65ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 GX samples overlay in archive units with a LIVE label only when the API reports live 25ms
+ ✓ src/features/transport/TransportView.test.tsx > T12 a GX trace with live provenance inside the artifact produces no live indicator in replay 63ms
+ ✓ src/features/transport/TransportView.test.tsx > DS-3 the view opens with the verdict: late means, Δ, the PRD-reported 5.79 beside 2.55 / 2.68, and the claim gate 36ms
+ ✓ src/features/transport/TransportView.test.tsx > DS-6 every table cell carries its column label, so the narrow card layout stays readable without the header row 33ms
+ ✓ src/features/transport/TransportView.test.tsx > A3 transport: a missing or invalid artifact shows an error naming the file, never a blank view 9ms
+ ✓ src/features/transport/TransportView.test.tsx > T13 no live comparison for mode unavailable, even when the snapshot carries one 34ms
+ ✓ src/features/transport/TransportView.test.tsx > T13 no live comparison for mode idle, even when the snapshot carries one 37ms
+ ✓ src/features/transport/TransportView.test.tsx > T13 no live comparison for mode launching, even when the snapshot carries one 41ms
+ ✓ src/features/transport/TransportView.test.tsx > T13 no live comparison for mode fallback, even when the snapshot carries one 30ms
+ ✓ src/features/transport/TransportView.test.tsx > T13 no live comparison for mode terminated, even when the snapshot carries one 25ms
+ ✓ src/features/transport/TransportView.test.tsx > T13 no live comparison for an unreachable API (HTTP 502), even when the snapshot carries one 23ms
+ ✓ src/features/transport/TransportView.test.tsx > T13 no live comparison for an unreachable API (network error), even when the snapshot carries one 30ms
+ ✓ src/features/transport/TransportView.test.tsx > T13 a live snapshot without the comparison field shows the GX overlay and no comparison 25ms
+ ✓ src/features/transport/TransportView.test.tsx > T13 liveComparison: only a fresh, ready, live snapshot that carries a comparison yields one (pure) 1ms
+ ✓ src/features/transport/TransportView.test.tsx > T13 the comparison leaves with the live session: a stale or unreachable API or another mode hides it, live brings it back 1225ms
+ ✓ src/features/transport/TransportView.test.tsx > T13 live: facts, both windows ("Not covered" and "—" for the uncovered one, "Undecidable" for null), the archive verdicts and "claim not allowed" with the backend reason 69ms
+ ✓ src/features/transport/TransportView.test.tsx > T13 verdict cells read Agree / Disagree / Inconclusive / No claim with distinct treatments, deltas carry + and −, and the claim pill needs flag + agree 38ms
+ ✓ src/features/transport/TransportView.test.tsx > T13 the claim needs the flag AND an agree verdict: a flag without one, or an agree without the flag, is an inconsistency, never a claim 65ms
+ ✓ src/features/transport/TransportView.test.tsx > T13 empty windows: "Live comparison could not be computed" with the backend reason, and no table 26ms
+ ✓ src/features/transport/TransportView.test.tsx > T13 DS-6 every live comparison cell carries its column label and the facts reflow, so a 390 px phone needs no sideways page scroll 28ms
+ Test Files  2 passed (2)
+      Tests  47 passed (47)
+exit=0
+$ python3 scripts/check_boundaries.py
+boundary: OK (169 files scanned)
+exit=0
+```
+I read the T13 tests. They render the real `TransportView`, `LiveComparison.tsx` and `model.ts` through a stubbed `fetch`, and only `plotly.js-dist-min` is mocked. The expectations are literals: exact cell texts per row (for example `'9.8 (< 20)'`, `'−0.288'`, `'+0.150'`, `'Undecidable'`, `'Not covered'`), pill `data-status` values, and the exact inconsistency sentences. None is tautological.
+
+#### Backend probe (`backend_probe.py`: my own h5py read, dedup and integrator; read-only, shared tree)
+```
+T1 raw n {'stella': 1441, 'GENE': 1106} dedup n {'stella': 1433, 'GENE': 1106} artifact n [('stella-bean', 1433), ('gene-bean', 1106)] units {'heatFlux': 'Q_i/Q_gB,i', 'time': 't v_th,i/a'}
+T1 provenance has tgrad=3, ngrad=1: True
+T2/T3 stella-bean [200.0, 300.0]: mine=2.715518 artifact=2.715518 covered=True stationary=None claim=False
+T2/T3 stella-bean [300.0, 400.0]: mine=2.5545375 artifact=2.554537 covered=True stationary=None claim=False
+T2/T3 stella-bean [1500.0, 1900.0]: mine=2.2421269 artifact=2.242127 covered=True stationary=None claim=False
+T2/T3 gene-bean   [200.0, 300.0]: mine=2.9260284 artifact=2.926028 covered=True stationary=None claim=False
+T2/T3 gene-bean   [300.0, 400.0]: mine=2.6750657 artifact=2.675066 covered=True stationary=None claim=False
+T2/T3 gene-bean   [1500.0, 1900.0]: mine=None artifact=None covered=False stationary=None claim=False
+T2/T3 gene-bean   [1500.0, 1893.765]: mine=2.4738618 artifact=2.473862 covered=True stationary=None claim=False
+T2 max |mine - artifact| = 4.74e-07
+T2/T4 fixture stella-bean-1500-1900: claimed 2.242 computed 2.242127 matches True
+T2/T4 fixture gene-bean-1500-1893.765: claimed 2.474 computed 2.473862 matches True
+T2/T4 fixture stella-bean-300-400: claimed 2.55 computed 2.554537 matches True
+T2/T4 fixture gene-bean-300-400: claimed 2.68 computed 2.675066 matches True
+T2/T4 fixture reduced-modal-stella-300-400: claimed 5.79 computed None matches None
+T2/T4 fixture triangular-published-1200-1500: claimed 2.22 computed None matches None
+T4 reducedModalRun 5.79 [300.0, 400.0] {'GENE': 2.675066, 'stella': 2.554537} prd-reported
+T4 sample-span 2.674 in a note: True
+T5 [0.0, 1.4142135623730951, 141.4213562373095] [0.35355339059327373, 0.9999999999999999, 2.82842712474619] expected [0.0, 1.4142135623730951, 141.4213562373095] [0.35355339059327373, 1.0, 2.82842712474619]
+T5 refused False
+T5 refused None
+T5 refused 1
+T5 refused 'yes'
+T6 stella vs GENE 1500-1893.765: no claim delta -0.2333 | own delta -0.2333
+T7 triangular 2.22 [1200.0, 1500.0] unverified trace tubes ['bean']
+```
+The 0.9999999999999999 comes from my input literal 2.828427124746190, which is not exactly 2√2. It is not a conversion error.
+
+#### Real backend payloads for T13 (`gen_payloads.py`, run in the copy; my own seeded AR(1) samples and injected archive traces)
+```
+== committed: nSamples=541 tStart=150.0 tEnd=420.0 flag=False windows=2
+   reason: No saturated-agreement claim. 200–300: archive stella and GENE not shown stationary (N_eff not established; D-017 gate). 300–400: archive stella and GENE not shown stationary (N_eff not established; D-017 gate).
+   [200.0, 300.0] covered=True n=201 mean=2.698501323206459 se=0.006641440378466463 approx=False nEffLower=50.02120915932115 stat=True gate=True
+      stella mean=2.7155179929121744 delta=-0.01701666970571525 verdict=no claim | archive trace not shown stationary on 200-300
+      GENE   mean=2.926028405447531 delta=-0.227527082241072 verdict=no claim | archive trace not shown stationary on 200-300
+   [300.0, 400.0] covered=True n=201 mean=2.712744432131583 se=0.005982296424748547 approx=False nEffLower=56.26366184129678 stat=True gate=True
+      stella mean=2.5545374741999085 delta=0.15820695793167427 verdict=no claim | archive trace not shown stationary on 300-400
+      GENE   mean=2.675065698386977 delta=0.03767873374460562 verdict=no claim | archive trace not shown stationary on 300-400
+== partial: nSamples=43 tStart=180.0 tEnd=348.0 flag=False windows=2
+   [200.0, 300.0] covered=True n=26 mean=2.5593242794654825 se=0.03913547744559343 approx=True nEffLower=None stat=None gate=False
+   [300.0, 400.0] covered=False n=13 mean=None se=None approx=True nEffLower=None stat=None gate=False
+      stella mean=2.5545374741999085 delta=None verdict=no claim | new trace does not cover 300-400; archive trace not shown stationary on 300-400
+== injected: nSamples=541 tStart=150.0 tEnd=420.0 flag=True windows=2
+   reason: Saturated-agreement claim allowed for 200–300 vs stella: both traces are covered, stationary and have N_eff >= 20, and the 90% CI of live - archive mean lies within ±0.1 x |archive mean| (TOST). Other verdicts: 200–300 vs GENE: di
+   [200.0, 300.0] covered=True n=201 mean=2.701420158732447 se=0.0034371006173286346 approx=False nEffLower=159.3889619776425 stat=True gate=True
+      stella mean=2.6990062294259487 delta=0.002413929306498197 verdict=agree | 90% CI of delta [-0.005033, 0.009861] lies within ±0.2699 (TOST, alpha 0.05); margin = 0.1 x |archive mean| =
+      GENE   mean=3.1930268828259525 delta=-0.4916067240935056 verdict=disagree | 95% CI of delta [-0.5021, -0.4811] excludes 0 and equivalence within ±0.3193 is not shown; margin = 0.1 x |arc
+   [300.0, 400.0] covered=True n=201 mean=3.0360128233964776 se=None approx=True nEffLower=None stat=None gate=False
+== divergent: nSamples=542 tStart=150.0 tEnd=420.0 flag=False windows=0
+   reason: Live comparison could not be computed: ValueError: the live bean trace has divergent repeated sample times: 1 of 1 non-increasing samples do not repeat an earlier sample (first: index 300, t=299, Q=3.11092)
+delta == live mean - archive mean on every row: OK
+```
+(Some per-window lines of this output are left out above; the lines shown are verbatim.) With the committed archive, the real backend says "no claim" everywhere, as D-024's Consequences predict.
+
+#### T13 probe (`zzv5.test.tsx`, isolated copy; my own expected strings, not `model.ts`)
+```
+$ npm --prefix renderer run -s test -- src/features/transport/zzv5.test.tsx --reporter=verbose
+PROBE committed: flag=false expectClaim=false header pills=["LIVE · this session","Saturated agreement: claim not allowed"]
+PROBE   live 200-300 got=["Covered · 201 samples","2.699","0.007","50.0 (≥ 20)","Stationary"]
+PROBE   live 200-300 own gate cell="Claim allowed" (backend window flag true, gate holds true)
+PROBE     stella got=["2.716","−0.017","No claim"]  backend delta=-0.01701666970571525
+PROBE     GENE   got=["2.926","−0.228","No claim"]  backend delta=-0.227527082241072
+PROBE   live 300-400 got=["Covered · 201 samples","2.713","0.006","56.3 (≥ 20)","Stationary"]
+PROBE     stella got=["2.555","+0.158","No claim"]  backend delta=0.15820695793167427
+PROBE     GENE   got=["2.675","+0.038","No claim"]  backend delta=0.03767873374460562
+PROBE partial: flag=false expectClaim=false header pills=["LIVE · this session","Saturated agreement: claim not allowed"]
+PROBE   live 200-300 got=["Covered · 26 samples","2.559","≈0.039","not established","Undecidable"]
+PROBE   live 300-400 got=["Not covered · 13 samples","—","—","—","Not covered"]
+PROBE     stella got=["2.555","—","No claim"]  backend delta=null
+PROBE     GENE   got=["2.675","—","No claim"]  backend delta=null
+PROBE injected: flag=true expectClaim=true header pills=["LIVE · this session","Saturated agreement: claim allowed"]
+PROBE   live 200-300 got=["Covered · 201 samples","2.701","0.003","159.4 (≥ 20)","Stationary"]
+PROBE     stella got=["2.699","+0.002","Agree"]  backend delta=0.002413929306498197
+PROBE     GENE   got=["3.193","−0.492","Disagree"]  backend delta=-0.4916067240935056
+PROBE   live 300-400 got=["Covered · 201 samples","3.036","—","not established","Undecidable"]
+PROBE     stella got=["2.697","+0.339","No claim"]  backend delta=0.33861590934917274
+PROBE     GENE   got=["3.200","−0.164","No claim"]  backend delta=-0.16409012145487223
+PROBE divergent: callout="Note: Live comparison could not be computedLive comparison could not be computed: ValueError: the live bean trace has divergent repeated sample times: 1 of 1 non-increasing samples do not repeat an earlier sample (first: index 300, t=299, Q=3.11092)"
+PROBE empty+flag: pills=["LIVE · this session","Saturated agreement: claim not allowed"]
+PROBE hidden unavailable + comparison: store=ready/unavailable panel=false
+PROBE hidden idle + comparison: store=ready/idle panel=false
+PROBE hidden launching + comparison: store=ready/launching panel=false
+PROBE hidden fallback + comparison: store=ready/fallback panel=false
+PROBE hidden terminated + comparison: store=ready/terminated panel=false
+PROBE hidden HTTP 502: store=unreachable/http panel=false
+PROBE hidden network error: store=unreachable/network panel=false
+PROBE hidden live, comparison with one window (invalid): store=unreachable/invalid panel=false
+PROBE hidden live, uncovered window with a mean (invalid): store=unreachable/invalid panel=false
+PROBE hidden live, comparison: null (invalid): store=unreachable/invalid panel=false
+PROBE hidden live, no comparison field: store=ready/live panel=false
+PROBE stale: store={"s":"unreachable","c":"stale"} panel gone after ~187 ms
+PROBE live again: panel back
+PROBE claim real injected (flag true, agree on a gated window): pills=["LIVE · this session","Saturated agreement: claim allowed"] inconsistency=none
+PROBE claim flag true, agree turned into inconclusive: pills=["LIVE · this session","Saturated agreement: claim not allowed"] inconsistency="Warning: Inconsistent comparison: the claim flag and the verdicts disagreeThe backend flag says a saturated-agreement claim is allowed, but no archive verdict is \"agree\". No saturated-agreement claim is shown."
+PROBE claim flag false, agree kept: pills=["LIVE · this session","Saturated agreement: claim not allowed"] inconsistency="Warning: Inconsistent comparison: the claim flag and the verdicts disagreeAn archive verdict is \"agree\", but the backend flag says a saturated-agreement claim is not allowed. No saturated-agreement claim is shown."
+PROBE claim flag true, agree row delta null: pills=["LIVE · this session","Saturated agreement: claim not allowed"] inconsistency="Warning: Inconsistent comparison: the claim flag and the verdicts disagreeThe backend flag says a saturated-agreement claim is allowed, but no \"agree\" verdict sits on a window that meets the live claim gate. No saturated-agreement claim is shown."
+PROBE claim flag true, agree but live window nEffLower 19.9: pills=["LIVE · this session","Saturated agreement: claim not allowed"] inconsistency="Warning: Inconsistent comparison: the claim flag and the verdicts disagreeThe backend flag says a saturated-agreement claim is allowed, but no \"agree\" verdict sits on a window that meets the live claim gate. No saturated-agreement claim is shown."
+PROBE claim flag true, stella AND GENE agree on 200-300: pills=["LIVE · this session","Saturated agreement: claim allowed"] inconsistency=none
+ Test Files  1 passed (1)
+      Tests  23 passed (23)
+exit=0
+```
+In each rendered row, the probe asserts that the cell texts equal strings I computed from the backend JSON: `toFixed(3)` with a true minus, an explicit `+` on positive Δ, "—" for null, "≈" for approximate, `N_eff.toFixed(1)` against 20, and the stationarity and verdict words. On every page it also asserts that no text says that stella and GENE agree or are equivalent with each other, and that the key sentence "not shown to agree with each other" is present.
+
+#### T8–T12 probe (`zzv5b.test.tsx`, isolated copy)
+```
+PROBE T8 traces=["stella ±1σ (approximate, lower bound):4","GENE ±1σ (approximate, lower bound):4","GENE ±1σ (approximate, lower bound):4","GENE ±1σ (approximate, lower bound):4","stella (archive, bean):1433","GENE (archive, bean):1106"] stellaExact=true geneExact=true bands=["200-300","300-400","1500-1900"]
+PROBE T8 x="Time t (a/v<sub>th,i</sub>)" y="Ion heat flux Q<sub>i</sub> (Q<sub>gB,i</sub>)"
+PROBE T9 stella-bean:200-300 | Undecidable | Claim not allowed
+PROBE T9 stella-bean:300-400 | Undecidable | Claim not allowed
+PROBE T9 stella-bean:1500-1900 | Undecidable | Claim not allowed
+PROBE T9 gene-bean:200-300 | Undecidable | Claim not allowed
+PROBE T9 gene-bean:300-400 | Undecidable | Claim not allowed
+PROBE T9 gene-bean:1500-1900 | Not covered | Claim not allowed
+PROBE T9 gene-bean:1500-1893.765 | Undecidable | Claim not allowed
+PROBE T10 ["Δ (reduced run − stella) +3.24 QgB,i (2.27× the archive)stella 300–400 archive window: not shown stationary (stationarity test undecidable); sampling uncertainty not finite.","Δ (reduced run − GENE) +3.11 QgB,i (2.16× the archive)GENE 300–400 archive window: not shown stationary (stationarity test undecidable); sampling uncertainty approximate."]
+PROBE T11 "Published mean 2.22 over 1200–1500 — PRD-reported, raw trace unverified."
+PROBE T12 live: name="GX · LIVE (archive units)" x=[212.13,226.27,240.42] y=[2.71,2.64,2.69] label=true
+PROBE T12 fallback: names=["stella ±1σ (approximate, lower bound)","GENE ±1σ (approximate, lower bound)","GENE ±1σ (approximate, lower bound)","GENE ±1σ (approximate, lower bound)","stella (archive, bean)","GENE (archive, bean)"] label=false
+ ✓ src/features/transport/zzv5b.test.tsx > V5-F replay: T8 plot, T9 table, T10 deltas, T11 triangular card, T12 no GX series 139ms
+ ✓ src/features/transport/zzv5b.test.tsx > V5-G T12: live draws GX at the delivered archive-unit samples with a LIVE label; fallback draws none 184ms
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+exit=0
+```
+
+#### Mutations (`mutate.py`, isolated copy; `TransportView.test.tsx` run after each; `model.ts` restored from the shared tree after each)
+```
+=== M1_any_mode_shows_comparison: exit=1 RED | Tests  7 failed | 38 passed (45)
+    red: × src/features/transport/TransportView.test.tsx > T13 no live comparison for mode unavailable, even when the snapshot carries one 43ms
+    red: × src/features/transport/TransportView.test.tsx > T13 no live comparison for mode idle, even when the snapshot carries one 37ms
+    red: × src/features/transport/TransportView.test.tsx > T13 no live comparison for mode launching, even when the snapshot carries one 30ms
+    red: × src/features/transport/TransportView.test.tsx > T13 no live comparison for mode fallback, even when the snapshot carries one 27ms
+    red: × src/features/transport/TransportView.test.tsx > T13 no live comparison for mode terminated, even when the snapshot carries one 27ms
+    red: × src/features/transport/TransportView.test.tsx > T13 liveComparison: only a fresh, ready, live snapshot that carries a comparison yields one (pure) 7ms
+    red: × src/features/transport/TransportView.test.tsx > T13 the comparison leaves with the live session: a stale or unreachable API or another mode hides it, live brings it bac
+    first error: AssertionError: expected <section …(2)>…(3)</section> to be null
+=== M2_no_freshness_check: exit=1 RED | Tests  1 failed | 44 passed (45)
+    red: × src/features/transport/TransportView.test.tsx > T13 liveComparison: only a fresh, ready, live snapshot that carries a comparison yields one (pure) 8ms
+    first error: AssertionError: expected { Object (connecting, stale, ...) } to deeply equal { Object (connecting, stale, ...) }
+=== M3_claim_from_flag_only: exit=1 RED | Tests  1 failed | 44 passed (45)
+    red: × src/features/transport/TransportView.test.tsx > T13 the claim needs the flag AND an agree verdict: a flag without one, or an agree without the flag, is an inconsistency
+    first error: AssertionError: expected { allowed: true, inconsistency: null } to deeply equal { allowed: false, …(1) }
+=== M4_unsigned_delta: exit=1 RED | Tests  1 failed | 44 passed (45)
+    red: × src/features/transport/TransportView.test.tsx > T13 verdict cells read Agree / Disagree / Inconclusive / No claim with distinct treatments, deltas carry + and −, and th
+    first error: AssertionError: expected [ '0.012', '−0.138', '0.150', '0.020' ] to deeply equal [ '+0.012', '−0.138', '+0.150', …(1) ]
+=== M5_null_stationarity_reads_stationary: exit=1 RED | Tests  1 failed | 44 passed (45)
+    red: × src/features/transport/TransportView.test.tsx > T13 live: facts, both windows ("Not covered" and "—" for the uncovered one, "Undecidable" for null), the archive verdicts and "claim not allowed" with the backend reason
+    first error: AssertionError: expected [ 'Covered · 71 samples', …(5) ] to deeply equal [ 'Covered · 71 samples', …(5) ]
+### restored copy byte-identical to the shared tree: True
+```
+What each mutation changed in `renderer/src/features/transport/model.ts`:
+- M1, `liveComparison` (line 374): the `isLive` condition is dropped, so a ready snapshot in any mode shows its comparison.
+- M2, line 376: the freshness check is dropped.
+- M3, `comparisonClaim`: returns the backend flag as the claim, with no inconsistency.
+- M4, `liveWindowRows`: Δ is printed with `formatNumber` (no "+").
+- M5, `liveWindowRows`: a covered window with null stationarity reads "Stationary (indicative)".
+
+#### End state
+```
+probe copy removed
+77fd8b6
+(git status --short, owned paths: empty; whole tree: empty)
+```
+
+### Findings
+**Honesty check.**
+- The four archive PRD means reproduce at printed precision: 2.242, 2.474, 2.55 and 2.68. 5.79 and 2.22 are still shown as PRD-reported and not recomputable, so no mismatch is hidden.
+- The live comparison never shows a live or PRD number as recomputed archive data. With the committed archive, the real backend answers "no claim" on every verdict, and the view shows "Saturated agreement: claim not allowed" with the backend's reason.
+
+**Minor findings (none blocks):**
+- **n1, presentation.** In the committed-archive case, the live trace can pass its own gate while every verdict is "No claim". The view then shows a green "Claim allowed" pill in the "Live trace claim" column on both windows, next to a header pill that says "Saturated agreement: claim not allowed" (probe V5-A committed). This is what T13 asks for, and the column header and caption say it is the live trace's own gate. Still, a reader skimming the page could take the green pill for an agreement claim. A different word such as "Live gate met" would remove the ambiguity. See `renderer/src/features/transport/model.ts:491` and `renderer/src/features/transport/LiveComparison.tsx:132-134`.
+- **n2, precision.** The live stderr is printed with 3 decimals (`MEAN_DECIMALS`). A dense run therefore shows "0.003" for 0.00344 and "0.007" for 0.00664, which is one significant figure. This follows the archive table's convention. Significant figures would serve small live stderrs better. See `renderer/src/features/transport/model.ts:471-475`.
+- **n3, test depth.** Only the pure test catches M2 (the freshness check in `liveComparison` removed). In the rendered path, the store itself turns an expired snapshot into `unreachable/stale`, so the model check is a second line of defence. That is acceptable as designed.
+- **n4.** The empty-windows payload with a contradictory `saturatedClaimAllowed: true` shows "claim not allowed" in the view (V5-B2). The task's test asserts this only at the model level (`renderer/src/features/transport/TransportView.test.tsx:1032`).
+- **n5.** `verify.sh all` ran in the probe copy, which has no `.git`. The docs gate therefore printed "no .git in this probe copy" warnings for its currency check on the other tasks. The maintainer's run on the shared tree covers currency.
+- **Carried from round 2** (backend byte-identical since then): N1, N2, N4, F2 and F3.
+
+**Not checked in this run (kept short at the owner's request):**
+- A real-browser render, screenshots, the dark theme, and narrow-viewport rendering beyond the DS-6 test.
+- The LiveView summary line (tasks 06 and 09).
+- A real GX run. No credentials and no network were used.
+
+**Why PASS.**
+- `verify.sh all` exits 0 on the committed tree (isolated copy of 77fd8b6).
+- All 14 backend tests and all 47 transport frontend tests pass on the shared tree.
+- My probes agree with the artifact, the h5 and the real backend's `comparison` objects.
+- Five of five T13 mutations go red on assertions.
+
+Verdict: PASS

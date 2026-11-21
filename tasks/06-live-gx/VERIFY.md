@@ -968,3 +968,323 @@ differ after restore: 0
   my own backend or the repo's stub.
 
 Verdict: PASS
+
+## Run 4 — whole task (D-024, new outcome L11)
+
+Verifier run: 2026-11-21, commit 77fd8b6
+
+**Scope.** All eleven outcomes at commit `77fd8b6` (D-024: new `live_gx/comparison.py`; `orchestrator.py`, `fake_backend.py`,
+`rehearse.py` and `LiveView.tsx` changed). As the owner asked, the checks are short: L1–L10 get their targeted tests and one probe
+each, L11 gets its tests, my own independent probe and four of the five mutations (the fifth is the L9/L11 summary line).
+
+**Where things ran.** Windows + WSL, every command through `wsl.exe -e bash scripts/dev.sh …`; my scripts and logs are in my
+scratch dir `…\scratchpad\v06`. At the start, HEAD was `77fd8b6` and `git status --short` on the owned paths, `contracts/`,
+`main/labyrinth_main/features/transport/`, `main/tests/` and `tasks/06-live-gx/` was empty. I made two copies with
+`scripts/probe-copy.sh` (`vt06c` for the gates, tests and my probe; `vt06m` for mutations) and compared 189 tracked files in each
+with `git show 77fd8b6:<path>`: 0 differ. A third copy (`vt06v`, 0 differ) held one temporary vitest file for the renderer-validator
+probe. The shared tree was never written; all three copies were deleted at the end, and at the end the shared tree's only change
+was another verifier's `tasks/09-app-shell/VERIFY.md`. `modal` is not importable, there are no `MODAL_*` variables and no
+`~/.modal.toml`, my probe's audit hook saw no socket connect or DNS lookup, every state dir was under my scratch dir, and
+`~/.labyrinth` does not exist.
+
+**Termination invariants untouched.** `git diff 3faed3a 77fd8b6` changes `orchestrator.py` only in the module docstring,
+`import copy`, the provenance constant (`COMPARISON_NOT_COMPUTED` → `ARCHIVE_COMPARISON`), the `_comparison` cache field,
+`_verification` and `snapshot` (split into `_snapshot_body` + `_comparison_input`). `modal_backend.py`, `service.py`,
+`budget_guard.py`, `modal_app.py` and `gx_input.py` did not change. All 92 L6 tests pass.
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| L1 | Slot estimate = rate × (slot + setup + idle) + storage; refuses when billed + pending + estimate > $40; hard timeout; refuses an unreconciled ledger | 80 × `test_L1_*`: 80 passed | My recompute 6.10 × 25/60 + 0.10 = 2.641667 → $2.65 = guard. 37.35 and 30 + 7.35 approved; 37.36, 20 + 17.36, unreconciled and NaN refused; hard timeout 1500 s | PASS |
+| L2 | Two workers concurrently, GPU 0 bean / GPU 1 triangular, device IDs, overlapping intervals, monotone simTime, samples in archive units | 7 × `test_L2_*`: 7 passed | My own `WorkerBackend` (not `FakeBackend`): launch order bean/0 then triangular/1; my device IDs recorded; orchestrator intervals overlap 0.121 s; both clocks monotone to 60·√2 = 84.8528; all 6 samples per worker equal my t·√2, Q/(2√2) | PASS |
+| L3 | Either worker failing → `fallback`, label, `savedRunId` (null without a rehearsal), error kept, other worker terminated | 15 × `test_L3_*`: 15 passed | My backend, bean crashes at step 2: mode fallback, label "Worker failed. No qualified GX rehearsal recorded …", savedRunId null, my error text kept, triangular terminated (1 call, thread stopped); the fallback snapshot carries `comparison` and validates | PASS |
+| L4 | No credentials or no `modal` → `unavailable`, zero network calls | 3 × `test_L4_*`: 3 passed | Subprocess without `MODAL_*`, with an empty HOME and a socket audit hook: status unavailable ("no Modal credentials"), launch refused, 0 socket events, no modal module loaded, no ledger written | PASS |
+| L5 | A run resumed from a checkpoint continues simTime from the checkpoint | 6 × `test_L5_*`: 6 passed (the seventh at 3faed3a asserted the removed "NOT computed" wording; an L11 test replaces it) | My backend resumed at raw 77: first simTime 108.8944 = 77·√2, last 165.4630 = 117·√2; a backend restarting at 0 → fallback, "simulation clock went backwards (0.0 < 77.0 from checkpoint)" | PASS |
+| L6 | Workers always terminated after retrieval (also on exception) | 92 × `test_L6_*`: 92 passed | My backend: normal end → terminate [1, 1]; KeyboardInterrupt out of poll propagates and both workers are terminated. Termination code is unchanged since 3faed3a (diff above) | PASS |
+| L7 | Every status snapshot validates against `contracts/live-status.schema.json` | `test_L7_every_status_snapshot_validates`: passed; every L11 test validates its snapshots too | My jsonschema validator over the 108 snapshots of my probe (all with `comparison`; modes fallback, idle, launching, live, terminated) and the gate snapshots: 0 invalid; 4 negative controls rejected. The renderer's own `validateLiveStatus` accepted 31 real backend snapshots (verdicts agree, disagree and no claim; 0 or 2 windows) and rejected the same 4 controls | PASS |
+| L8 | `modal_app.py`: A100-40GB worker, hard timeout, explicit launch only, GX inputs for both tubes; never imported by tests or replay; UNREHEARSED | 10 × `test_L8_*`: 10 passed | AST: two `app.function` decorators with `gpu=GPU`, `retries=0` and a timeout; `GPU = 'A100-40GB'`; docstring starts UNREHEARSED; nothing in `main/` or `scripts/` imports `modal_app`. The labyrinth modules `modal_app` imports (taken from its AST) load none of h5py, `comparison`, `transport.archive`, `transport.compare` or `transport.stats` | PASS |
+| L9 | Live panel polls `/api/live/status`; unavailable/fallback show an unmistakable label and play the replay; live shows both device IDs, both clocks advancing, sample counts | 27 vitest cases named L9 (one more than at 3faed3a: the T13 summary line): 27 passed | `liveStatus.ts` changed only in its re-exports; `LiveView.tsx` only in the chart's summary line. Mutation M5 (the line trusts the backend flag alone) is caught by the T13 case | PASS |
+| L10 | Launch enabled only when mode is `idle` and `budget.slotFits`; explicit confirmation showing the slot cost | 38 vitest cases named L10: 38 passed | `git diff 3faed3a 77fd8b6` does not touch `model.ts` or the launch and confirmation code of `LiveView.tsx` (the only hunks there are the import and the chart summary line); run 3's mutation evidence still applies | PASS (run-3 note F3-1 still open) |
+| L11 | Live comparison (D-024): every session snapshot carries `comparison` from the bean samples via `transport.stats` / `transport.compare`; uncovered → nulls and no claim; non-stationary or N_eff < 20 never opens a claim; top-level flag only with an agree; recomputed per sample count; error → `windows: []`, status answers; no `comparison` without a session; no "NOT computed" wording | 16 × `test_L11_*`: 16 passed. Mutations M1–M4 are each caught (3, 5, 1 and 2 tests) | `Orchestrator` + `FakeBackend(q_raw_fn=…)` driven to archive t 424, 351 and 71, with trends, AR(1) noise and sparse sampling. My own coverage rule and trapezoid mean equal every window's coverage, sample count and mean; the archive means equal `transport.json` and my trapezoid; deltas equal live − archive; stderr is within 1.5 % of my plain Sokal estimate. With the committed archive every archive entry is "no claim" and the flag is false. Against my own synthetic archives, my own Student-t TOST reproduces every agree / disagree / no claim, and the flag is true only with an agree. Flagged non-stationary and N_eff < 20 windows: gate shut, all no claim. A divergent repeat and an unreadable archive give `windows: []` with a reason while status still answers in mode live and validates. Gate snapshots (unavailable, idle, after the session) have no `comparison`. Another thread takes the orchestrator lock while the comparison runs. One computation per distinct bean count; snapshots never share the cached object | PASS (findings F4-1, F4-2 concern `transport.stats`, not this task's code) |
+
+### Real output
+
+Gates in the clean copy (== `77fd8b6`; `01_gates.sh`):
+```
+$ cd ~/.cache/labyrinth-probes/vt06c && LABYRINTH_STATE_DIR=$S/state bash scripts/verify.sh all
+━━━ verify.sh summary (scope: all)
+  PASS  boundary:self-test (0s)
+  PASS  boundary:scan (0s)
+  PASS  docs:handoff (0s)
+  PASS  scripts:tests (11s)
+  PASS  main:lint (0s)
+  PASS  main:tests (41s)
+  PASS  artifacts:schema (0s)
+  PASS  artifacts:fresh (0s)
+  PASS  renderer:typecheck (15s)
+  PASS  renderer:tests (61s)
+  PASS  renderer:build (4s)
+verify.sh: all stages passed.
+verify.sh all EXIT=0
+(stage tails: boundary self-test: OK (134 violations caught, 25 clean files passed, 3 OS flavours agree) / 71 passed in 10.63s /
+ All checks passed! / 347 passed in 43.55s / Test Files 30 passed (30) / Tests 1370 passed (1370))
+$ python3 scripts/check_boundaries.py
+boundary: OK (169 files scanned)
+check_boundaries EXIT=0
+```
+
+Targeted tests in the same copy (`02_tests.sh`):
+```
+$ python3 -m pytest -q -rA -p no:cacheprovider main/tests/test_live_gx.py
+exit=0
+230 passed in 23.89s
+L1: 80 passed, 0 failed
+L2: 7 passed, 0 failed
+L3: 15 passed, 0 failed
+L4: 3 passed, 0 failed
+L5: 6 passed, 0 failed
+L6: 92 passed, 0 failed
+L7: 1 passed, 0 failed
+L8: 10 passed, 0 failed
+L11: 16 passed, 0 failed
+PASSED main/tests/test_live_gx.py::test_L11_uncovered_session_has_null_statistics_no_claim_and_validates
+PASSED main/tests/test_live_gx.py::test_L11_covered_live_trace_against_the_committed_archive_is_no_claim_because_of_the_archive
+PASSED main/tests/test_live_gx.py::test_L11_a_non_stationary_live_trace_never_opens_a_claim
+PASSED main/tests/test_live_gx.py::test_L11_n_eff_gate_an_autocorrelated_live_trace_below_20_effective_samples_has_no_claim
+PASSED main/tests/test_live_gx.py::test_L11_injected_archive_agree_and_disagree_only_agree_opens_the_claim
+PASSED main/tests/test_live_gx.py::test_L11_injected_archive_inconclusive_is_no_claim
+PASSED main/tests/test_live_gx.py::test_L11_mixed_windows_name_exactly_the_agreeing_window_and_code
+PASSED main/tests/test_live_gx.py::test_L11_recomputed_as_bean_samples_arrive_and_always_matches_its_snapshot
+PASSED main/tests/test_live_gx.py::test_L11_cached_while_the_bean_sample_count_is_unchanged_and_never_shared
+PASSED main/tests/test_live_gx.py::test_L11_the_comparison_is_computed_outside_the_orchestrator_lock
+PASSED main/tests/test_live_gx.py::test_L11_the_modal_worker_import_chain_does_not_load_the_archive_stack
+PASSED main/tests/test_live_gx.py::test_L11_a_comparison_that_cannot_be_computed_gives_no_windows_and_a_reason
+PASSED main/tests/test_live_gx.py::test_L11_status_answers_and_validates_when_the_comparison_fails
+PASSED main/tests/test_live_gx.py::test_L11_only_session_snapshots_carry_the_comparison
+PASSED main/tests/test_live_gx.py::test_L11_qualified_live_and_rehearsal_provenance_describe_the_comparison_without_a_claim
+PASSED main/tests/test_live_gx.py::test_L11_saved_rehearsal_phases_carry_the_comparison_and_the_new_wording
+
+$ (renderer) npx vitest run --reporter=verbose src/features/live-gx src/lib/liveStatusStore.test.ts
+exit=0
+ Test Files  2 passed (2)
+      Tests  92 passed (92)
+L9: 27 passed, 0 failed
+L10: 38 passed, 0 failed
+ ✓ src/features/live-gx/LiveView.test.tsx > L9 T13 the live chart carries a one-line archive comparison summary linking to Check transport, only when live with the field 40ms
+```
+
+My probe (`p06.py`, read-only against the clean copy; final pass, excerpts verbatim, exit 1 because of the four lines marked
+FAIL, explained in finding F4-3; selected lines, verbatim, one list shortened where marked):
+```
+== L11 A: covered run through Orchestrator + FakeBackend(q_raw_fn), raw t to 300 (archive 424)
+  ok   run A: mode terminated, 1500 bean samples, archive t 0.2828..424.2641
+  ok   run A: first sample (t, Q) = (0.2*sqrt2, q_raw/(2 sqrt2)) = (0.282843, 2.470011)
+  ok   A final 200-300: covered True (mine True), n 353 (mine 353), mean 2.646465 (mine 2.646465)
+  ok   A final 200-300: stderr/nEff/nEffLower/stationary/detail == transport.stats.window_stats on the snapshot's own samples
+  ok   A final 200-300: window claim True = covered & stationary True & stderr & nEffLower>=20 (stationary True, nEffLower 145.15106476403062)
+  ok   A final 200-300 stella: archive mean 2.715518 = transport.json 2.715518 = my trapezoid 2.715518; delta -0.069053; verdict 'no claim'
+  ok   A final 200-300 GENE: archive mean 2.926028 = transport.json 2.926028 = my trapezoid 2.926028; delta -0.279563; verdict 'no claim'
+  ok   A final 300-400: covered True (mine True), n 354 (mine 354), mean 2.645156 (mine 2.645156)
+  ok   A final 300-400 stella: archive mean 2.554537 = transport.json 2.554537 = my trapezoid 2.554537; delta 0.090618; verdict 'no claim'
+  ok   A final 300-400 GENE: archive mean 2.675066 = transport.json 2.675066 = my trapezoid 2.675066; delta -0.02991; verdict 'no claim'
+  ok   A final: top-level claim False with the committed archive | reason: No saturated-agreement claim. 200–300: archive stella and GENE not shown stationary (N_eff not established; D-017 gate). 300–400: archive stella and G
+  ok   A final: no 'NOT computed' anywhere in the snapshot
+  ok   A 200-300: stderr 0.01869 vs my plain Sokal 0.01842 (N_eff 186) and white-noise sd/sqrt(n) 0.01689; repo nEff 181 nEffLower 145 stationary True
+  ok   A 300-400: stderr 0.01915 vs my plain Sokal 0.01893 (N_eff 241) and white-noise sd/sqrt(n) 0.01775; repo nEff 235 nEffLower 192 stationary True
+  ok   cache: live_comparison called 2 times for 4 snapshots = once per distinct bean count (2 distinct; first calls [0, 1500])
+  ok   every one of 4 snapshots: comparison.nSamples == its own bean sample count
+  ok   mutating a returned snapshot's comparison does not change the next snapshot (deep copy)
+== L11 B: verdicts recomputed by me against my own synthetic archives (run A's snapshot samples)
+  ok   B agree/disagree 200-300 stella: verdict 'agree' = my recompute 'agree' (live gate True, archive gate True)
+  ok   B agree/disagree 200-300 GENE: verdict 'disagree' = my recompute 'disagree' (live gate True, archive gate True)
+  ok   B agree/disagree: top-level claim True iff some agree (True)
+  ok   B disagree x4: top-level claim False iff some agree (False)
+  ok   B sparse stella (archive gate shut) 200-300 stella: verdict 'no claim' = my recompute 'no claim' (live gate True, archive gate False)
+  ok   B sparse stella (archive gate shut) 200-300 GENE: verdict 'agree' = my recompute 'agree' (live gate True, archive gate True)
+== L11 C: partial coverage (raw t to 248 -> archive 350.7) and no coverage (default FakeBackend)
+  ok   C partial 300-400: covered False (mine False), n 180 (mine 180): all statistics null, window claim false
+  ok   C partial 300-400 stella: archive mean 2.554537 = transport.json 2.554537 = my trapezoid 2.554537; delta None; verdict 'no claim'
+  ok   U none 200-300: covered False (mine False), n 0 (mine 0): all statistics null, window claim false
+  ok   U: the very first snapshot (no samples) has the comparison with 2 uncovered windows
+== L11 D: non-stationary live traces (linear trends) through the orchestrator; expectation: stationary is not True -> no claim
+  ok   D slope 0.02 (archive drift 0.5/window) 200-300: stationary None, nEffLower None, window claim False
+  FAIL D slope 0.02 (archive drift 0.5/window) 300-400: stationary True, nEffLower 26.95562860730218, window claim True
+  ok   D slope 0.02 vs passing archive at the live mean 300-400 stella: verdict 'disagree' = my recompute 'disagree' (live gate True, archive gate True)
+  FAIL D slope 0.02 vs passing archive at the live mean: verdicts [['no claim', 'no claim'], ['disagree', 'disagree']] (expected by construction [['no claim', 'no claim'], ['no claim', 'no claim']])
+  FAIL D slope 0.02: every archive reason names the live trace: new trace not shown stationary on 200-300
+  ok   D slope 0.03 (archive drift 0.75/window) 200-300: stationary None, nEffLower None, window claim False
+  ok   D slope 0.03 (archive drift 0.75/window) 300-400: stationary None, nEffLower None, window claim False
+  ok   D slope 0.03 vs passing archive at the live mean: verdicts [['no claim', 'no claim'], ['no claim', 'no claim']] (expected by construction [['no claim', 'no claim'], ['no claim', 'no claim']])
+== L11 E1: N_eff < 20 by construction: AR(1) phi 0.97 per raw step 0.2 (tau ~ 33 samples ~ 9 archive time units)
+  ok   E1 200-300: n 353, nEff 12.270977198288762, nEffLower 6.436785583094098, approx True, stationary None, window claim False
+  ok   E1 300-400: n 354, nEff 15.234885379719884, nEffLower 8.339608453571483, approx True, stationary None, window claim False
+  ok   E1 vs passing archive at the live mean: verdicts [['no claim', 'no claim'], ['no claim', 'no claim']] (expected by construction [['no claim', 'no claim'], ['no claim', 'no claim']])
+== L11 E2 (observation): 14 white-noise samples per window (raw dt 5 -> archive dt 7.07)
+       E2 300-400: nSamples 14, nEff 51.57506715209444, nEffLower 25.78753357604722, approx False, stationary True, window claim True
+          detail: Half-split test: mean[300,350]=2.4972, mean[350,400]=2.6293, t=-1.70 vs t_crit=2.05 (df=28.2, two-sided alpha 0.05), tau=1.66 time units -> stationary. tau_int=0.969 time units (bias-corrected Sokal, C=5, lag 3), N_eff=51.6 (>= 25.8 at the one-sigma tau upper bound), stderr=0.0309 — reliable (N_eff at the tau upper bound >= 20). Saturated claim allowed.
+       E2 verdicts: [['no claim', 'no claim'], ['agree', 'agree']]; top-level claim True
+== L11 F: error paths
+  ok   divergent repeat: windows [], claim False, validates | Live comparison could not be computed: ValueError: the live bean trace has divergent repeated sample times: 1 
+  ok   saved rehearsal phase carries comparison (nSamples 3), validates, no 'NOT computed'
+  ok   gate snapshot (unavailable, no session): no comparison key, validates
+  ok   gate snapshot (idle, no session): no comparison key
+  ok   archive unreadable during a live session: status answers mode live, windows [], reason 'Live comparison could not be computed: OSError: probe: archive file unreadable', validates
+  ok   after the session: mode idle, no comparison key
+== L11 G: comparison computed outside the orchestrator lock (another thread can take the lock meanwhile)
+  ok   another thread acquired the orchestrator lock while live_comparison ran: [True]
+== L11 H: import chain of modal_app (derived from its AST) and wording
+  ok   modal_app's labyrinth imports ['labyrinth_main.common.paths', … 18 more names, shortened here …, 'labyrinth_main.features.live_gx.service.POLL_INTERVAL_S'] load none of h5py/comparison/archive/compare/stats: [] 
+  ok   no 'NOT computed' wording outside test files (6 hits in tests only)
+  FAIL qualified-live provenance: Qualified by a recorded rehearsal. The bean samples are compared with the archived stella and GENE traces on 200–300 and
+== L1 budget guard (own recompute: 6.10 $/h x (15+5+5) min + $0.10, ceil to cent)
+  ok   slot estimate raw 2.641667 -> mine 2.65, guard 2.65
+  ok   billed 37.35 pending 0 reconciled True: approved True (want True) | Budget guard approves: billed $37.35 + pending $0.00 + slot $2.65 = $4
+  ok   billed 30.0 pending 7.35 reconciled True: approved True (want True) | Budget guard approves: billed $30.00 + pending $7.35 + slot $2.65 = $4
+  ok   billed 37.36 pending 0 reconciled True: approved False (want False) | Budget guard refused: billed $37.36 + pending $0.00 + slot $2.65 = $40
+  ok   billed 20.0 pending 17.36 reconciled True: approved False (want False) | Budget guard refused: billed $20.00 + pending $17.36 + slot $2.65 = $4
+  ok   billed 8.1 pending 0 reconciled False: approved False (want False) | Budget guard refused: ledger not reconciled (billed $8.10, pending $0.
+  ok   billed nan pending 0 reconciled True: approved False (want False) | Budget guard refused: ledger.json is unusable (billed/pending must be 
+  ok   hard timeout of an approved slot: 1500 s (25 min)
+== L2 own backend
+  ok   launch order [('bean', 0), ('triangular', 1)]
+  ok   device IDs ['MINE-0-bea', 'MINE-1-tri']
+  ok   orchestrator intervals overlap 0.121 s
+  ok   GPU 0: simTime monotone to 84.8528 (60 sqrt2), 6 samples = my t*sqrt2, Q/(2 sqrt2)
+  ok   GPU 1: simTime monotone to 84.8528 (60 sqrt2), 6 samples = my t*sqrt2, Q/(2 sqrt2)
+  ok   L6 normal end: terminated, terminate calls [1, 1]
+== L3 own backend: bean fails at step 2
+  ok   fallback {'active': True, 'label': 'Worker failed. No qualified GX rehearsal recorded — showing archived stella/GENE evidence', 'savedRunId': None}
+  ok   error kept: probe crash on bean
+  ok   triangular terminated (1 call, thread stopped)
+  ok   the fallback snapshot carries a comparison and validates
+== L5 own backend: resume from checkpoint raw 77
+  ok   first simTime 108.8944 >= 77 sqrt2 108.8944; last 165.4630 = 117 sqrt2
+  ok   restart from 0: fallback | GPU 0 (bean) worker failed: simulation clock went backwards (0.0 < 77.0 from checkpoint); 
+== L6 own backend: KeyboardInterrupt out of poll
+  ok   propagated KeyboardInterrupt, terminate calls [1, 1]
+== L7 my validator over every snapshot of this probe
+  ok   108 snapshots (108 with comparison), modes ['fallback', 'idle', 'launching', 'live', 'terminated'], invalid []
+  ok   negative controls rejected: covered false with a mean, one window, [GENE, stella], extra key
+== L4 subprocess: no MODAL_*, empty HOME, socket audit hook
+  ok   L4: ['unavailable', 'Live GX unavailable: no Modal credentials (MODAL_TOKEN_ID/MO', False, [], []] 
+  ok   L4: no ledger written
+== L8 modal_app AST
+  ok   modal_app: 2 app.function decorators, GPU=["'A100-40GB'"], retries 0, timeout set, docstring UNREHEARSED
+  ok   nothing imports modal_app: []
+== network audit events in this process: []
+  ok   zero socket connects / DNS lookups
+PROBE: 4 FAILED
+```
+In an earlier pass of the same probe with a weaker trend (slope 0.01 raw = 0.25 archive drift per window), the 300–400 window
+passed the half-split test and agreed with an archive at the live mean:
+```
+  ok   D 200-300: stationary False, nEffLower 76.82089743087653, window claim False
+  ok   D vs passing archive at the live mean 300-400 stella: verdict 'agree' = my recompute 'agree' (live gate True, archive gate True)
+  ok   D vs passing archive at the live mean 300-400 GENE: verdict 'agree' = my recompute 'agree' (live gate True, archive gate True)
+```
+
+How often `transport.stats.window_stats` opens the gate (`p_power.py`, 200 seeds each, called directly):
+```
+drift 0.00 per window (sigma 0.318, ~354 samples): stationary True 188/200, undecidable 0/200, gate open 188/200
+drift 0.25 per window (sigma 0.318, ~354 samples): stationary True 25/200, undecidable 1/200, gate open 25/200
+drift 0.50 per window (sigma 0.318, ~354 samples): stationary True 3/200, undecidable 171/200, gate open 3/200
+drift 0.75 per window (sigma 0.318, ~354 samples): stationary True 0/200, undecidable 200/200, gate open 0/200
+white noise, archive dt 7.07 (15 samples in 300-400): gate open 23/200; N_eff > n_samples in 121/187; max N_eff 4877.1
+```
+
+Real backend snapshots through the renderer's validator (`07_fe_validator.sh`, copy `vt06v`):
+```
+copy /home/qqbot/.cache/labyrinth-probes/vt06v vs 77fd8b6: 0 differ
+31 snapshots, modes ['launching', 'live', 'terminated'], verdicts ['agree', 'disagree', 'no claim'], windows lengths [0, 2], covered values [False, True]
+vitest exit=0
+validated 31 snapshots; problems: []
+negative controls: ["$.comparison.windows[0].mean: expected null, got 2.5 (window not covered)","$.comparison.windows: expected 0 or 2 items, got 1","$.comparison.windows[0].archive[0].code: expected one of \"stella\", got \"GENE\"","$.comparison: unexpected property \"extra\""]
+      Tests  2 passed (2)
+```
+
+Five mutations in the copy `vt06m`, one at a time (`05_mutations.sh`):
+```
+--- mutation copy vs commit before:
+16 owned files compared with 77fd8b6, 0 differ
+=== M1: main/labyrinth_main/features/live_gx/comparison.py
+    - return {"saturatedClaimAllowed": bool(agrees), "reason": reason, "windows": windows}
+    + return {"saturatedClaimAllowed": bool(agrees) or any(w["saturatedClaimAllowed"] for w in windows), "reason": reason, "windows": windows}
+    exit=1
+    FAILED main/tests/test_live_gx.py::test_L11_covered_live_trace_against_the_committed_archive_is_no_claim_because_of_the_archive
+    FAILED main/tests/test_live_gx.py::test_L11_injected_archive_agree_and_disagree_only_agree_opens_the_claim
+    FAILED main/tests/test_live_gx.py::test_L11_injected_archive_inconclusive_is_no_claim
+    3 failed, 227 passed in 24.31s
+=== M2: main/labyrinth_main/features/live_gx/orchestrator.py
+    - if cached is not None and cached[0] == n:
+    + if cached is not None:
+    exit=1
+    FAILED main/tests/test_live_gx.py::test_L11_uncovered_session_has_null_statistics_no_claim_and_validates
+    FAILED main/tests/test_live_gx.py::test_L11_covered_live_trace_against_the_committed_archive_is_no_claim_because_of_the_archive
+    FAILED main/tests/test_live_gx.py::test_L11_recomputed_as_bean_samples_arrive_and_always_matches_its_snapshot
+    FAILED main/tests/test_live_gx.py::test_L11_cached_while_the_bean_sample_count_is_unchanged_and_never_shared
+    FAILED main/tests/test_live_gx.py::test_L11_status_answers_and_validates_when_the_comparison_fails
+    5 failed, 225 passed in 24.25s
+=== M3: main/labyrinth_main/features/live_gx/orchestrator.py
+    - from ..transport.units import gx_to_archive
+    + from ..transport.units import gx_to_archive
+from . import comparison as _eager_comparison  # noqa: F401
+    exit=1
+    FAILED main/tests/test_live_gx.py::test_L11_the_modal_worker_import_chain_does_not_load_the_archive_stack
+    1 failed, 229 passed in 24.89s
+=== M4: main/labyrinth_main/features/live_gx/comparison.py
+    - except Exception as e:  # noqa: BLE001 - a status answer never fails because of the comparison (D-024)
+    + except ZeroDivisionError as e:  # noqa: BLE001 - a status answer never fails because of the comparison (D-024)
+    exit=1
+    FAILED main/tests/test_live_gx.py::test_L11_a_comparison_that_cannot_be_computed_gives_no_windows_and_a_reason
+    FAILED main/tests/test_live_gx.py::test_L11_status_answers_and_validates_when_the_comparison_fails
+    2 failed, 228 passed in 24.47s
+=== M5: renderer/src/features/live-gx/LiveView.tsx
+    - {comparisonSummary(comparison)} — see
+    + {comparison.saturatedClaimAllowed ? 'Archive comparison: saturated-agreement claim allowed' : comparisonSummary(comparison)} — see
+    exit=1
+       × L9 T13 the live chart carries a one-line archive comparison summary linking to Check transport, only when live with the field 18ms
+          Tests  1 failed | 61 passed (62)
+--- mutation copy vs commit after restore:
+16 owned files compared with 77fd8b6, 0 differ
+```
+
+End of run (`06_cleanup.sh`):
+```
+ls: cannot access '/home/qqbot/.cache/labyrinth-probes/vt06*': No such file or directory
+ls: cannot access '/home/qqbot/.labyrinth': No such file or directory
+77fd8b6
+ M tasks/09-app-shell/VERIFY.md
+```
+
+### Findings
+
+- **F4-1 (cross-task, `transport.stats`; not this task's code; owner decision).** The N_eff gate can be passed by a window with
+  fewer than 20 samples, because the bias-corrected Sokal N_eff can exceed the number of samples in the window. My probe E2
+  (14 white-noise samples in 300–400, live through the orchestrator) got `nEff` 51.6 and `nEffLower` 25.8, so the window's own
+  gate opened, and against a synthetic archive at the live mean both verdicts were `agree` (top-level flag true). With 200 seeds
+  of 15 samples, the gate opened 23 times; N_eff was larger than the sample count in 121 of 187 cases, with a maximum of 4877.
+  The true N_eff of 15 white-noise samples is 15, below 20. L11's text holds as written (the gate uses the computed N_eff, and
+  D-024 requires `transport.stats` unchanged), and with the committed archive nothing can be claimed today: every verdict is
+  "no claim". But the honesty rule "claim … only with sampling uncertainty" depends on it once an archive window passes its gate.
+  Suggested fix, in task 02's `sampling_error` (D-017): cap N_eff at the in-window sample count (τ_int ≥ ½ sample spacing), or
+  require at least 20 samples in the window.
+- **F4-2 (observation, `transport.stats` half-split power).** A real drift can pass the stationarity test and open the gate.
+  With σ = 0.318 and about 354 samples, the gate opened for 25/200 draws with a drift of 0.25 per window, 3/200 at 0.5 and 0/200 at
+  0.75 (larger drifts make τ not converge, so they read as undecidable). In my own runs a 0.5 drift opened the 300–400 window
+  (that verdict was `disagree`) and a 0.25 drift gave `agree` against an archive at the live mean. Any finite-power test does
+  this, and it is not a task 06 defect. L11's "a non-stationary trace never opens a claim" holds for every window the test flags.
+- **F4-3 (probe side).** The four lines marked FAIL in my final probe pass are wrong expectations in my probe, not defects in
+  the code. Three come from the slope-0.02 trend (F4-2: one window passed the half-split test, and the code followed the
+  stated gate exactly). One comes from my regex `\bagree`, which matches "saturated-agreement" in the provenance sentence. The
+  repo's check `\bagree(s|d|ing)?\b` is the right one, and the sentence claims nothing agrees. Earlier passes also had a
+  slope-0.03 version of D (every window undecidable: still no claim) and a lock check that released a lock held by another
+  thread (a `RuntimeError` in my probe; fixed, then `[True]`).
+- **Run-3 note F3-1 is still open (documentation, L10).** TASK.md L10 still says "only when mode is `idle`". The UI also
+  enables Launch for a settled `fallback` of a qualified service, which is correct per interface.md.
+- **Minor (documentation).** The header of this file (line 3) still says it "holds two external verifier runs"; it now holds four.
+  TASK.md `## Status` reads VERIFYING, for the maintainer to update.
+- **Cannot be checked without Modal (D-011, unchanged since run 3):** real GX output cadence (and so how many live bean samples
+  fall in 200–400 within a 15-minute slot), real device IDs, cancel latency and billing. Everything here ran against
+  `FakeBackend`, my own backend, the committed archive and my synthetic archives.
+
+Verdict: PASS
