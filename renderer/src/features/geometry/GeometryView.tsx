@@ -228,9 +228,9 @@ export function GeometryContent({ g, assignmentsAnchor }: { g: GeometryArtifact;
       </Panel>
 
       </div>
-      <div className="geo-comparison">
-        {sim && <FieldChangeCard key={run} sim={sim} />}
-        {lanes && sim && <CalculationLog key={run} tubes={lanes} decision={decision} sim={sim} enabled={feedback} />}
+      <div className="geo-comparison" key={run}>
+        {sim && <FieldChangeCard sim={sim} />}
+        {lanes && sim && <CalculationLog tubes={lanes} decision={decision} sim={sim} enabled={feedback} />}
         {tracks && sim && <ParticleReadout tracks={tracks} sim={sim} followed={followed} onFollow={setFollowed} />}
       </div>
       {assignmentsAnchor && createPortal(
