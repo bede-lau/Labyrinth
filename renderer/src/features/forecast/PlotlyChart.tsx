@@ -28,7 +28,7 @@ export interface PlotlyChartProps {
   /** Accessible name of the figure. */
   label: string;
   /**
-   * Text equivalent of the chart: the visible figcaption, also the figure's description. A unit part is typeset
+   * Text equivalent of the chart: the screen-reader figcaption, also the figure's description. A unit part is typeset
    * where it is seen and spoken as words where it is read (DZ3-8), so the description is `spokenCaption(caption)`.
    */
   caption: readonly CaptionPart[];
@@ -38,7 +38,7 @@ export interface PlotlyChartProps {
  * A unit inside running text: typeset for the eye (Q with subscript gB,i) and hidden from assistive technology,
  * which reads the spoken copy beside it ("Q gB,i") instead of the run-together "QgB,i".
  */
-export function CaptionUnit({ unit }: { unit: string }) {
+function CaptionUnit({ unit }: { unit: string }) {
   return (
     <>
       <span aria-hidden="true">
@@ -80,12 +80,12 @@ export function PlotlyChart({ data, layout, label, caption }: PlotlyChartProps) 
   return (
     <figure className="fc-figure" aria-label={label} aria-describedby={`${id}-summary`}>
       <div ref={ref} className="fc-chart" data-testid="forecast-plot" />
-      <figcaption id={`${id}-summary`} className="fc-figure__summary">
+      <figcaption id={`${id}-summary`} className="lab-visually-hidden">
         {caption.map((p, i) => (typeof p === 'string' ? <Fragment key={i}>{p}</Fragment> : <CaptionUnit key={i} unit={p.unit} />))}
       </figcaption>
       {error && (
         <Callout tone="warn" title="Chart could not be drawn">
-          {error} The text summary above and the steps table below carry the same numbers.
+          {error}
         </Callout>
       )}
     </figure>

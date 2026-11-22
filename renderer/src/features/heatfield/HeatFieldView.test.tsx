@@ -110,21 +110,13 @@ afterEach(() => {
 
 // ---------------------------------------------------------------------------------------------- H7
 
-test('H7 the route #/heat renders the view, which loads artifacts/heatfield.json through the artifact gate', async () => {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
-    String(input) === '/artifacts/heatfield.json' ? new Response(RAW, { status: 200 }) : new Response('', { status: 404 }),
-  );
-  vi.stubGlobal('fetch', fetchMock);
+test('the retired heat route opens the W7-X model', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
   history.replaceState(null, '', '#/heat');
   render(<App pollMs={60_000} />);
-  expect(screen.getByRole('main')).toHaveAccessibleName('Heat & field');
-  expect(screen.getByText('Loading artifacts/heatfield.json…')).toBeInTheDocument();
-  expect(await screen.findByRole('heading', { name: 'W7-X last closed flux surface: model temperature and |B|' })).toBeInTheDocument();
-  expect(fetchMock).toHaveBeenCalledWith('/artifacts/heatfield.json');
-  const link = within(screen.getByRole('navigation', { name: 'Views' })).getByRole('link', { name: /Heat & field/ });
-  expect(link).toHaveAttribute('aria-current', 'page');
-  expect(link).toHaveTextContent('illustrative model');
-  history.replaceState(null, '', '/');
+  await waitFor(() => expect(location.hash).toBe('#/locate'));
+  expect(screen.getByRole('main')).toHaveAccessibleName('W7-X Model');
+  expect(screen.queryByRole('link', {name: /Heat & field/})).toBeNull();
 });
 
 test('H7 a broken or missing artifact shows an error panel naming artifacts/heatfield.json and the problem', async () => {
@@ -781,60 +773,19 @@ test('H14 while playing, the |B| curve is redrawn on every frame of a 60 Hz disp
 
 // ---------------------------------------------------------------------------------------------- H15
 
-test('H15 control loop: current heat map → predict → adjust field (over-limit diverters suggested) → new heat map, predicted and achieved side by side', async () => {
+test('H15 one switch predicts and adjusts the field; switching off releases the coils', async () => {
   const user = userEvent.setup();
   renderContent();
-  const loop = panel('Control loop: heat map → predict → adjust field → new heat map');
-  const current = () => within(loop).getByRole('listitem', { current: 'step' });
-  const announcer = within(loop).getByTestId('loop-announcer');
-  expect(announcer).toHaveAttribute('aria-live', 'polite');
-  expect(current()).toHaveTextContent('1Current heat map');
-  const steps = Math.round(HORIZON_S / P.dt);
-
-  await user.click(within(loop).getByRole('button', { name: `Predict ${formatNumber(HORIZON_S, 1)} s ahead` }));
-  expect(current()).toHaveTextContent('2Predict');
-  const predicted = model.diagnostics(model.advance(start, OFF, steps), OFF).peakTileC;
-  IDS.forEach((id, k) => expect(within(loop).getByTestId(`predicted-${id}`)).toHaveTextContent(formatNumber(predicted[k]!, 0)));
-  const over = IDS.filter((_, k) => predicted[k]! > P.tileLimit);
-  expect(over).toEqual(['D1', 'D4']);
-  expect(announcer).toHaveTextContent('Step 2 of 4, predict: at t = 2.00 s with the field unchanged, D1 and D4 are predicted above the 1200 °C limit.');
-  // Predict never moves the running model.
-  expect(modelTime()).toHaveTextContent('t = 0.000 s');
-
-  await user.click(within(loop).getByRole('button', { name: 'Adjust field' }));
-  expect(current()).toHaveTextContent('3Adjust field');
-  expect(IDS.map((id) => screen.getByRole('button', { name: `Field adjustment ${id}` }).getAttribute('aria-pressed'))).toEqual([
-    'true',
-    'false',
-    'false',
-    'true',
-  ]);
-  expect(announcer).toHaveTextContent('Step 3 of 4, adjust field: field adjustment switched on for D1 and D4.');
-  // The user can change any toggle: D2 on as well.
-  await user.click(screen.getByRole('button', { name: 'Field adjustment D2' }));
-
-  await user.click(within(loop).getByRole('button', { name: `New heat map: run ${formatNumber(HORIZON_S, 1)} s` }));
-  expect(current()).toHaveTextContent('4New heat map');
-  const achieved = model.diagnostics(model.advance(start, [1, 1, 0, 1], steps), [1, 1, 0, 1]).peakTileC;
-  IDS.forEach((id, k) => {
-    expect(within(loop).getByTestId(`achieved-${id}`)).toHaveTextContent(formatNumber(achieved[k]!, 0));
-    expect(within(loop).getByTestId(`predicted-${id}`)).toHaveTextContent(formatNumber(predicted[k]!, 0));
-  });
-  expect(achieved[0]).toBeLessThan(P.tileLimit);
-  expect(achieved[0]).toBeLessThan(predicted[0]! - 300);
-  expect(within(loop).getByRole('columnheader', { name: 'Predicted, field unchanged' })).toBeInTheDocument();
-  expect(within(loop).getByRole('columnheader', { name: 'Achieved, adjusted field' })).toBeInTheDocument();
-  expect(modelTime()).toHaveTextContent('t = 2.000 s');
-  expect(announcer).toHaveTextContent(`Step 4 of 4, new heat map at t = 2.00 s: D1 ${formatNumber(achieved[0]!, 0)} °C (predicted ${formatNumber(predicted[0]!, 0)} °C)`);
-
-  await user.click(within(loop).getByRole('button', { name: 'Back to step 1' }));
-  expect(current()).toHaveTextContent('1Current heat map');
-
-  // A prediction is discarded when the model moves on before it is used.
-  await user.click(within(loop).getByRole('button', { name: /^Predict/ }));
-  await user.click(screen.getByRole('button', { name: 'Advance 0.1 s' }));
-  await waitFor(() => expect(current()).toHaveTextContent('1Current heat map'));
-  expect(announcer).toHaveTextContent('The model time moved on, so the prediction was discarded.');
+  const control = screen.getByRole('switch', { name: 'Control loop' });
+  expect(control).not.toBeChecked();
+  await user.click(control);
+  const expected = model.diagnostics(model.advance(start, OFF, Math.round(HORIZON_S / P.dt)), OFF)
+    .peakTileC.map(t => String(t > P.tileLimit));
+  const coils = () => IDS.map(id => screen.getByRole('button', { name: 'Field adjustment ' + id }).getAttribute('aria-pressed'));
+  await waitFor(() => expect(coils()).toEqual(expected));
+  await user.click(control);
+  expect(control).not.toBeChecked();
+  expect(coils()).toEqual(OFF.map(() => 'false'));
 });
 
 // ---------------------------------------------------------------------------------------------- H16
@@ -844,8 +795,7 @@ test('H16 the equation, the parameter table and the honesty notes are shown; eve
   const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
   expect(screen.getByRole('note', { name: /Illustrative model — not a W7-X simulation/ })).toHaveTextContent(norm(ART.model.summary));
   expect(screen.getByRole('note', { name: /Schematic diverter positions/ })).toHaveTextContent(norm(ART.diverters.note));
-  expect(screen.getByText(/The Predict step runs this reduced model; the GENE-X spatial-parallel run cannot predict here \(no checkpoints, see/)).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: 'Spatial parallelism' })).toHaveAttribute('href', '#/spatial');
+  expect(screen.getByRole('switch', { name: 'Control loop' })).toBeInTheDocument();
 
   // The governing equation as written in the artifact (subscripts typeset, the plain text kept as its name), and
   // every other equation behind the disclosure.

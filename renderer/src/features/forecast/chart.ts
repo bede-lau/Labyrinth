@@ -1,5 +1,5 @@
 // The forecast chart (D-026, F7), in its two metrics (the owner's toggle): heat flux against time, Predicted and
-// Actual, and the absolute error |predicted − actual| of both forecasters. Every line is a step held over its
+// Actual, and the absolute error |predicted − actual| of both forecasters. Markers represent the means of each
 // 50-unit window. Pure: state in, Plotly spec out (tested without Plotly or the DOM).
 import {
   FORECAST_LABEL,
@@ -20,13 +20,12 @@ import {
 } from '../../design';
 import {
   FLUX_UNIT,
-  FORECASTERS,
   FORECASTER_LABEL,
   TIME_UNIT,
   nextAction,
   plottedErrors,
   plottedWindows,
-  stepLine,
+  windowMidpoints,
   type ForecastArtifact,
   type Forecaster,
   type PlottedWindow,
@@ -72,7 +71,7 @@ export function lineMeaning(line: ForecastLine, f: Forecaster): string {
  * A line with nothing drawn yet is one null point: Plotly leaves a trace without points out of the legend,
  * and a null point draws nothing but keeps the line, with its marker, named in the legend.
  */
-const NOTHING_YET = { x: [null], y: [null], mid: [true], window: [null] };
+const NOTHING_YET = { x: [null], y: [null], window: [null] };
 
 /** Smallest flux span shown (Q_gB,i), so one value does not fill the axis with identical tick labels. */
 const MIN_SPAN = 0.1;
@@ -112,9 +111,9 @@ export function errorLineStyle(fc: Forecaster, selected: Forecaster, theme: Them
   return fc === selected ? { ...p, name } : { name, line: { ...p.line, dash: 'dot' }, marker: { ...p.marker, symbol: 'square' } };
 }
 
-/** One step line as a Plotly trace: the style's line, one marker per window at its midpoint, hover text. */
-function stepTrace(style: SeriesStyle, ws: readonly PlottedWindow[], hover: string, dp: number): PlotTrace {
-  const pts = ws.length > 0 ? stepLine(ws) : NOTHING_YET;
+/** One window series as a Plotly trace: the style's line, one marker per window at its midpoint, hover text. */
+function windowTrace(style: SeriesStyle, ws: readonly PlottedWindow[], hover: string, dp: number): PlotTrace {
+  const pts = ws.length > 0 ? windowMidpoints(ws) : NOTHING_YET;
   return {
     type: 'scatter',
     mode: 'lines+markers',
@@ -128,8 +127,8 @@ function stepTrace(style: SeriesStyle, ws: readonly PlottedWindow[], hover: stri
     marker: {
       ...style.marker,
       opacity: 1,
-      size: pts.mid.map((m) => (m ? style.marker.size : 0)),
-      line: { ...style.marker.line, width: pts.mid.map((m) => (m ? style.marker.line.width : 0)) },
+      size: pts.x.map((x) => (x !== null || !ws.length ? style.marker.size : 0)),
+      line: { ...style.marker.line, width: pts.x.map((x) => (x !== null || !ws.length ? style.marker.line.width : 0)) },
     },
     customdata: pts.window,
     hovertemplate: `${hover}, t %{customdata}: %{y:.${dp}f}<extra></extra>`,
@@ -139,7 +138,9 @@ function stepTrace(style: SeriesStyle, ws: readonly PlottedWindow[], hover: stri
 
 function trace(line: ForecastLine, ws: readonly PlottedWindow[], f: Forecaster, theme: ThemeName): PlotTrace {
   const style = forecastStyle(line, theme);
-  return stepTrace(style, ws, `${style.name} (${lineMeaning(line, f)})`, MEAN_DP);
+  const result = windowTrace(style, ws, `${style.name} (${lineMeaning(line, f)})`, MEAN_DP);
+  result.line = { ...style.line, dash: 'solid', shape: 'spline', smoothing: 0.55 };
+  return result;
 }
 
 const list = (ws: readonly PlottedWindow[], dp: number) =>
@@ -212,16 +213,15 @@ export function forecastChartSpec(a: ForecastArtifact, s: ReplayState, f: Foreca
     'Ion heat flux Q_i',
     fluxRange([...predicted, ...actual].map((w) => w.value)),
     '.2f',
-    // Two lines, so it is no wider than before on a phone.
-    empty ? 'Nothing plotted yet: Predict draws the first forecast,<br>Run to end draws all windows' : null,
+    empty ? 'No points yet' : null,
   );
 
   // The accessible name and description speak units as words (spokenUnit: "Q gB,i"), as the statistics' names
-  // do; the visible caption typesets them (DZ3-8). Never raw "_" markup in either (FC-R5).
+  // do; the screen-reader caption typesets them (DZ3-8). Never raw "_" markup in either (FC-R5).
   const label =
     `Chart: ion heat flux ${spokenUnit('Q_i')} in ${spokenUnit(FLUX_UNIT)} against time t in ${spokenUnit(TIME_UNIT)}, ${span}, ` +
     `${FORECAST_LABEL.predicted} (${lineMeaning('predicted', f)}) ` +
-    `and ${FORECAST_LABEL.actual} (${lineMeaning('actual', f)}) for the stella bean trace, each held over its ${formatNumber(a.windowWidth, 0)}-unit window`;
+    `and ${FORECAST_LABEL.actual} (${lineMeaning('actual', f)}) for the stella bean trace, points at the centres of each ${formatNumber(a.windowWidth, 0)}-unit window`;
 
   const caption: CaptionPart[] = empty
     ? [
@@ -250,8 +250,8 @@ export function forecastChartSpec(a: ForecastArtifact, s: ReplayState, f: Foreca
 
 /**
  * The owner's absolute-error view for replay state `s`: |predicted − actual| of both forecasters (persistence,
- * then frozen), each window's error drawn only once the window is revealed (`plottedErrors`), held over the
- * window like the heat flux. `f`, the forecaster drawn as Predicted, keeps Predicted's line style.
+ * then frozen), each window's error drawn only once the window is revealed (`plottedErrors`), drawn at the
+ * window midpoint like the heat flux. `f`, the forecaster drawn as Predicted, keeps Predicted's line style.
  */
 export function errorChartSpec(a: ForecastArtifact, s: ReplayState, f: Forecaster, theme: ThemeName): ForecastChartSpec {
   const { n, span } = frame(a, s);
@@ -264,20 +264,20 @@ export function errorChartSpec(a: ForecastArtifact, s: ReplayState, f: Forecaste
     s,
     theme,
     'Absolute error |predicted − actual|',
-    absErrorRange(FORECASTERS.flatMap((fc) => errors[fc].map((w) => w.value))),
+    absErrorRange(errors[f].map(w => w.value)),
     '.3f',
-    empty ? 'Reveal a window to see its error' : null,
+    empty ? 'No points yet' : null,
   );
 
   const label =
     `Chart: absolute error, predicted minus actual, in ${spokenUnit(FLUX_UNIT)} against time t in ${spokenUnit(TIME_UNIT)}, ${span}, ` +
-    `of the persistence and frozen forecasts for the stella bean trace, each held over its ${formatNumber(a.windowWidth, 0)}-unit window`;
+    `of the ${f} forecast for the stella bean trace, points at the centres of each ${formatNumber(a.windowWidth, 0)}-unit window`;
 
   const caption: CaptionPart[] = empty
     ? [`Nothing plotted yet. A window's absolute errors appear after its Reveal; Run to end does all ${n} windows from ${span}, in order.`]
     : [
         'Absolute error |predicted − actual| per window. ' +
-          FORECASTERS.map((fc) => `${FORECASTER_LABEL[fc]}, ${shown} of ${n} windows: ${list(errors[fc], ERR_DP)}. `).join('') +
+          `${FORECASTER_LABEL[f]}, ${shown} of ${n} windows: ${list(errors[f], ERR_DP)}. ` +
           (shown < n ? 'Later windows are not plotted until they are revealed. ' : '') +
           'Absolute error in ',
         { unit: FLUX_UNIT },
@@ -285,9 +285,7 @@ export function errorChartSpec(a: ForecastArtifact, s: ReplayState, f: Forecaste
       ];
 
   return {
-    data: FORECASTERS.map((fc) =>
-      stepTrace(errorLineStyle(fc, f, theme), errors[fc], `${FORECASTER_LABEL[fc]} |predicted − actual|`, ERR_DP),
-    ),
+    data: [windowTrace(errorLineStyle(f, f, theme), errors[f], `${FORECASTER_LABEL[f]} |predicted − actual|`, ERR_DP)],
     layout,
     label,
     summary: spokenCaption(caption),

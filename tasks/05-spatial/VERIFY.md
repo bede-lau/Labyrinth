@@ -595,3 +595,87 @@ maintainer's `artifacts:fresh` stage). Could not check: the view against real GE
 repo; that is why verification is `blocked`).
 
 Verdict: PASS
+
+## Run 4 — whole task
+Verifier run: 2026-11-22, commit 628d997
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| S1 | Two GPU ranks own planes 1–3 and 4–6, with bidirectional periodic exchanges and CPU field solve | `pytest main/tests/test_spatial.py` | Artifact ranks are `GPU 0:[1,2,3]` and `GPU 1:[4,5,6]`; exchanges are `[3,4]`, `[4,3]`, `[6,1]`, `[1,6]`; field solve is CPU. | PASS |
+| S2 | Four controlled runs pass and the 1.27 speedup is recomputed | `test_S2_runs_and_speedup_recomputed` | Artifact has 4 controlled and 4 passing runs. 184.6927 / 145.4441 = 1.269853, printed as 1.27. | PASS |
+| S3 | Evidence has derived provenance | `test_S3_provenance_derived_and_verified` | Artifact has `provenance.kind=derived` and a passed evidence-verification outcome. | PASS |
+| S4 | The independence distinction from live W7-X is explicit | `test_S4_independence_note_live_w7x_tubes_do_not_exchange` | Artifact says the live bean and triangular W7-X tubes are independent and have no exchange. | PASS |
+| S5 | Six-plane ring diagram depicts ownership, exchanges, CPU solve, and Dommaschk scope | `renderer/src/features/spatial/SpatialView.test.tsx` | Offline Chromium rendered six rank nodes, four directed exchanges, and the CPU field node, but the visible label was `GENE-X · Dommaschk benchmark`, not the required `Dommaschk geometry — not W7-X`. | FAIL — visible task label mismatch |
+| S6 | Timing, run tally, and provenance are accurately presented | `SpatialView.test.tsx` | Focused frontend suite passed the timing, tally, and provenance rendering checks. | PASS |
+
+### Real output
+```
+$ pytest main/tests/test_spatial.py
+6 passed in 0.33s
+
+$ npm --prefix renderer run -s test -- src/features/spatial
+Test Files  1 passed (1)
+Tests  4 passed (4)
+
+$ bash scripts/verify.sh all
+71 passed in 26.24s
+378 passed in 51.10s
+artifacts: schema-valid
+artifacts: fresh (byte-identical rebuild)
+Test Files  40 passed (40)
+Tests  1720 passed (1720)
+verify.sh: all stages passed.
+
+$ offline Chromium probe against Vite on 127.0.0.1:4177
+spatial: 6 rank nodes, 4 directed exchanges, Dommaschk scope, CPU field, 184.69/145.44 s, 1.27×, and 4/4 passed
+```
+
+### Findings
+The browser-level probe found an S5 defect. The diagram structure, CPU label, timings, and run tally render correctly, but its visible text at `#/spatial` is `GENE-X · Dommaschk benchmark`. TASK.md requires the clear scope warning `Dommaschk geometry — not W7-X`. The passing component test does not cover the merged browser screen's exact text. The claimed CPU and GPU timings are replayed evidence, while their ratio and the controlled-run result are recomputed from the committed saved inputs. No live GENE-X job was run.
+
+Verdict: FAIL — task S5 visible label mismatch
+
+## Run 5 — whole task
+Verifier run: 2026-11-22, commit 41a506b
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| S1 | Two GPU ranks own planes 1–3 and 4–6, with bidirectional periodic exchanges and CPU field solve | `main/tests/test_spatial.py::test_S1_two_ranks_plane_ownership_periodic_exchanges_cpu_field_solve` | Offline Chromium rendered six rank nodes and four directed exchanges, with the shared field node labelled CPU. | PASS |
+| S2 | Four controlled runs pass and the 1.27 speedup is recomputed | `main/tests/test_spatial.py::test_S2_runs_and_speedup_recomputed` | Offline Chromium rendered 184.69 s, 145.44 s, 1.27× speedup, and 4/4 runs matched. | PASS |
+| S3 | Evidence has derived provenance | `main/tests/test_spatial.py::test_S3_provenance_derived_and_verified` | Offline Chromium exposed `Provenance of Dommaschk benchmark timings: Derived, Verified`. | PASS |
+| S4 | The independence distinction from live W7-X is explicit | `main/tests/test_spatial.py::test_S4_independence_note_live_w7x_tubes_do_not_exchange` | The committed artifact still distinguishes independent live W7-X tubes from this MPI exchange replay. | PASS |
+| S5 | Six-plane ring diagram depicts ownership, exchanges, CPU solve, and Dommaschk scope | `renderer/src/features/spatial/SpatialView.test.tsx` | Offline Chromium rendered six rank nodes, four directed exchanges, the CPU field node, and exact label `GENE-X · Dommaschk geometry — not W7-X`. | PASS |
+| S6 | Timing, run tally, and provenance are accurately presented | `renderer/src/features/spatial/SpatialView.test.tsx` | Offline Chromium rendered the timing/run facts and opened the Derived, Verified timing-provenance control. | PASS |
+
+### Real output
+```
+$ pytest main/tests/test_spatial.py
+6 passed in 0.14s
+
+$ npm --prefix renderer run -s test -- src/features/spatial
+Test Files  1 passed (1)
+Tests  4 passed (4)
+
+$ bash scripts/verify.sh all
+boundary self-test: OK (134 violations caught, 25 clean files passed, 3 OS flavours agree)
+boundary: OK (208 files scanned)
+docs: OK (11 task folders)
+71 passed in 23.11s
+All checks passed!
+378 passed in 50.10s
+artifacts: schema-valid
+artifacts: fresh (byte-identical rebuild)
+Test Files  40 passed (40)
+Tests  1736 passed (1736)
+verify.sh: all stages passed.
+
+$ offline Chromium probe against Vite on 127.0.0.1:4178
+spatial Chromium: label exact; 6 rank nodes; 4 directed exchanges; CPU field; timings 184.69/145.44; speedup 1.27; 4/4; derived/verified provenance button
+```
+
+### Findings
+Run 4's S5 and S6 browser findings are fixed by 41a506b. The new component test covers the exact scope label and the timing-provenance control, and the independent Chromium probe reproduced both. No live GENE-X job was run.
+
+Verdict: PASS

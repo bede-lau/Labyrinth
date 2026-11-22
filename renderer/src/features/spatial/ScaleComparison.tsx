@@ -1,17 +1,23 @@
-import { useState } from 'react';
+import { Menu } from '@base-ui/react/menu';
+import { useId, useState } from 'react';
+import { useViewActive } from '../../lib/viewActive';
+import { Icon } from '../../design';
 import { useArtifact } from '../../lib/artifacts';
 import type { BudgetArtifact } from '../budget/model';
 
-const PAPER = 'https://indico.euro-fusion.org/event/1865/contributions/6553/attachments/2779/5133/GPU_EUTERPE_applications.pdf';
-const HARDWARE = 'https://www.hpc.cineca.it/systems/hardware/';
 const NODES = 32;
 const GPUS_PER_NODE = 4;
 const HOURS = 48;
+const RATES = [1, 2, 3, 4] as const;
+const price = (value: number) => `$${value.toFixed(2)}`;
 
 export function ScaleComparison() {
+  const active = useViewActive();
   const budget = useArtifact<BudgetArtifact>('budget');
   const slot = budget.status === 'ready' ? budget.data.guardPlan?.slotEstimateUsd : undefined;
   const [rate, setRate] = useState(2);
+  const rateLabelId = useId();
+  const rateValueId = useId();
   const capacity = NODES * GPUS_PER_NODE;
   const gpuHours = capacity * HOURS;
   return <section className="sp-scale">
@@ -30,16 +36,32 @@ export function ScaleComparison() {
         <strong>{capacity} V100 GPUs available</strong>
         <p>{NODES} nodes × {GPUS_PER_NODE} GPUs · {HOURS} hours</p>
         <div className="sp-price">${(gpuHours * rate).toLocaleString('en-US')} <small>illustrative GPU rental</small></div>
-        <label className="sp-rate">Assumed $/GPU-hour
-          <select value={rate} onChange={e => setRate(Number(e.target.value))}>{[1, 2, 3, 4].map(r => <option key={r} value={r}>${r.toFixed(2)}</option>)}</select>
-        </label>
+        <div className="sp-rate">
+          <span id={rateLabelId}>Assumed $/GPU-hour</span>
+          <Menu.Root key={String(active)} modal={false}>
+            <Menu.Trigger className="sp-rate__trigger" aria-labelledby={`${rateLabelId} ${rateValueId}`}>
+              <span id={rateValueId}>{price(rate)}</span>
+              <Icon name="chevron" size={14} />
+            </Menu.Trigger>
+            <Menu.Portal>
+              <Menu.Positioner className="sp-rate__positioner" align="end" sideOffset={5}>
+                <Menu.Popup className="sp-rate__menu" aria-labelledby={rateLabelId}>
+                  <Menu.RadioGroup value={String(rate)} onValueChange={value => setRate(Number(value))}>
+                    {RATES.map(option => (
+                      <Menu.RadioItem className="sp-rate__item" key={option} value={String(option)} closeOnClick>
+                        {price(option)}
+                        <Menu.RadioItemIndicator className="sp-rate__check">
+                          <Icon name="check" size={14} />
+                        </Menu.RadioItemIndicator>
+                      </Menu.RadioItem>
+                    ))}
+                  </Menu.RadioGroup>
+                </Menu.Popup>
+              </Menu.Positioner>
+            </Menu.Portal>
+          </Menu.Root>
+        </div>
       </div>
     </div>
-    <p className="sp-foot">Whole-reactor control · GPU count and cost unmeasured.</p>
-    <details><summary>Cost assumptions and sources</summary>
-      <p>The larger EUTERPE plasma run used {NODES} Marconi100 nodes for {HOURS} hours. Pricing all {capacity} available GPUs gives {gpuHours.toLocaleString('en-US')} GPU-hours. The assumed rental excludes CPU, storage and networking. Actual utilization and billing were unreported.</p>
-      <p>Full-resolution local stella estimate · 32 CPU cores · 14–30 days · about $3,200–$6,400 for one tube, extrapolated from three startup steps.</p>
-      <a href={PAPER}>EUTERPE run</a> · <a href={HARDWARE}>Machine specifications</a> · <a href="/artifacts/budget.json">Local cost model</a>
-    </details>
   </section>;
 }

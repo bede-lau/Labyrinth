@@ -90,6 +90,7 @@ export function buildContent(THREE: Three, model: SceneModel): import('three').G
       material = new THREE.MeshBasicMaterial({ color: new THREE.Color(t.color), transparent: true, opacity: t.opacity, depthWrite: false });
     }
     const mesh = new THREE.Mesh(geom, material);
+    mesh.name = 'tube-' + t.id;
     mesh.renderOrder = t.selected ? 0 : 3;
     group.add(mesh);
   }

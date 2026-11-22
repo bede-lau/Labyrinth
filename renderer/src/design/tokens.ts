@@ -560,3 +560,15 @@ export function renderTokensCss(): string {
     BASE_CSS,
   ].join('\n');
 }
+
+/** Co-registered Locate scene: edge temperature spectrum, flux tracer and hardware materials. */
+export const plasmaMaterials = {
+  temperature: ['#232761', '#4256b4', '#1cabbe', '#f4c75c', '#f47a44', '#b82d52'],
+  tracer: '#fff4ca',
+  particleColours: ['#fe4e93', '#31c8ff', '#ffbc32', '#a987ff', '#70e65a'],
+  solenoid: { steel: '#a9b6c6', jacket: '#b790c2', copper: '#dc9362', collar: '#56658b', fastener: '#d7d9e1' },
+  targetCold: '#263447',
+  targetHot: '#ff6433',
+  windings: ['#92a9bf', '#c59c78'],
+  vessel: '#98b6c7',
+} as const;

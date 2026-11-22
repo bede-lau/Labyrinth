@@ -4,7 +4,6 @@ import { SpatialReplay } from './SpatialReplay';
 import { ScaleComparison } from './ScaleComparison';
 import { useArtifact } from '../../lib/artifacts';
 import { ArtifactGate } from '../../shell/ArtifactGate';
-import { spatialBacking } from './model';
 import { planeRange, ringLayout } from './ring';
 import { checkSpatial, type SpatialArtifact } from './types';
 import './spatial.css';
@@ -46,13 +45,11 @@ export function SpatialContent({ a }: { a: SpatialArtifact }) {
   }
   const { cpuMeanS, gpuMeanS } = a.timing;
   const saved = cpuMeanS - gpuMeanS;
-  const [replay, setReplay] = useState(0);
   const longest = Math.max(cpuMeanS, gpuMeanS);
-  const backing = spatialBacking(a).timing.status;
   return (
     <div className="sp-atlas">
-      <Panel title="One ring, two GPUs" className="sp-ring-panel" subtitle={`${a.code} · ${a.geometry} benchmark`}>
-        <SpatialReplay recorded={backing === 'derived'}>{(phase) => (
+      <Panel title="One ring, two GPUs" className="sp-ring-panel">
+        <SpatialReplay>{(phase) => (
           <figure data-ring-phase={phase} className={compact ? 'sp-ring sp-ring--compact' : 'sp-ring'}>
             <svg viewBox={`0 0 ${L.width} ${L.height}`} className="sp-ring__svg" role="img" aria-labelledby={ids.t} aria-describedby={ids.d}>
               <title id={ids.t}>{`Ring of ${a.nPlanes} toroidal planes on the Dommaschk geometry, coloured by MPI rank, with halo-exchange arrows and a CPU field solve`}</title>
@@ -133,16 +130,14 @@ export function SpatialContent({ a }: { a: SpatialArtifact }) {
       <section className="sp-race" aria-label="Runtime comparison">
         <h2>Time to finish</h2>
         <div className="sp-result"><strong>{(cpuMeanS / gpuMeanS).toFixed(2)}×</strong> speedup</div>
-        <div key={replay} className={replay ? "sp-lanes sp-lanes--running" : "sp-lanes"}>
+        <div className="sp-lanes">
           {([['CPU only', cpuMeanS], ['CPU + 2 GPUs', gpuMeanS]] as const).map(([label, seconds], i) =>
             <div className="sp-lane" key={label}>
               <div><b>{label}</b><span>{seconds.toFixed(2)} s</span></div>
-              <div className="sp-track" aria-hidden="true"><i className={i ? 'sp-twin' : ''} style={{ width: `${100 * seconds / longest}%`, animationDuration: `${seconds / 40}s` }} /></div>
+              <div className="sp-track" aria-hidden="true"><i className={i ? 'sp-twin' : ''} style={{ width: `${100 * seconds / longest}%` }} /></div>
             </div>)}
         </div>
-        <button className="sp-play" type="button" onClick={() => setReplay(n => n + 1)}><span aria-hidden="true">▷</span> Replay timings at 40×</button>
         <p className="sp-delta"><strong>{Math.abs(saved).toFixed(2)} s</strong> {saved >= 0 ? 'saved' : 'longer'} per run</p>
-        <p className="sp-foot">{backing === 'derived' ? 'Recorded means' : backing === 'prd-reported' ? 'Reported means' : backing} · {a.runs.passedReference}/{a.runs.controlled} runs matched the reference</p>
       </section>
       <ScaleComparison />
     </div>

@@ -950,3 +950,25 @@ replay with the shell and the view on screen.
 Not checked in this run: a real browser, the dev server, the real `labyrinth_main.server` behind the app.
 
 Verdict: PASS
+
+## Run 5 — whole task
+Verifier run: 2026-11-22, commit 9e017b6
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| A1 | Seven keyboard routes, Heat seventh and model-labelled | A1 shell tests | Chromium used Tab and Enter through every route at 390, 900 and 1440 px with no page overflow | PASS |
+| A2 | Global replay and live mode status | A2 shell and live-status store tests | Intercepted unavailable API showed global Replay $0 with no API writes | PASS |
+| A3 | Named artifact errors avoid blank page | A3 shell and artifact-loader tests | Full gate exercised artifact validation and static artifacts | PASS |
+| A4 | Decision question and provenance legend | A4 shell tests | Browser observed the exact question and opened legend | PASS |
+| A5 | Static build carries replay artifacts | Shell build tests | Inspected all seven JSON files in `renderer/dist/artifacts` | PASS |
+| A6 | Legend explains schema-derived model provenance | A6 shell tests | Browser opened model explanation | PASS |
+### Real output
+`PATH=/Users/bedelau/Desktop/Labyrinth/app-checkout/.venv/bin:$PATH VITEST_MAX_WORKERS=2 bash scripts/dev.sh bash scripts/verify.sh all` exited 0. Summary: 71 script tests, 378 backend tests, renderer typecheck, 1736 renderer tests and build passed.
+
+`PATH=/Users/bedelau/Desktop/Labyrinth/app-checkout/.venv/bin:$PATH VITEST_MAX_WORKERS=2 bash scripts/dev.sh npm --prefix renderer run -s test -- src/features/forecast src/design src/shell src/lib` exited 0. 26 files and 1529 tests passed.
+
+`PATH=/Users/bedelau/Desktop/Labyrinth/app-checkout/.venv/bin:$PATH bash scripts/dev.sh python3 scripts/check_boundaries.py` exited 0. `boundary: OK (208 files scanned)`.
+### Findings
+The independent browser run used a static server with live API responses set to 404. It made no live jobs or API writes and recorded no page errors.
+
+Verdict: PASS

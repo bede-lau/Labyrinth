@@ -592,3 +592,29 @@ $ wsl.exe -e git status --short; git rev-parse --short HEAD      (end)
    runs that did.
 
 Verdict: PASS
+
+## Run 6 — whole task
+Verifier run: 2026-11-22, commit 9e017b6
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| F1 | Eight forecast windows and initialization interval | `main/tests/test_forecast.py` | Parsed eight contiguous 1500–1900 windows | PASS |
+| F2 | Two forecasters, errors and mean method | Backend and forecast view tests | Recomputed signed errors from artifact steps | PASS |
+| F3 | Claimed versus computed MAE mismatch | F3 and F5 tests | Parsed both `matches: false` fixture rows and observed pointer in Chromium | PASS |
+| F4 | Overview, accessible sequence and reset | F4 tests | Chromium observed hidden then revealed data, Run to end and reset at three widths | PASS |
+| F5 | Running MAE and linked scores | F5 tests | Browser reset restored eight-window summary | PASS |
+| F6 | Artifact error statistics | `test_F6_*` | Recomputed n, MSE and RMSE, with ranges agreeing at seven-significant-figure precision | PASS |
+| F7 | Chart lines, error toggle and visibility | F7 tests | Browser checked overview, hidden observation, reveal, error view and final state | PASS |
+| F8 | Scored-window MSE and ranges | F8 tests | Browser completed replay with eight windows scored | PASS |
+### Real output
+`PATH=/Users/bedelau/Desktop/Labyrinth/app-checkout/.venv/bin:$PATH VITEST_MAX_WORKERS=2 bash scripts/dev.sh bash scripts/verify.sh all` exited 0. Summary: 71 script tests, 378 backend tests, renderer typecheck, 1736 renderer tests and build passed.
+
+`PATH=/Users/bedelau/Desktop/Labyrinth/app-checkout/.venv/bin:$PATH VITEST_MAX_WORKERS=2 bash scripts/dev.sh npm --prefix renderer run -s test -- src/features/forecast src/design src/shell src/lib` exited 0. 26 files and 1529 tests passed.
+
+`PATH=/Users/bedelau/Desktop/Labyrinth/app-checkout/.venv/bin:$PATH bash scripts/dev.sh python3 -m pytest -q main/tests/test_forecast.py` exited 0. 8 tests passed.
+
+`PATH=/Users/bedelau/Desktop/Labyrinth/app-checkout/.venv/bin:$PATH bash scripts/dev.sh python3 scripts/check_boundaries.py` exited 0. `boundary: OK (208 files scanned)`.
+### Findings
+The static browser replay intercepted live API requests with 404 responses. It made no API writes and recorded no page errors.
+
+Verdict: PASS

@@ -65,7 +65,7 @@ export interface FieldLine {
 }
 
 export const DIVERTER_IDS = ['D1', 'D2', 'D3', 'D4'] as const;
-export type DiverterId = (typeof DIVERTER_IDS)[number];
+export type DiverterId = (typeof DIVERTER_IDS)[number] | 'D5';
 
 export interface Diverter {
   id: DiverterId;

@@ -649,13 +649,10 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
       >
         <ControlLoop
           sim={sim}
-          ids={divIds}
+          onChange={refresh}
           horizonS={HORIZON_S}
-          limit={p.tileLimit}
-          n={frame.n}
-          currentPeaks={frame.diag.peakTileC}
-          onPause={() => playback.setPlaying(false)}
-          onRan={refresh}
+          playing={playback.playing}
+          play={() => playback.setPlaying(true)}
         />
       </Panel>
 

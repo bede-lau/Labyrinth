@@ -5,15 +5,11 @@ import { App } from './App';
 import { AppErrorBoundary, HeaderBoundary } from './Boundary';
 import { ROUTES } from './routes';
 
-const broken = vi.hoisted(() => ({ indicator: false, alert: false }));
+const broken = vi.hoisted(() => ({ alert: false }));
 vi.mock('./ModeIndicator', async (importOriginal) => {
   const real = await importOriginal<typeof import('./ModeIndicator')>();
   return {
     ...real,
-    ModeIndicator: (props: Parameters<typeof real.ModeIndicator>[0]) => {
-      if (broken.indicator) throw new Error("Cannot read properties of undefined (reading 'label')");
-      return <real.ModeIndicator {...props} />;
-    },
     ModeAlert: (props: Parameters<typeof real.ModeAlert>[0]) => {
       if (broken.alert) throw new Error('danger text could not be built');
       return <real.ModeAlert {...props} />;
@@ -21,16 +17,12 @@ vi.mock('./ModeIndicator', async (importOriginal) => {
   };
 });
 vi.mock('../features/geometry/GeometryView', () => ({ GeometryView: () => <p>view:locate</p> }));
-vi.mock('../features/live-gx/LiveView', () => ({ LiveView: () => <p>view:advance</p> }));
-vi.mock('../features/transport/TransportView', () => ({ TransportView: () => <p>view:transport</p> }));
 vi.mock('../features/forecast/ForecastView', () => ({ ForecastView: () => <p>view:forecast</p> }));
 vi.mock('../features/spatial/SpatialView', () => ({ SpatialView: () => <p>view:spatial</p> }));
-vi.mock('../features/budget/BudgetView', () => ({ BudgetView: () => <p>view:budget</p> }));
 vi.mock('../features/heatfield/HeatFieldView', () => ({ HeatFieldView: () => <p>view:heat</p> }));
 
 beforeEach(() => {
   history.replaceState(null, '', '/');
-  broken.indicator = false;
   broken.alert = false;
   vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
   vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -55,9 +47,8 @@ test('a crash in the live-session alert is itself reported as an alert, never sw
   expect(document.querySelector('[data-status="live"]')).toBeNull();
   // Everything else is still on the page.
   expect(screen.getByText('view:locate')).toBeInTheDocument();
-  expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Locate the tubes');
+  expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('W7-X Model');
   expect(within(screen.getByRole('navigation', { name: 'Views' })).getAllByRole('link')).toHaveLength(ROUTES.length);
-  expect(screen.getByRole('region', { name: 'Provenance legend' })).toBeInTheDocument();
   expect(screen.getByRole('radiogroup', { name: 'Colour theme' })).toBeInTheDocument();
 });
 

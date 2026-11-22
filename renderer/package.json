@@ -13,6 +13,7 @@
     "tokens": "node --experimental-strip-types --no-warnings scripts/gen-tokens-css.mjs"
   },
   "dependencies": {
+    "@base-ui/react": "1.9.0",
     "plotly.js-dist-min": "4.3.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",

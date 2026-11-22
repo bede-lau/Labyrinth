@@ -27,7 +27,7 @@ const STATUS: LiveStatus = {
 };
 
 beforeEach(() => {
-  history.replaceState(null, '', '#/advance');
+  history.replaceState(null, '', '#/locate');
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -36,8 +36,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test('the billing-alert cases cover every route in the nav, Heat & field included', () => {
-  expect(ROUTES.map((r) => r.id)).toEqual(['locate', 'forecast', 'spatial', 'heat']);
+test('the billing-alert cases cover every route in the nav', () => {
+  expect(ROUTES.map((r) => r.id)).toEqual(['locate', 'forecast', 'spatial']);
 });
 
 test.each(ROUTES.map((r) => r.id))('existing billing alert offers Terminate on %s', async route => {

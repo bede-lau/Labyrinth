@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { FixtureCheckData } from '../../design';
@@ -43,7 +44,13 @@ test('S5 ring of 6 toroidal planes coloured by rank, exchange arrows both ways, 
 
   serve(artifact);
   render(<SpatialView />);
+  const proposed = await screen.findByRole('button', { name: 'Proposed control loop' });
+  expect(proposed).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('status')).toHaveTextContent('Predict where heat will reach the wall');
+  await userEvent.click(screen.getByRole('button', { name: 'GPU exchange' }));
   const ring = await screen.findByRole('img', { name: /Ring of 6 toroidal planes on the Dommaschk geometry, coloured by MPI rank/ });
+  expect(screen.queryByText('GENE-X · Dommaschk geometry — not W7-X')).toBeNull();
+  expect(screen.queryByRole('button', { name: /Provenance of Dommaschk benchmark timings/ })).toBeNull();
   const planes = ring.querySelectorAll('[data-plane]');
   expect(planes).toHaveLength(6);
   expect([...planes].map((p) => `${p.getAttribute('data-plane')}:${p.getAttribute('class')}`)).toEqual([
@@ -79,11 +86,13 @@ test('FB-4 backing(): most cautious first, from fixtureOutcome and basis', () =>
   expect(artifact.fixtures.map(fixtureUnit)).toEqual(['dimensionless', 'dimensionless', 's', 's']);
 });
 
-test('recorded checkpoints, timings and reference values render as verified replay', async () => {
+test('S6 recorded checkpoints and timings keep the chart compact', async () => {
   serve(recorded);
   render(<SpatialView />);
   const section = await screen.findByRole('region', {name: 'Runtime comparison'});
-  for (const value of ['1.27×','184.69 s','145.44 s','39.25 s','4/4']) expect(section).toHaveTextContent(value);
+  for (const value of ['1.27×','184.69 s','145.44 s','39.25 s']) expect(section).toHaveTextContent(value);
+  expect(within(section).queryByRole('button', { name: /Provenance/ })).toBeNull();
+  expect(section).not.toHaveTextContent(/recorded means|matched the reference/i);
   expect(screen.getByText(/Proposed control loop/)).toBeInTheDocument();
 });
 
@@ -92,10 +101,11 @@ test('replay pauses within a stage, moves from the recorded layout to the propos
   const fetch = vi.fn();
   vi.stubGlobal('fetch', fetch);
   try {
-    render(<SpatialReplay recorded>{phase => <span>{phase}</span>}</SpatialReplay>);
+    render(<SpatialReplay>{phase => <span>{phase}</span>}</SpatialReplay>);
     const advance = (ms: number) => act(() => vi.advanceTimersByTime(ms));
     const click = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
 
+    click('GPU exchange');
     click('Play replay');
     advance(1000);
     click('Pause');
@@ -121,4 +131,19 @@ test('replay pauses within a stage, moves from the recorded layout to the propos
   } finally {
     vi.useRealTimers();
   }
+});
+
+test('the assumed hourly rate menu selects one rate and updates the rental estimate', async () => {
+  serve(recorded);
+  const user = userEvent.setup();
+  render(<SpatialView />);
+  const trigger = await screen.findByRole('button', { name: 'Assumed $/GPU-hour $2.00' });
+  expect(screen.getByText('$12,288')).toBeInTheDocument();
+  expect(screen.queryByText('Cost assumptions and sources')).toBeNull();
+  expect(screen.queryByText(/Whole-reactor control/)).toBeNull();
+  await user.click(trigger);
+  expect(await screen.findByRole('menuitemradio', { name: '$2.00' })).toHaveAttribute('aria-checked', 'true');
+  await user.click(screen.getByRole('menuitemradio', { name: '$4.00' }));
+  expect(screen.getByText('$24,576')).toBeInTheDocument();
+  expect(trigger).toHaveAccessibleName('Assumed $/GPU-hour $4.00');
 });

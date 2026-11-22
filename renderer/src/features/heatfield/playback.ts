@@ -3,11 +3,12 @@
 // through `chartTicks` on every frame of a 60 Hz display, and refreshes the rest of React at about 10 Hz. Paused,
 // nothing steps, so every display is frozen.
 import { useEffect, useRef, useState } from 'react';
+import { useViewActive } from '../../lib/viewActive';
 import type { Simulation } from './sim';
 
 /** Speeds offered: model seconds per real second. */
 export const SPEEDS = [0.25, 1, 2] as const;
-export type Speed = (typeof SPEEDS)[number];
+export type Speed = number;
 
 /** At most this many model steps per animation frame (a slow frame never stalls the page). */
 export const MAX_STEPS_PER_FRAME = 60;
@@ -75,15 +76,15 @@ export interface Playback {
   chartTicks: FrameTicker;
 }
 
-/** Steps for `elapsedS` real seconds at `speed`, carrying the remainder; capped per frame (the excess is dropped). */
+/** Steps for `elapsedS` real seconds at `speed`, carrying the remainder; capped per frame with excess carried into the next frame. */
 export function stepsForFrame(acc: number, elapsedS: number, speed: number, dt: number): { steps: number; acc: number } {
   const total = acc + Math.max(0, elapsedS) * speed;
-  const steps = Math.floor(total / dt + 1e-9);
-  if (steps > MAX_STEPS_PER_FRAME) return { steps: MAX_STEPS_PER_FRAME, acc: 0 };
+  const steps = Math.min(MAX_STEPS_PER_FRAME, Math.floor(total / dt + 1e-9));
   return { steps, acc: Math.max(0, total - steps * dt) };
 }
 
 export function usePlayback(sim: Simulation, initiallyPlaying: boolean, onUiTick: () => void): Playback {
+  const active = useViewActive();
   const [playing, setPlaying] = useState(initiallyPlaying);
   const [speed, setSpeed] = useState<Speed>(1);
   const speedRef = useRef<Speed>(speed);
@@ -93,7 +94,7 @@ export function usePlayback(sim: Simulation, initiallyPlaying: boolean, onUiTick
   const [chartTicks] = useState(() => new FrameTicker());
 
   useEffect(() => {
-    if (!playing) return;
+    if (!playing || !active) return;
     let alive = true;
     let last: number | null = null;
     let lastUi = -Infinity;
@@ -101,9 +102,11 @@ export function usePlayback(sim: Simulation, initiallyPlaying: boolean, onUiTick
     let acc = 0;
     let id = 0;
     const dt = sim.model.params.dt;
+    const resetClock = () => { last = null; };
+    document.addEventListener('visibilitychange', resetClock);
     const frame = (now: number) => {
       if (!alive) return;
-      if (last !== null) {
+      if (last !== null && !document.hidden) {
         const r = stepsForFrame(acc, (now - last) / 1000, speedRef.current, dt);
         acc = r.acc;
         sim.advance(r.steps);
@@ -121,11 +124,12 @@ export function usePlayback(sim: Simulation, initiallyPlaying: boolean, onUiTick
     };
     id = raf(frame);
     return () => {
+      document.removeEventListener('visibilitychange', resetClock);
       alive = false;
       caf(id);
       tickRef.current(); // the frozen state is what every display shows
     };
-  }, [playing, sim, chartTicks]);
+  }, [active, playing, sim, chartTicks]);
 
   return { playing, setPlaying, speed, setSpeed, chartTicks };
 }

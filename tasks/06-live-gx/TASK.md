@@ -13,12 +13,12 @@ backend: backend-engineer (`main/labyrinth_main/features/live_gx/`) · frontend:
 - L5. Checkpoint continuation: a run resumed from a checkpoint continues simTime from the checkpoint, not from 0.
 - L6. Workers are always terminated after retrieval (also on exception).
 - L7. Every status snapshot validates against `contracts/live-status.schema.json`.
-- L8. `modal_app.py` defines the GX worker (A100-40GB, hard timeout, explicit launch only) and GX input generation for both tubes; it is never imported by tests or replay paths; marked UNREHEARSED.
+- L8. `modal_app.py` defines the GX worker (A100-40GB, hard timeout, explicit launch only) and GX input generation for both tubes. The server, replay, and main test process do not import it. A subprocess test loads it with a stub Modal module. Without a valid qualification record, launch stays unavailable and the status explains the gating condition. The owner's earlier rehearsal is recorded separately in `status.md`.
 - L11. Live comparison (D-024, PRD "Check transport"): every session snapshot carries `comparison`, computed from all bean samples received so far (archive units) against the archived stella and GENE traces on 200–300 and 300–400 with `transport.stats` / `transport.compare` only: coverage, time-weighted mean, stderr, N_eff, stationarity, the window's claim gate and a `compare_window` verdict + Δ per archive trace; an uncovered window has null statistics and "no claim"; a non-stationary or N_eff < 20 live trace never opens a claim; top-level `saturatedClaimAllowed` only with an `agree` verdict (with the committed archive: always "no claim", D-017); recomputed when the sample count changes; a computation error gives `windows: []` and a reason, never a failed status; the gate snapshot without a session has no `comparison`; no "NOT computed" wording remains.
 
 Frontend:
 - L9. Live panel polls `/api/live/status` (or SSE): unavailable/fallback states show an unmistakable label and play the replay; live shows both device IDs, both sim clocks advancing, sample counts.
-- L10. Launch button only enabled when mode is `idle` and `budget.slotFits`; requires explicit confirmation showing the slot cost.
+- L10. Launch requires a fresh `idle` snapshot with no workers, or a qualified fallback with confirmed termination (cross-RX-4). In either case the budget must permit the slot, there must be no unresolved launch or stop request, and the user must confirm the displayed slot cost.
 
 ## Tests
 | # | Test |
@@ -27,6 +27,8 @@ Frontend:
 | L9–L10 | `renderer/src/features/live-gx/*.test.tsx` |
 
 ## Status
-VERIFYING
+DONE
+
+Independent verification passed at `a9b12b2` on 2026-11-22. See the final run in [VERIFY.md](VERIFY.md).
 
 Verified at commit 77fd8b6 (D-024 live comparison, new outcome L11): tasks/06-live-gx/VERIFY.md run 4, `Verdict: PASS` (external verifier, 2026-11-21, against fakes; never run on Modal). Reviewer APPROVE of the D-024 change (2026-11-21). Previously DONE at 3faed3a.

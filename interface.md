@@ -78,8 +78,8 @@ All have `"schemaVersion": 1`; `fetchArtifact`/`useArtifact` reject anything els
 11. **`basis` comes from the fixture** (absent → data) in every view, never from a call-site list. Transport and forecast fixtures carry none.
 12. **forecast `errorStats`** (required, D-026): `definition`, `persistence` and `frozen`, each `{n, mse, rmse, squaredErrorRange, errorRange}` with
     e_k = forecast − observed (predicted − actual) over the scored steps; "range of MSE" = [min, max] of e_k², "range of errors" = [min, max] of e_k
-    (the owner's words, interpreted in D-026 §2); all null exactly when n = 0 (schema if/then, D-028). The chart plots a value only once it is
-    predicted / revealed; the running statistics count a window at its Update.
+    (the owner's words, interpreted in D-026 §2); all null exactly when n = 0 (schema if/then, D-028). The overview plots the full
+    saved artifact. During step-through replay a value appears only at Predict or Reveal, and the running statistics count a window at Update.
 13. **heatfield** (D-027): flat arrays are φ-major (`c = j·nTheta + i`), periodic in both angles, each of length nTheta·nPhi (the consumer checks
     lengths); `surfaces[0]` is the axis (ρ 0; its |B| varies with θ by up to 0.03 T, stella's extrapolation, D-028), the last is the LCFS (ρ 1); |B| is
     in tesla (not B_ref). `geometryProvenance` (kind pinned to `derived`) covers surfaces, |B| and field lines; `provenance` (kind pinned to `model`)
@@ -210,7 +210,7 @@ Tests: vitest, jsdom, `pool: 'vmThreads'`, `maxWorkers` = `VITEST_MAX_WORKERS` (
 - **budget:** `pricing.py` (single source of PRD constants, imported by the live guard), `model.py` (Decimal, half-up cents), `artifact.guard_plan()` (asks `live_gx.budget_guard.evaluate` exactly what
   `rehearse` and the service ask, in plan order, each on a reconciled ledger with every earlier allocation reserved; `budget.artifact` → `live_gx.budget_guard` → `budget.pricing`).
 - **spatial:** `artifact.fixtures()` (speedup recomputed from the module's PRD means; the tally and means `computed: null`).
-- **live_gx** (UNVERIFIED, UNREHEARSED — see status.md):
+- **live_gx** (qualification depends on the deployment and its saved rehearsal record, see status.md):
   - `budget_guard`: `Ledger{billed,pending,reconciled}.reserve()`, `evaluate(ledger, *, slot_min, setups, ceiling_usd, rate_usd_per_h) → GuardDecision` (`.budget_snapshot()` = the live-status `budget`;
     refuses an unreconciled ledger, billed + pending + estimate > ceiling, or amounts that are not finite non-negative numbers; never raises), `slot_estimate_usd()` ($2.65 = 6.10×25/60 + 0.10, ceil to cent),
     `rehearsal_estimate_usd()` ($7.73), `hard_timeout_s()`, `planned_call_s(kind)` (live 1500 s, rehearsal phase 2250 s), `modal_startup_timeout_s()` (300 s) / `modal_timeout_s(kind)` (= planned − 300, so billed ≤ planned).

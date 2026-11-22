@@ -367,6 +367,16 @@ test.each([
   expect(screen.queryAllByText('Replay', { selector: '.lab-pill__text' })).toHaveLength(mode === 'live' ? 0 : 1);
 });
 
+test('L9 the embedded view keeps the retry action without announcing the same danger twice', async () => {
+  const reason = `${FAILED}: GPU 0 termination could not be confirmed.`;
+  server.status = liveNow({ reason });
+  render(<LiveView pollMs={60_000} autoPlay={false} shellAnnouncesDanger />);
+  const group = await screen.findByRole('group', { name: 'Danger: TERMINATE FAILED — GPUs may still be billing' });
+  expect(group).toHaveTextContent(reason);
+  expect(within(group).getByRole('button', { name: 'Retry terminate' })).toBeEnabled();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
 test('L9 FA-1 a requested stop that is not confirmed yet (orchestrator.py:62) is a billing-risk alert; LIVE stays while the API reports live', async () => {
   const reason = 'Stop requested; terminating workers — not confirmed yet. Both workers launched; streaming GX output (live).';
   server.status = liveNow({ reason });

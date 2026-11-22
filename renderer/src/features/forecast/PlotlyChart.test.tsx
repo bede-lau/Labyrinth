@@ -25,6 +25,7 @@ test('F7 the Plotly adapter draws the spec in a named figure (not role="img"), d
   const view = render(chart(spec));
   const figure = screen.getByRole('figure', { name: spec.label });
   expect(figure).toHaveAccessibleDescription(spec.summary);
+  expect(figure.querySelector('figcaption')).toHaveClass('lab-visually-hidden');
   expect(figure.querySelector('figcaption')).toHaveTextContent(spec.summary);
   expect(figure.querySelector('[role="img"]')).toBeNull();
   await waitFor(() => expect(plotly.react).toHaveBeenCalledTimes(1));
@@ -47,7 +48,7 @@ test('F7 the Plotly adapter draws the spec in a named figure (not role="img"), d
   await waitFor(() => expect(plotly.purge).toHaveBeenCalledWith(el));
 });
 
-test('F7 (DZ3-8) a unit in the caption is typeset where it is seen and spoken as words in the figure’s description', async () => {
+test('F7 (DZ3-8) a unit in the hidden caption is spoken as words in the figure’s description', async () => {
   const spec = forecastChartSpec(ARTIFACT, advance(INITIAL, ARTIFACT.steps.length), 'persistence', 'light');
   expect(spec.summary).toMatch(/ Heat flux in Q gB,i\.$/);
   render(<PlotlyChart data={spec.data} layout={spec.layout} label={spec.label} caption={spec.caption} />);

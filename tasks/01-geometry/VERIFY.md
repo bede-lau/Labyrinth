@@ -832,3 +832,47 @@ No product defect found. All ten outcomes hold on the committed artifact, and ea
 **Not checked in this run.** WebGL rendering in a browser and screenshots. Run 2 did both at 2b1607e; since then `FluxScene.tsx` changed only by exporting `buildContent` and adding comments. The G1–G4 and G6 mutation sets of Run 2 were not repeated, because the tracer code is unchanged. The 129 saved stella samples are not available (blocked by design, D-007).
 
 Verdict: PASS
+
+## Run 4 — whole task
+Verifier run: 2026-11-22, commit 628d997
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| G1 | VMEC reader handles the supplied equilibrium and radial interpolation | `pytest main/tests/test_geometry.py` | Direct netCDF inspection reports `nfp=5`, `ns=99`, and `rmnc` shape `(99, 288)`. | PASS |
+| G2 | Straight-field-line solve is accurate | `test_sfl_root_solve_roundtrip` in `main/tests/test_geometry.py` | The committed artifact has 129 ordered samples for both requested tubes. | PASS |
+| G3 | Tracer matches the saved 25-sample stella geometry at printed precision | `test_reproduces_stella_saved_bmag_to_printed_precision` | `geometry.json` records 25 compared samples and `allWithinPrintedPrecision=true`. | PASS |
+| G4 | Both 129-sample tubes have the specified centers and data | `test_artifact_tubes_129_samples_centered` | Bean centre is ζ=0, R=6.132478, Z=0. Triangular centre is ζ=0.6283185, R=5.779406, Z=0. | PASS |
+| G5 | Surface and bean outboard-midplane geometry are correct | `test_surface_and_bean_outboard_midplane` | Artifact contains 21,600 surface positions and both boundary cross-sections. | PASS |
+| G6 | 129-sample Modal acceptance is reported honestly | `test_acceptance129_matches_saved_modal_bean_samples` | Artifact reports `acceptance129.outcome=passed` and details the maximum normalized field error. | PASS |
+| G7 | Scene has the surface, field-coloured selection, muted alternative, and markers | `renderer/src/features/geometry/FluxScene.test.tsx` and `GeometryView.test.tsx` | Offline Chromium rendered one Three canvas and the geometry SVGs. | PASS |
+| G8 | Keyboard selector updates all tube-specific visualisations | `GeometryView.test.tsx` | Offline Chromium selected the triangular tube and rendered its associated content. | PASS |
+| G9 | Cross-section and labelled magnetic-field chart are rendered | `GeometryView.test.tsx` and `PlotlyChart.test.tsx` | Offline Chromium showed the triangular cross-section at ζ = 36°. | PASS |
+| G10 | Validation information and its outcome are visible | `GeometryView.test.tsx` | Offline Chromium rendered the `129-sample acceptance verified` status. | PASS |
+
+### Real output
+```
+$ pytest main/tests/test_geometry.py
+18 passed in 1.63s
+
+$ npm --prefix renderer run -s test -- src/features/geometry
+Test Files  4 passed (4)
+Tests  13 passed (13)
+
+$ bash scripts/verify.sh all
+71 passed in 26.24s
+378 passed in 51.10s
+artifacts: schema-valid
+artifacts: fresh (byte-identical rebuild)
+Test Files  40 passed (40)
+Tests  1720 passed (1720)
+verify.sh: all stages passed.
+
+$ offline Chromium probe against Vite on 127.0.0.1:4177
+geometry: triangular selector, Three canvas, validation outcome, and ζ=36° cross-section passed
+```
+
+### Findings
+No defects found. The offline Chromium probe used a dedicated Vite server in an isolated worktree at 628d997. Earlier verification text describing the 129-sample acceptance as blocked is historical. The merged artifact and the current task test now correctly record the saved Modal comparison as passed under D-029.
+
+Verdict: PASS

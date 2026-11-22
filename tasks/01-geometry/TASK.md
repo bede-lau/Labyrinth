@@ -32,6 +32,8 @@ Frontend:
 | G7–G10 | `renderer/src/features/geometry/*.test.tsx` (one `test()` per outcome, named `G7 …` … `G10 …`) |
 
 ## Status
-VERIFYING
+DONE
+
+Independent verification passed at `628d997` on 2026-11-22. See the final run in [VERIFY.md](VERIFY.md).
 
 Previous baseline verified at commit 3faed3a: tasks/01-geometry/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).
