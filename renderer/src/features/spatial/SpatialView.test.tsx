@@ -44,6 +44,8 @@ test('S5 ring of 6 toroidal planes coloured by rank, exchange arrows both ways, 
   serve(artifact);
   render(<SpatialView />);
   const ring = await screen.findByRole('img', { name: /Ring of 6 toroidal planes on the Dommaschk geometry, coloured by MPI rank/ });
+  expect(screen.getByText('GENE-X · Dommaschk geometry — not W7-X')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Provenance of Dommaschk benchmark timings: PRD-reported, Blocked' })).toBeVisible();
   const planes = ring.querySelectorAll('[data-plane]');
   expect(planes).toHaveLength(6);
   expect([...planes].map((p) => `${p.getAttribute('data-plane')}:${p.getAttribute('class')}`)).toEqual([
@@ -79,11 +81,12 @@ test('FB-4 backing(): most cautious first, from fixtureOutcome and basis', () =>
   expect(artifact.fixtures.map(fixtureUnit)).toEqual(['dimensionless', 'dimensionless', 's', 's']);
 });
 
-test('recorded checkpoints, timings and reference values render as verified replay', async () => {
+test('S6 recorded checkpoints and timings show the reference tally and artifact verification badge', async () => {
   serve(recorded);
   render(<SpatialView />);
   const section = await screen.findByRole('region', {name: 'Runtime comparison'});
   for (const value of ['1.27×','184.69 s','145.44 s','39.25 s','4/4']) expect(section).toHaveTextContent(value);
+  expect(within(section).getByRole('button', { name: 'Provenance of Dommaschk benchmark timings: Derived, Verified' })).toBeVisible();
   expect(screen.getByText(/Proposed control loop/)).toBeInTheDocument();
 });
 

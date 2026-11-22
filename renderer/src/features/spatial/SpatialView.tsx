@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react';
-import { Panel } from '../../design';
+import { Panel, ProvenanceBadge } from '../../design';
 import { SpatialReplay } from './SpatialReplay';
 import { ScaleComparison } from './ScaleComparison';
 import { useArtifact } from '../../lib/artifacts';
@@ -51,7 +51,7 @@ export function SpatialContent({ a }: { a: SpatialArtifact }) {
   const backing = spatialBacking(a).timing.status;
   return (
     <div className="sp-atlas">
-      <Panel title="One ring, two GPUs" className="sp-ring-panel" subtitle={`${a.code} · ${a.geometry} benchmark`}>
+      <Panel title="One ring, two GPUs" className="sp-ring-panel" subtitle={`${a.code} · ${a.geometry} geometry — not W7-X`}>
         <SpatialReplay recorded={backing === 'derived'}>{(phase) => (
           <figure data-ring-phase={phase} className={compact ? 'sp-ring sp-ring--compact' : 'sp-ring'}>
             <svg viewBox={`0 0 ${L.width} ${L.height}`} className="sp-ring__svg" role="img" aria-labelledby={ids.t} aria-describedby={ids.d}>
@@ -143,6 +143,7 @@ export function SpatialContent({ a }: { a: SpatialArtifact }) {
         <button className="sp-play" type="button" onClick={() => setReplay(n => n + 1)}><span aria-hidden="true">▷</span> Replay timings at 40×</button>
         <p className="sp-delta"><strong>{Math.abs(saved).toFixed(2)} s</strong> {saved >= 0 ? 'saved' : 'longer'} per run</p>
         <p className="sp-foot">{backing === 'derived' ? 'Recorded means' : backing === 'prd-reported' ? 'Reported means' : backing} · {a.runs.passedReference}/{a.runs.controlled} runs matched the reference</p>
+        <ProvenanceBadge provenance={a.provenance} subject="Dommaschk benchmark timings" align="start" className="sp-foot" />
       </section>
       <ScaleComparison />
     </div>
