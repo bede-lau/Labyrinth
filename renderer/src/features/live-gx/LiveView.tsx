@@ -78,6 +78,8 @@ export interface LiveViewProps {
   pollMs?: number;
   /** Start the replay automatically (default: yes, unless the user prefers reduced motion). */
   autoPlay?: boolean;
+  /** The shell already announces danger reported by the shared status store. */
+  shellAnnouncesDanger?: boolean;
 }
 
 type Budget = LiveStatus['budget'];
@@ -129,7 +131,7 @@ interface DangerAlert {
 
 const DASHBOARD = 'check the Modal dashboard until both workers are confirmed stopped.';
 
-export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
+export function LiveView({ pollMs = 2000, autoPlay, shellAnnouncesDanger = false }: LiveViewProps = {}) {
   const live = useLiveStatus(pollMs);
   const transport = useArtifact<TransportArtifact>('transport');
   const saved = useSavedRun(savedRunToFetch(live));
@@ -307,7 +309,14 @@ export function LiveView({ pollMs = 2000, autoPlay }: LiveViewProps = {}) {
         {alerts.length > 0 && (
           <div className="lg-alerts">
             {alerts.map((a, i) => (
-              <Alert key={a.kind} className="lg-alert" title={a.title} reason={a.reason} action={i === 0 ? terminateButton : undefined}>
+              <Alert
+                key={a.kind}
+                className="lg-alert"
+                title={a.title}
+                reason={a.reason}
+                announce={!(shellAnnouncesDanger && danger?.kind === a.kind && danger.detail === a.reason)}
+                action={i === 0 ? terminateButton : undefined}
+              >
                 {a.body}
               </Alert>
             ))}

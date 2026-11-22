@@ -1,9 +1,7 @@
-// Hash routes for the four views. `#gallery` is not a route: main.tsx handles it at load time.
-// The owner's redesign (bbf2fc6) retired Advance plasma, Check transport and Budget from navigation: their hashes
-// fall back to the default view. Heat & field (D-027) is the fourth entry.
+// Hash routes in rail order. `#gallery` is handled separately by main.tsx.
 import type { ArtifactId } from '../lib/artifacts';
 
-export type RouteId = 'locate' | 'forecast' | 'spatial' | 'heat';
+export type RouteId = 'locate' | 'advance' | 'transport' | 'forecast' | 'spatial' | 'budget' | 'heat';
 
 export interface RouteDef {
   id: RouteId;
@@ -22,8 +20,11 @@ const artifactFile = (id: ArtifactId) => `artifacts/${id}.json`;
 
 export const ROUTES: readonly RouteDef[] = [
   { id: 'locate', label: 'Locate the tubes', source: 'replay', files: [artifactFile('geometry')] },
+  { id: 'advance', label: 'Advance plasma', source: 'live', files: ['/api/live/status', artifactFile('transport')] },
+  { id: 'transport', label: 'Check transport', source: 'replay', files: [artifactFile('transport')] },
   { id: 'forecast', label: 'Forecast replay', source: 'replay', files: [artifactFile('forecast')] },
   { id: 'spatial', label: 'Spatial parallelism', source: 'replay', files: [artifactFile('spatial')] },
+  { id: 'budget', label: 'Budget', source: 'replay', files: [artifactFile('budget')] },
   // D-027: real VMEC geometry and |B| with an illustrative edge heat model computed in the browser.
   { id: 'heat', label: 'Heat & field', source: 'model', files: [artifactFile('heatfield')] },
 ];
@@ -39,7 +40,7 @@ export function hrefFor(id: RouteId): string {
   return `#/${id}`;
 }
 
-/** `#/spatial` -> 'spatial'. Anything else (empty, unknown, retired, `#gallery`) -> null. */
+/** `#/spatial` -> 'spatial'. Empty and unknown hashes return null. */
 export function parseHash(hash: string): RouteId | null {
   const m = /^#\/([a-z]+)\/?$/.exec(hash);
   const id = m?.[1];

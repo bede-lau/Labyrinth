@@ -247,11 +247,11 @@ status…" where "Replay · $0" would be.
 
 **Where the Alert sits, and what it carries.**
 
-* **Header, every route** (`ModeAlert` in `shell/ModeIndicator.tsx`). The idle header shows navigation
-  and theme controls. An active or launching session adds "Modal session active" and a Terminate button.
+* **Header, every route** (`shell/ModeIndicator.tsx`). The header shows the decision question, mode indicator,
+  navigation and theme controls. An active or launching session adds "Modal session active" and a Terminate button.
   A billing alert quotes the backend reason and adds "Check the Modal dashboard until both workers are confirmed stopped."
   Its Terminate button calls `sendTerminate()` and shows "Terminate confirmed: …" or "Terminate not confirmed: …".
-* **Live panel component** (retired from navigation): one full-size Alert per danger, worst first. The first carries the
+* **Advance plasma panel**: one full-size Alert per danger, worst first. The first carries the
   Terminate button: "Terminate", "Retry terminate" after a failed stop, "Terminating… (send again)"
   while a request is out. Besides the store's dangers it shows two that only this page knows:
 
@@ -267,17 +267,14 @@ being checked) its pill reads `<StatusPill status="replay">Replay</StatusPill>`:
 costs nothing, but "$0" is never printed next to a bill that may be running.
 
 **One danger, one announcement.** The header's copy announces (`role="alert"`). A copy of the same
-danger in the live panel is meant to pass `announce={false}`: it is then drawn the same and keeps its
+danger in the live panel passes `announce={false}` for the matching kind and reason. It keeps its
 name, as a labelled group, so a screen reader hears the danger once. The panel-only Alerts announce,
 because nothing else on the page carries them. What an announcing Alert announces is its title and
 reason. Its body and action stay inside it but sit in `aria-live="off"` sub-regions, so a change there
 (the Terminate button's label, a terminate answer) is not announced assertively again.
 
-**Not yet in the app.** Two parts of this contract are required of the frontend (`shell/`,
-`features/live-gx/`) and not drawn yet: the header's `ModeAlert` does not pass `compact`, and the
-live panel's copy of the header's danger does not pass `announce={false}`, so on `#/advance` a screen
-reader hears that danger twice. `designDoc.test.ts` reads both files: this section may call either
-part done only once the code does it.
+**Not yet in the app.** The header's `ModeAlert` still uses the full-size layout. Using the `compact`
+variant is tracked separately.
 
 **Provenance never produces LIVE by itself.** Provenance `kind` maps to the status of the same name
 for `archive`, `derived`, `prd-reported`, `rehearsal` and `model`. Kind `live` is different: a record read

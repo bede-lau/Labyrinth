@@ -9,10 +9,12 @@ import type { LiveStatus } from '../lib/liveStatus';
 
 // The shell is tested on its own: each view is replaced by a marker so the shell's routing, the live-session bar
 // and the legend are what is exercised (the views have their own tests). `boom` lets a test make a view throw while
-// rendering; the forecast marker also reads the shared live status the way a real view does (useLiveStatus), to
-// prove there is one poller for all and to show the store's state where the shell itself prints nothing (replay).
+// rendering; the forecast marker also reads the shared live status to prove there is one poller for the shell and views.
 const boom = vi.hoisted(() => ({ spatial: false, heat: false }));
 vi.mock('../features/geometry/GeometryView', () => ({ GeometryView: () => <p>view:locate</p> }));
+vi.mock('../features/live-gx/LiveView', () => ({ LiveView: () => <p>view:advance</p> }));
+vi.mock('../features/transport/TransportView', () => ({ TransportView: () => <p>view:transport</p> }));
+vi.mock('../features/budget/BudgetView', () => ({ BudgetView: () => <p>view:budget</p> }));
 vi.mock('../features/forecast/ForecastView', async () => {
   const { useLiveStatus } = await import('../lib/liveStatus');
   return {
@@ -91,20 +93,20 @@ afterEach(() => {
 
 // --------------------------------------------------------------------------------------------- A1 navigation
 
-test.each(['advance', 'transport', 'budget', 'unknown'])('retired or unknown route %s opens geometry', async route => {
-  history.replaceState(null, '', '#/' + route);
+test('an unknown route opens geometry', async () => {
+  history.replaceState(null, '', '#/unknown');
   render(<App />);
   await waitFor(() => expect(location.hash).toBe('#/locate'));
   expect(screen.getByRole('heading', {level: 1})).toHaveTextContent('Locate the tubes');
   expect(screen.queryByRole('contentinfo')).toBeNull();
-  expect(screen.queryByText('Replay · $0')).toBeNull();
+  expect(screen.getByRole('status', { name: /^Mode: Replay · \$0/ })).toBeInTheDocument();
 });
 
-test('A1 four keyboard-accessible views, current page and route announcements', async () => {
+test('A1 seven keyboard-accessible views, current page and route announcements', async () => {
   const user = userEvent.setup();
   render(<App />);
   const links = within(screen.getByRole('navigation', {name: 'Views'})).getAllByRole('link');
-  expect(navLabels()).toEqual(['Locate the tubes', 'Forecast replay', 'Spatial parallelism', 'Heat & field']);
+  expect(navLabels()).toEqual(['Locate the tubes', 'Advance plasma', 'Check transport', 'Forecast replay', 'Spatial parallelism', 'Budget', 'Heat & field']);
   for (const [i, route] of ROUTES.entries()) {
     links[i]!.focus();
     await user.keyboard('{Enter}');
@@ -118,7 +120,7 @@ test('A1 four keyboard-accessible views, current page and route announcements', 
   expect(screen.getByRole('main')).toHaveFocus();
 });
 
-test('A1 navigation reaches all four views by keyboard and the URL hash names the view; Heat & field names its source', async () => {
+test('A1 navigation reaches all seven views by keyboard and the URL hash names the view; Heat & field names its source', async () => {
   const user = userEvent.setup();
   render(<App />);
 
@@ -127,14 +129,14 @@ test('A1 navigation reaches all four views by keyboard and the URL hash names th
   expect(screen.getByText('view:locate')).toBeInTheDocument();
 
   const links = navLinks();
-  expect(links.map((l) => l.getAttribute('href'))).toEqual(['#/locate', '#/forecast', '#/spatial', '#/heat']);
+  expect(links.map((l) => l.getAttribute('href'))).toEqual(['#/locate', '#/advance', '#/transport', '#/forecast', '#/spatial', '#/budget', '#/heat']);
   expect(links.map((l) => l.getAttribute('href'))).toEqual(ROUTES.map((r) => `#/${r.id}`));
   expect(links[0]).toHaveAttribute('aria-current', 'page');
   // How a view's data arrives: replay is the app's default and is not repeated; Heat & field is an illustrative model
   // (D-027), never "replay" or a GX run, and says so in its link (part of its accessible name).
-  expect(links.map((l) => l.querySelector('.shell-nav__source')?.textContent ?? null)).toEqual([null, null, null, 'illustrative model']);
-  expect(links[3]).toHaveAccessibleName('Heat & field illustrative model');
-  expect(links[3]).not.toHaveTextContent(/replay|GX run/i);
+  expect(links.map((l) => l.querySelector('.shell-nav__source')?.textContent ?? null)).toEqual([null, 'GX run · gated', null, null, null, null, 'illustrative model']);
+  expect(links[6]).toHaveAccessibleName('Heat & field illustrative model');
+  expect(links[6]).not.toHaveTextContent(/replay|GX run/i);
   expect(routeDef('heat')).toEqual({ id: 'heat', label: 'Heat & field', source: 'model', files: ['artifacts/heatfield.json'] });
   expect(ROUTES.at(-1)?.id).toBe('heat');
 
@@ -192,11 +194,11 @@ test('A1 a route change is announced and moves focus to the view, unless the key
 
   // Keyboard on a nav link: the announcement is made and focus stays on the link (Tab continues along the nav).
   const links = navLinks();
-  links[3]!.focus();
+  links[6]!.focus();
   await user.keyboard('{Enter}');
   await waitFor(() => expect(announcer).toHaveTextContent('Heat & field view'));
   expect(screen.getByText('view:heat')).toBeInTheDocument();
-  expect(links[3]).toHaveFocus();
+  expect(links[6]).toHaveFocus();
 });
 
 test('DS-5 the active nav tab is centred inside the nav scroller (the page is never scrolled) and hidden edges are flagged', async () => {
@@ -206,9 +208,9 @@ test('DS-5 the active nav tab is centred inside the nav scroller (the page is ne
   const scroller = screen.getByRole('navigation', { name: 'Views' }).querySelector<HTMLElement>('.shell-nav__scroll')!;
   expect(scroller).not.toBeNull();
   const links = navLinks();
-  // A nav squeezed between the wordmark and the theme switch: four 122 px tabs (488 px) inside a 300 px scroller.
+  // Seven 122 px tabs inside a 300 px scroller.
   Object.defineProperty(scroller, 'clientWidth', { configurable: true, value: 300 });
-  Object.defineProperty(scroller, 'scrollWidth', { configurable: true, value: 488 });
+  Object.defineProperty(scroller, 'scrollWidth', { configurable: true, value: 854 });
   scroller.getBoundingClientRect = () => ({ left: 0, width: 300 }) as DOMRect;
   links.forEach((l, i) => {
     l.getBoundingClientRect = () => ({ left: i * 122 - scroller.scrollLeft, width: 122 }) as DOMRect;
@@ -221,13 +223,13 @@ test('DS-5 the active nav tab is centred inside the nav scroller (the page is ne
     await waitFor(() => expect(screen.getByText(`view:${id}`)).toBeInTheDocument());
   };
   // The edge cue is state set from the scroll effect: it lands one render after the view (waited for, not raced).
-  await go('forecast'); // tab 1: centre = 122 − (300 − 122) / 2
-  expect(scroller.scrollLeft).toBe(33);
+  await go('forecast'); // tab at 366 px: centre at 366 − (300 − 122) / 2
+  expect(scroller.scrollLeft).toBe(277);
   await waitFor(() => expect(scroller).toHaveAttribute('data-fade', 'both'));
-  await go('spatial'); // tab 2: 244 − 89
-  expect(scroller.scrollLeft).toBe(155);
-  await go('heat'); // last tab: 366 − 89 = 277, clamped to the end (488 − 300); only the start is hidden
-  expect(scroller.scrollLeft).toBe(188);
+  await go('spatial'); // 488 − 89
+  expect(scroller.scrollLeft).toBe(399);
+  await go('heat'); // last tab: clamped to the end (854 − 300), so only the start is hidden
+  expect(scroller.scrollLeft).toBe(554);
   await waitFor(() => expect(scroller).toHaveAttribute('data-fade', 'start'));
   await go('locate'); // first tab: back at 0, only the end is hidden
   expect(scroller.scrollLeft).toBe(0);
@@ -253,8 +255,7 @@ test('A2 no backend reachable: the app runs fully in replay, with no session bar
   expect(sessionBar()).toBeNull();
   expect(screen.queryByRole('alert')).toBeNull();
   expect(document.querySelector('[data-status="live"]')).toBeNull();
-  // (The legend may name LIVE to explain why it draws none; the header and the view never claim it.)
-  expect(screen.getByRole('banner').textContent).not.toMatch(/\bLIVE\b/);
+  expect(within(screen.getByRole('banner')).getByRole('status', { name: /^Mode: Replay · \$0/ })).toBeInTheDocument();
   expect(screen.getByRole('main').textContent).not.toMatch(/\bLIVE\b/);
   // Replay still works: the view and the whole nav render.
   expect(screen.getByText('view:forecast')).toBeInTheDocument();
@@ -271,6 +272,8 @@ test.each(SESSION_CASES)('A2 a %s session shows "Modal session active" with Term
   expect(bar).toHaveAttribute('role', 'status');
   expect(within(bar).getByRole('button', { name: 'Terminate' })).toBeEnabled();
   expect(bar.textContent).not.toMatch(/\$0|Replay/);
+  const expected = mode === 'live' ? /^Mode: LIVE · GPU 0 \/ GPU 1/ : /^Mode: Launching/;
+  expect(within(screen.getByRole('banner')).getByRole('status', { name: expected })).toBeInTheDocument();
   expect(screen.queryByRole('alert')).toBeNull(); // a healthy session is not an alert
   expect(screen.getByText(`view:${route}`)).toBeInTheDocument();
 });
@@ -497,8 +500,11 @@ test('A3 a view that throws shows the named error panel inside the shell, and na
   // Every route names the file its view reads.
   expect(ROUTES.map((r) => [r.id, r.files])).toEqual([
     ['locate', ['artifacts/geometry.json']],
+    ['advance', ['/api/live/status', 'artifacts/transport.json']],
+    ['transport', ['artifacts/transport.json']],
     ['forecast', ['artifacts/forecast.json']],
     ['spatial', ['artifacts/spatial.json']],
+    ['budget', ['artifacts/budget.json']],
     ['heat', ['artifacts/heatfield.json']],
   ]);
 });
@@ -546,6 +552,7 @@ test('FE2-1 a view that fails to render during a billing risk leaves the Termina
 test('A4 a global provenance legend sits under every view: collapsed, opened by keyboard, never a page footer', async () => {
   const user = userEvent.setup();
   render(<App pollMs={60_000} />);
+  expect(within(screen.getByRole('banner')).getByText('Is this W7-X heat-flux estimate accurate enough to justify a longer simulation?')).toBeInTheDocument();
   // On every route, after the view (DOM order) and outside it.
   for (const r of ROUTES) {
     act(() => {
@@ -607,9 +614,8 @@ test('A4 the legend explains every provenance kind and verification outcome defi
     expect(explained(kind), `kind ${kind}`).toMatch(/\w+ \w+/);
   }
   expect(box.querySelector('[data-status="live"]')).toBeNull();
-  // The words for `live` match the owner's redesign: no LIVE pill in the header, a session bar with Terminate instead.
-  expect(box).toHaveTextContent(/None of these views shows live GX output, so no LIVE pill is drawn here/);
-  expect(box).toHaveTextContent(/the bar under the header says so and offers Terminate/);
+  expect(box).toHaveTextContent(/The header shows live mode when the live API confirms it/);
+  expect(box).toHaveTextContent(/The session bar offers Terminate during a run/);
   // Every outcome, through the design system's own outcome -> status mapping.
   for (const outcome of outcomes) {
     expect(explained(VERIFICATION_STATUS[outcome]), `outcome ${outcome}`).toMatch(/\w+ \w+/);

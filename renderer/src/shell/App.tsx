@@ -1,32 +1,41 @@
 import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
 import { GeometryView } from '../features/geometry/GeometryView';
+import { LiveView } from '../features/live-gx/LiveView';
+import { TransportView } from '../features/transport/TransportView';
 import { ForecastView } from '../features/forecast/ForecastView';
 import { SpatialView } from '../features/spatial/SpatialView';
+import { BudgetView } from '../features/budget/BudgetView';
 import { HeatFieldView } from '../features/heatfield/HeatFieldView';
 import { useLiveStatus } from '../lib/liveStatus';
 import { ViewErrorBoundary } from './ArtifactGate';
 import { HeaderBoundary } from './Boundary';
-import { ModeAlert } from './ModeIndicator';
+import { ModeAlert, ModeIndicator } from './ModeIndicator';
 import { centeredScrollLeft, fadeEdges, type FadeEdges } from './navScroll';
 import { ProvenanceLegend } from './ProvenanceLegend';
 import { ROUTES, hrefFor, routeDef, sourceLabel, type RouteId } from './routes';
 import { ThemeSwitch } from './ThemeSwitch';
 import { useHashRoute } from './useHashRoute';
 import './shell.css';
-
+const DECISION_QUESTION = 'Is this W7-X heat-flux estimate accurate enough to justify a longer simulation?';
 
 const VIEWS: Record<RouteId, ComponentType> = {
   locate: GeometryView,
+  advance: () => <LiveView shellAnnouncesDanger />,
+  transport: TransportView,
   forecast: ForecastView,
   spatial: SpatialView,
+  budget: BudgetView,
   heat: HeatFieldView,
 };
 
 // Each navigation glyph describes the view beside it. Text carries the accessible name.
 const ROUTE_GLYPHS: Record<RouteId, string> = {
   locate: 'M12 3c6 0 9 5 7 10s-9 10-14 6-2-9 1-12 4-4 6-4Z M15 7c3 2 0 7-3 9s-6 1-5-2 4-9 8-7Z',
+  advance: 'M13 2 5 13h6l-1 9 9-12h-6l1-8Z',
+  transport: 'M3 5v14h18M5 13l4-4 4 3 6-6M5 16l4-2 4 2 6-4',
   forecast: 'M3 17l5-6 4 2 3-6m3-2 1-1m1 5 1-1M14 7l-1 4',
   spatial: 'M12 2.5 21 7l-9 4.5L3 7zM3 12l9 4.5 9-4.5M3 17l9 4.5 9-4.5',
+  budget: 'M4 5h16v14H4zM8 15v-3m4 3V8m4 7v-5',
   // A thermometer beside a field line: temperature and |B|.
   heat: 'M8 4a2 2 0 0 1 4 0v9.5a4 4 0 1 1-4 0Z M10 10v6 M16 5c3 2 4 4.5 4 7s-1 5-4 7',
 };
@@ -126,6 +135,12 @@ export function App({ pollMs = 2000 }: AppProps) {
           </div>
         </nav>
         <ThemeSwitch />
+        <div className="shell-header__context">
+          <p className="shell-header__question">{DECISION_QUESTION}</p>
+          <HeaderBoundary what="mode indicator" resetKey={live}>
+            <ModeIndicator state={live} />
+          </HeaderBoundary>
+        </div>
       </header>
       <HeaderBoundary what="live-session alert" resetKey={live}>
         <ModeAlert state={live} />

@@ -38,9 +38,8 @@ export function ProvenanceLegend() {
       <div id={bodyId} className="shell-legend__body" hidden={!open}>
         <p className="shell-legend__lede">
           Dashed outlines mean the value is not backed by data in this repo. Gray in plots and scenes means unsampled or
-          context, never data. None of these views shows live GX output, so no LIVE pill is drawn here: while the live API
-          reports a Modal session, the bar under the header says so and offers Terminate, and it becomes a danger alert
-          whenever GPUs may still be billing.
+          context, never data. The header shows live mode when the live API confirms it. The session bar offers
+          Terminate during a run and becomes a danger alert if the session state or shutdown is uncertain.
         </p>
         <div className="shell-legend__groups">
           {GROUPS.map((g) => (

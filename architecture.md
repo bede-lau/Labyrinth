@@ -72,13 +72,14 @@ independent reference in one view. Replay costs $0; live GX is gated behind qual
 * **Budget.** PRD figures recomputed in exact decimals (`pricing.py` is the single source of PRD constants); PRD ranges are
   `claimedRange` fixtures, never midpoints; `guardPlan` is priced by calling the live budget guard itself (D-023).
 
-## Live GX (main/features/live_gx) — UNVERIFIED, UNREHEARSED
+## Live GX (main/features/live_gx)
 
 `server/` → `service.LiveService` (status / guarded launch / terminate / shutdown; ledger, qualification and saved runs under `$LABYRINTH_STATE_DIR`)
 → `orchestrator.Orchestrator` (state machine over two workers, GPU 0 bean / GPU 1 triangular; backend injected via the `WorkerBackend` Protocol)
 → `modal_backend` (the only module importing `modal`, lazily; every client call bounded by 20 s) → `modal_app` (two Modal functions, `gx_worker_live` /
 `gx_worker_rehearsal`, A100-40GB, `retries=0`, deployed by hand; never imported by the server, replay or the test process).
 `rehearse` (CLI) qualifies live mode through the same guard and orchestrator: phase 1 from initialization, phase 2 from its checkpoints.
+Qualification is checked per deployment from its saved rehearsal record. The owner's previous local qualification is recorded in `status.md`.
 `comparison.live_comparison` (D-024) compares the session's bean samples (archive units) with the archived stella and GENE traces on 200–300 and 300–400
 using the transport statistics unchanged (`transport.stats`, `transport.compare`); every session snapshot carries the result as live-status `comparison`, and
 Check transport shows it only while live. With the committed archive every verdict is "no claim" (on its 100-unit windows N_eff is not established, so the ≥ 20 gate is not met, D-017).
