@@ -17,7 +17,7 @@ import {
   runToEnd,
   runToEndStates,
   runningErrorStat,
-  stepLine,
+  windowMidpoints,
   visibility,
   windowErrors,
   type ErrorStat,
@@ -261,16 +261,14 @@ test('F7 completeState is where the step button ends (the overview shows it); pl
   expect(plottedErrors(steps, advance(INITIAL, n))).toEqual({ persistence: [], frozen: [] });
 });
 
-test('F7 stepLine holds each value over its window, joins contiguous windows with a riser, and breaks the line at a gap', () => {
-  expect(stepLine([])).toEqual({ x: [], y: [], mid: [], window: [] });
-  const line = stepLine([
+test('F7 chart uses one midpoint per saved mean and breaks across a gap', () => {
+  expect(windowMidpoints([])).toEqual({ x: [], y: [], window: [] });
+  expect(windowMidpoints([
     { window: [1500, 1550], value: 2 },
     { window: [1550, 1600], value: 3 },
     { window: [1650, 1700], value: 1 },
-  ]);
-  expect(line.x).toEqual([1500, 1525, 1550, 1550, 1575, 1600, null, 1650, 1675, 1700]);
-  expect(line.y).toEqual([2, 2, 2, 3, 3, 3, null, 1, 1, 1]);
-  expect(line.mid).toEqual([false, true, false, false, true, false, false, false, true, false]);
-  const w = (s: string) => [s, s, s];
-  expect(line.window).toEqual([...w('1500–1550'), ...w('1550–1600'), null, ...w('1650–1700')]);
+  ])).toEqual({
+    x: [1525, 1575, null, 1675], y: [2, 3, null, 1],
+    window: ['1500–1550', '1550–1600', null, '1650–1700'],
+  });
 });

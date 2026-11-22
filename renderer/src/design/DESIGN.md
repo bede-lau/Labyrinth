@@ -365,6 +365,7 @@ treatment, the prefix "Danger:"), used only for the danger rows above.
 `sceneTheme(theme)` returns every colour below. Pass hex strings to `new THREE.Color(hex)`;
 `toThreeHex(hex)` is there for APIs that want an integer.
 
+* **Locate temperature and hardware**. `plasmaMaterials` defines the temperature, tracer, vessel and coil colours. `rampColor(stops, t)` interpolates the temperature stops for the edge and magnified core.
 * **Surface**: a gray wireframe (`scene.surfaceLine`) on the panel surface, matching the reference
   figures. It is context only. Unsampled parts of the surface or line stay `scene.unsampled` gray.
 * **Field lines**: tube identity colours come from the series palette (bean teal, triangular rust).
@@ -597,12 +598,12 @@ Everything `index.ts` exports at runtime. Import from `src/design`, never from a
 
 | Module | Exports |
 |---|---|
-| `tokens.ts` | `THEMES`, `STATUS_KINDS`, `SERIES_IDS`, `CALLOUT_TONES`, `themes`, `font`, `typeScale`, `fontWeight`, `space`, `radius`, `motion`, `shadow`, `zIndex`, `themeCssVars`, `staticCssVars`, `renderTokensCss`, `renderTokenReferenceMd` |
+| `tokens.ts` | `plasmaMaterials`, `THEMES`, `STATUS_KINDS`, `SERIES_IDS`, `CALLOUT_TONES`, `themes`, `font`, `typeScale`, `fontWeight`, `space`, `radius`, `motion`, `shadow`, `zIndex`, `themeCssVars`, `staticCssVars`, `renderTokensCss`, `renderTokenReferenceMd` |
 | `theme.ts` | `resolveTheme`, `setThemePreference`, `useResolvedTheme`, `useThemeTokens` |
 | `format.ts` | `formatNumber`, `formatSigned`, `formatWindow`, `trimNumber`, `spokenWindow`, `parseUnit`, `spokenUnit`, `plotlyUnit` |
 | `status.ts` | `STATUS_META`, `VERIFICATION_STATUS`, `CALLOUT_META`, `ALERT_META`, `provenanceStatus` |
 | `plotTheme.ts` | `SERIES_LABEL`, `NARROW_CHART_QUERY`, `FORECAST_LINES`, `FORECAST_LABEL`, `axisTitle`, `plotLayout`, `plotConfig`, `seriesColorway`, `seriesStyle`, `forecastStyle`, `uncertaintyBand`, `windowShape`, `unsampledShapes`, `meanSegment` |
-| `sceneTheme.ts` | `sceneTheme`, `toThreeHex`, `bmagColor`, `heatColor`, `fieldColor`, `normalizeRange`, `normalizeBmag`, `bmagGradientCss`, `heatGradientCss`, `fieldGradientCss` |
+| `sceneTheme.ts` | `rampColor`, `sceneTheme`, `toThreeHex`, `bmagColor`, `heatColor`, `fieldColor`, `normalizeRange`, `normalizeBmag`, `bmagGradientCss`, `heatGradientCss`, `fieldGradientCss` |
 | `components/` | `Panel`, `Stat`, `StatusPill`, `ProvenanceBadge`, `FixtureCheck`, `fixtureOutcome`, `SegmentedControl`, `Callout`, `Alert`, `Icon`, `Unit` |
 
 Types are exported beside them: the token and theme types, `Provenance`, `FixtureCheckData`,

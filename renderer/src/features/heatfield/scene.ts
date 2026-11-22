@@ -374,6 +374,7 @@ export function layoutSceneLabels(
   sliceTargets: readonly LabelTarget[],
   project: Projector,
   view: Viewport,
+  plateLabel = LABEL,
 ): SceneLabels {
   const plateTargets: LabelTarget[] = plates.map((p) => ({ shapes: [p.fill.positions, p.edge.positions], end: p.outerEnd, anchor: p.anchor }));
   const plateBoxes = plateTargets.map((t) => {
@@ -383,7 +384,7 @@ export function layoutSceneLabels(
   const labels: ScreenBox[] = [];
   const placed = plateTargets.map((t, k) => {
     const others = plateBoxes.filter((_, i) => i !== k && !hidden[i]);
-    const place = placeLabel(t, project, LABEL, [...labels, ...others], view);
+    const place = placeLabel(t, project, plateLabel, [...labels, ...others], view);
     const visible = place.visible && !hidden[k];
     if (visible) labels.push(place.box);
     return { ...place, visible };
@@ -473,15 +474,15 @@ export function lcfsPositions(art: HeatfieldArtifact): Float32Array {
   return out;
 }
 
-export function arrowGrid(art: HeatfieldArtifact, positions: Float32Array): ArrowGrid {
+export function arrowGrid(art: HeatfieldArtifact, positions: Float32Array, stride = ARROWS): ArrowGrid {
   const { nTheta, nPhi } = art.grid;
   const dT = (2 * Math.PI) / nTheta;
   const dP = (2 * Math.PI) / nPhi;
   // Every other θ row is shifted by one plane in φ (a staggered grid): aligned columns of cased arrows read as rings
   // round the tube, like the slice marker (DZ3-1, DZ3-2).
   const cells: number[] = [];
-  for (let i = 0, row = 0; i < nTheta; i += ARROWS.strideTheta, row++) {
-    for (let j = row % 2; j < nPhi; j += ARROWS.stridePhi) cells.push(j * nTheta + i);
+  for (let i = 0, row = 0; i < nTheta; i += stride.strideTheta, row++) {
+    for (let j = row % 2; j < nPhi; j += stride.stridePhi) cells.push(j * nTheta + i);
   }
   cells.sort((a, b) => a - b);
   const n = cells.length;
@@ -821,11 +822,11 @@ export interface HeatSceneGeometry {
   rings: Float32Array;
 }
 
-export function buildSceneGeometry(art: HeatfieldArtifact, model: HeatModel, startFlow: { fPhi: Float64Array; fTheta: Float64Array }): HeatSceneGeometry {
+export function buildSceneGeometry(art: HeatfieldArtifact, model: HeatModel, startFlow: { fPhi: Float64Array; fTheta: Float64Array }, stride = ARROWS): HeatSceneGeometry {
   const positions = lcfsPositions(art);
   let extent = 0;
   for (let c = 0; c < positions.length; c += 3) extent = Math.max(extent, Math.hypot(positions[c]!, positions[c + 1]!));
-  const arrows = arrowGrid(art, positions);
+  const arrows = arrowGrid(art, positions, stride);
   const { nTheta, nPhi } = art.grid;
   const rings = new Float32Array(nPhi * nTheta * 3);
   for (let j = 0; j < nPhi; j++) rings.set(sliceRing(art, positions, j), j * nTheta * 3);
@@ -952,7 +953,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 const ORBIT_STEP = (10 * Math.PI) / 180;
 
 export function clampOrbit(o: Orbit): Orbit {
-  return { azimuth: o.azimuth, elevation: clamp(o.elevation, -1.45, 1.45), distance: clamp(o.distance, 1.3, 6) };
+  return { azimuth: o.azimuth, elevation: clamp(o.elevation, -1.45, 1.45), distance: clamp(o.distance, 0.22, 6) };
 }
 
 export function orbitForKey(o: Orbit, key: string): Orbit | null {

@@ -25,7 +25,7 @@ test('G9 the |B|(θ*) spec reaches Plotly unchanged, on a labelled image, and is
       <p id="chart-summary">{bean.summary}</p>
     </>,
   );
-  const chart = screen.getByRole('img', { name: /\|B\| in units of B_ref against field-line angle θ\* in radians, Bean/ });
+  const chart = screen.getByRole('img', { name: /\|B\| in units of B_ref against angle from the start in degrees, Bean/ });
   expect(chart).toHaveClass('geo-chart__plot');
   expect(chart).toHaveAccessibleDescription(bean.summary);
   await waitFor(() => expect(plotly.react).toHaveBeenCalledTimes(1));
@@ -35,9 +35,9 @@ test('G9 the |B|(θ*) spec reaches Plotly unchanged, on a labelled image, and is
   expect(data).toBe(bean.data);
   expect(layout).toBe(bean.layout);
   const tube = tubeById(g, 'bean');
-  expect(data[0]).toMatchObject({ x: tube.samples.map((s) => s.thetaStar), y: tube.samples.map((s) => s.bmag) });
+  expect(data[0]).toMatchObject({ x: tube.samples.map((s) => 180 + s.thetaStar * 180 / Math.PI), y: tube.samples.map((s) => s.bmag) });
   const axes = layout as { xaxis: { title: { text: string } }; yaxis: { title: { text: string } } };
-  expect(axes.xaxis.title.text).toBe('Field-line angle θ* (rad)');
+  expect(axes.xaxis.title.text).toBe('Angle from start (°)');
   expect(axes.yaxis.title.text).toBe('Field strength |B| (B<sub>ref</sub>)');
   expect(config).toMatchObject({ displaylogo: false, responsive: true });
 

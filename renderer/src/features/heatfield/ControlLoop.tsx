@@ -1,222 +1,138 @@
-// The owner's control loop (page 1, H15): 1 current heat map → 2 predict → 3 adjust the field → 4 new heat map → 1.
-// Predict runs a copy of the current state ahead with the coils unchanged; New heat map runs the real state ahead
-// with the field the user chose. Both are this reduced model (D-027 §6), labelled model.
-import { useEffect, useState } from 'react';
-import { StatusPill, formatNumber, formatSigned } from '../../design';
-import type { Diagnostics } from './model';
+import { useEffect, useRef, useState } from 'react';
+import { balanceTargets, type HeatTransfer } from './loadBalance';
+import type { ModelState } from './model';
 import type { Simulation } from './sim';
-import { LimitStatus } from './DiverterPanel';
 
-export type LoopPhase = 1 | 2 | 3 | 4;
+export interface LoopDecision {
+  time: number;
+  transfers: readonly HeatTransfer[];
+  peakTileC: number[];
+  coils: readonly number[];
+  drive: Float32Array<ArrayBuffer>;
+}
 
-export const LOOP_STEPS: { phase: LoopPhase; title: string }[] = [
-  { phase: 1, title: 'Current heat map' },
-  { phase: 2, title: 'Predict' },
-  { phase: 3, title: 'Adjust field' },
-  { phase: 4, title: 'New heat map' },
-];
-
-export interface ControlLoopProps {
+interface ControlLoopProps {
+  disabled?: boolean;
+  balanceHeat?: boolean;
+  openPredictor?: () => Worker;
+  onDecision?: (decision: LoopDecision) => void;
   sim: Simulation;
-  ids: string[];
-  /** Model time ahead (s) that Predict and New heat map run. */
   horizonS: number;
-  limit: number;
-  /** Current step count of the running model (a change discards a pending prediction). */
-  n: number;
-  /** Peak tile temperatures now (°C). */
-  currentPeaks: number[];
-  /** Called before Predict (the view pauses playback) and after the real state moved (refresh). */
-  onPause: () => void;
-  onRan: () => void;
+  playing: boolean;
+  play: () => void;
+  onToggle?: (enabled: boolean) => void;
+  onChange?: () => void;
 }
 
-interface Prediction {
-  fromN: number;
-  fromT: number;
-  coils: number[];
-  diag: Diagnostics;
-}
-
-const list = (ids: string[]) => (ids.length <= 1 ? ids.join('') : `${ids.slice(0, -1).join(', ')} and ${ids[ids.length - 1]}`);
-
-export function ControlLoop({ sim, ids, horizonS, limit, n, currentPeaks, onPause, onRan }: ControlLoopProps) {
-  const [phase, setPhase] = useState<LoopPhase>(1);
-  const [prediction, setPrediction] = useState<Prediction | null>(null);
-  const [achieved, setAchieved] = useState<{ diag: Diagnostics; coils: number[] } | null>(null);
-  const [announcement, setAnnouncement] = useState('');
-  const steps = Math.round(horizonS / sim.model.params.dt);
-  const h = formatNumber(horizonS, 1);
-
-  // The model moved on (playback, reset, another run) while a prediction was pending: it no longer applies.
+export function ControlLoop({ disabled = false, balanceHeat = false, openPredictor, sim, horizonS, playing, play, onChange, onToggle, onDecision }: ControlLoopProps) {
+  const [enabled, setEnabled] = useState(false);
+  const [active, setActive] = useState<number[]>([]);
+  const next = useRef(0);
   useEffect(() => {
-    if ((phase === 2 || phase === 3) && prediction && n !== prediction.fromN) {
-      setPhase(1);
-      setPrediction(null);
-      setAnnouncement('The model time moved on, so the prediction was discarded. Step 1 of 4: current heat map.');
+    if (!enabled || !playing) return;
+    const steps = Math.max(1, Math.round(horizonS / sim.model.params.dt));
+    let previous = sim.state.n;
+    let worker: Worker | undefined;
+    let pending = false;
+    let closed = false;
+    let requestedAt = sim.state.n;
+    let incremental = false;
+    let shadow: ModelState | undefined;
+    const off = sim.coils.map(() => 0);
+    function apply(peakTileC: number[]) {
+      const coils = peakTileC.map(t => Number(t > sim.model.params.tileLimit));
+      const transfers = balanceHeat ? balanceTargets(peakTileC, sim.model.params.tileLimit, sim.model.params.Tcool) : [];
+      // Hold each field configuration long enough for a transfer to be visible.
+      // Keep polling at the prediction interval when only local sweeping is needed.
+      if (transfers.length) next.current = sim.state.n + Math.ceil(1.8 / sim.model.params.dt);
+      if (balanceHeat || coils.some((on, k) => on !== sim.coils[k])) sim.setCoils(coils, transfers);
+      onDecision?.({
+        time: sim.time, peakTileC, coils, transfers,
+        drive: Float32Array.from(sim.model.drive(sim.coils, sim.absoluteTime)),
+      });
+      setActive(coils.flatMap((on, k) => on ? [k + 1] : []));
     }
-  }, [n, phase, prediction]);
-
-  const predict = () => {
-    onPause();
-    const coils = [...sim.coils];
-    const diag = sim.predict(steps, coils);
-    setPrediction({ fromN: sim.state.n, fromT: sim.time, coils, diag });
-    setAchieved(null);
-    setPhase(2);
-    const over = ids.filter((_, k) => diag.peakTileC[k]! > limit);
-    setAnnouncement(
-      `Step 2 of 4, predict: at t = ${formatNumber(sim.time + horizonS, 2)} s with the field unchanged, ` +
-        (over.length ? `${list(over)} ${over.length === 1 ? 'is' : 'are'} predicted above the ${formatNumber(limit, 0)} °C limit.` : 'every diverter is predicted below the limit.'),
-    );
-  };
-
-  const adjust = () => {
-    if (!prediction) return;
-    const over = prediction.diag.peakTileC.map((v) => v > limit);
-    sim.setCoils(sim.coils.map((c, k) => (over[k] ? 1 : c)));
-    onRan();
-    setPhase(3);
-    const chosen = ids.filter((_, k) => over[k]);
-    setAnnouncement(
-      `Step 3 of 4, adjust field: ` +
-        (chosen.length ? `field adjustment switched on for ${list(chosen)}.` : 'no diverter is predicted above the limit; no adjustment is suggested.') +
-        ' Change any toggle, then run the new heat map.',
-    );
-  };
-
-  const runAhead = () => {
-    if (!prediction) return;
-    const coils = [...sim.coils];
-    sim.advance(steps);
-    const diag = sim.diagnostics();
-    setAchieved({ diag, coils });
-    setPhase(4);
-    onRan();
-    setAnnouncement(
-      `Step 4 of 4, new heat map at t = ${formatNumber(sim.time, 2)} s: ` +
-        ids.map((id, k) => `${id} ${formatNumber(diag.peakTileC[k]!, 0)} °C (predicted ${formatNumber(prediction.diag.peakTileC[k]!, 0)} °C)`).join(', ') +
-        '.',
-    );
-  };
-
-  const back = () => {
-    setPhase(1);
-    setPrediction(null);
-    setAchieved(null);
-    setAnnouncement('Step 1 of 4: current heat map.');
-  };
-
-  return (
-    <div className="hf-loop">
-      <ol className="hf-loop__steps" aria-label="Control loop steps">
-        {LOOP_STEPS.map((s) => (
-          <li key={s.phase} className="hf-loop__step" aria-current={s.phase === phase ? 'step' : undefined} data-done={s.phase < phase ? 'true' : 'false'}>
-            <span className="hf-loop__num" aria-hidden="true">
-              {s.phase}
-            </span>
-            <span className="hf-loop__title">{s.title}</span>
-          </li>
-        ))}
-      </ol>
-
-      <div className="hf-loop__body">
-        {phase === 1 && (
-          <>
-            <p className="hf-loop__text">
-              Now (t = {formatNumber(sim.time, 2)} s): peak tile temperatures{' '}
-              <span className="lab-num">{ids.map((id, k) => `${id} ${formatNumber(currentPeaks[k]!, 0)} °C`).join(' · ')}</span> <StatusPill status="model" />
-            </p>
-            <button type="button" className="hf-btn hf-btn--primary" onClick={predict}>
-              Predict {h} s ahead
-            </button>
-          </>
-        )}
-        {phase >= 2 && prediction && (
-          <div className="hf-table-wrap" role="region" aria-label="Predicted and achieved peak tile temperatures" tabIndex={0}>
-            <table className="hf-table">
-              <caption className="hf-loop__caption">
-                Peak tile temperature at t = {formatNumber(prediction.fromT + horizonS, 2)} s (°C) <StatusPill status="model" />
-              </caption>
-              <thead>
-                <tr>
-                  <th scope="col">Diverter</th>
-                  <th scope="col" className="hf-num">
-                    Predicted, field unchanged
-                  </th>
-                  {achieved && (
-                    <>
-                      <th scope="col" className="hf-num">
-                        Achieved, adjusted field
-                      </th>
-                      <th scope="col" className="hf-num">
-                        Δ
-                      </th>
-                    </>
-                  )}
-                  <th scope="col">{achieved ? 'Achieved vs limit' : 'Predicted vs limit'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ids.map((id, k) => {
-                  const p = prediction.diag.peakTileC[k]!;
-                  const a = achieved?.diag.peakTileC[k];
-                  return (
-                    <tr key={id} data-diverter={id}>
-                      <th scope="row">
-                        {id}
-                        {achieved && achieved.coils[k] ? <span className="hf-loop__adj"> · adjusted</span> : null}
-                      </th>
-                      <td className="hf-num lab-num" data-testid={`predicted-${id}`}>
-                        {formatNumber(p, 0)}
-                      </td>
-                      {achieved && a !== undefined && (
-                        <>
-                          <td className="hf-num lab-num" data-testid={`achieved-${id}`}>
-                            {formatNumber(a, 0)}
-                          </td>
-                          <td className="hf-num lab-num">{formatSigned(a - p, 0)}</td>
-                        </>
-                      )}
-                      <td>
-                        <LimitStatus value={a ?? p} limit={limit} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {phase === 2 && (
-          <button type="button" className="hf-btn hf-btn--primary" onClick={adjust}>
-            Adjust field
-          </button>
-        )}
-        {phase === 3 && (
-          <>
-            <p className="hf-loop__text">
-              Diverters predicted above the limit have their field adjustment switched on. Change any toggle in the diverter table, then
-              run the real model {h} s ahead with that field.
-            </p>
-            <button type="button" className="hf-btn hf-btn--primary" onClick={runAhead}>
-              New heat map: run {h} s
-            </button>
-          </>
-        )}
-        {phase === 4 && (
-          <button type="button" className="hf-btn hf-btn--primary" onClick={back}>
-            Back to step 1
-          </button>
-        )}
-      </div>
-      <p className="hf-small">
-        The Predict step runs this reduced model; the GENE-X spatial-parallel run cannot predict here (no checkpoints, see{' '}
-        <a href="#/spatial">Spatial parallelism</a>).
-      </p>
-      <div className="lab-visually-hidden" aria-live="polite" aria-atomic="true" data-testid="loop-announcer">
-        {announcement}
-      </div>
-    </div>
-  );
+    function update() {
+      if (sim.state.n < previous) {
+        next.current = sim.state.n;
+        shadow = undefined;
+      }
+      const elapsed = Math.max(0, sim.state.n - previous);
+      previous = sim.state.n;
+      if (pending) return;
+      if (incremental) {
+        if (!shadow) {
+          if (sim.state.n < next.current) return;
+          shadow = sim.state;
+          requestedAt = shadow.n;
+          next.current = requestedAt + steps;
+        }
+        // Run the forecast ahead of the drawing clock, in bounded frame-sized
+        // batches, when a worker cannot keep up with fast playback.
+        const left = requestedAt + steps - shadow.n;
+        shadow = sim.model.advance(shadow, off, Math.min(left, Math.max(1, elapsed * 2)));
+        if (shadow.n === requestedAt + steps) {
+          const peaks = sim.model.diagnostics(shadow, off).peakTileC;
+          shadow = undefined;
+          apply(peaks);
+        }
+        return;
+      }
+      if (sim.state.n < next.current) return;
+      requestedAt = sim.state.n;
+      next.current = requestedAt + steps;
+      if (worker) {
+        pending = true;
+        worker.postMessage({state: sim.state, steps});
+      } else {
+        apply(sim.predict(steps, off).peakTileC);
+      }
+    }
+    if (openPredictor && typeof Worker !== 'undefined') {
+      try { worker = openPredictor(); } catch { /* Synchronous replay is available offline. */ }
+    }
+    function useIncrementalForecast() {
+      if (closed) return;
+      worker?.terminate();
+      worker = undefined;
+      pending = false;
+      incremental = true;
+      next.current = sim.state.n;
+      update();
+    }
+    if (worker) {
+      worker.onmessage = ({data}: MessageEvent<number[]>) => {
+        if (closed) return;
+        pending = false;
+        if (sim.state.n >= requestedAt && sim.state.n <= requestedAt + steps) apply(data);
+        else useIncrementalForecast();
+      };
+      worker.onerror = useIncrementalForecast;
+    }
+    update();
+    const unsubscribe = sim.subscribe(update);
+    return () => {
+      closed = true;
+      unsubscribe();
+      worker?.terminate();
+      next.current = sim.state.n;
+    };
+  }, [sim, enabled, playing, horizonS, onDecision, balanceHeat, openPredictor]);
+  return <div className="auto-feedback">
+    <span>{enabled ? (playing ? (active.length ? 'Adjusting ' + active.map(k => 'D' + k).join(' · ') : 'Monitoring heat') : 'Paused') : 'Off'}</span>
+    <label className="auto-feedback__switch">
+      <input type="checkbox" role="switch" disabled={disabled} checked={enabled} onChange={e => {
+        const on = e.target.checked;
+        next.current = on ? sim.state.n : Infinity;
+        setEnabled(on);
+        onToggle?.(on);
+        if (on) play();
+        else {
+          sim.setCoils(sim.coils.map(() => 0));
+          setActive([]);
+          onChange?.();
+        }
+      }} /> Control loop
+    </label>
+  </div>;
 }

@@ -30,10 +30,49 @@
 .sp-track i { display: block; height: 100%; background: var(--lab-color-text-muted); border-radius: 0 var(--lab-radius-xs) var(--lab-radius-xs) 0; }
 .sp-track .sp-twin { border-block: 4px solid var(--lab-color-accent); background: transparent; }
 .sp-delta { margin-top: var(--lab-space-5); font-size: var(--lab-font-size-lg); }
-.sp-foot, .sp-scale p, .sp-scale summary, .sp-rate { font-size: var(--lab-font-size-sm); color: var(--lab-color-text-muted); line-height: 1.5; }
-.sp-foot { margin-top: var(--lab-space-2); }
+.sp-scale p, .sp-rate { display: flex; flex-wrap: wrap; gap: var(--lab-space-2); align-items: center; margin-top: var(--lab-space-1); }
+.sp-rate__trigger, .sp-rate__menu {
+  background: var(--lab-color-surface-raised);
+  color: var(--lab-color-text);
+  border: 1px solid var(--lab-color-border);
+  border-radius: var(--lab-radius-md);
+  font: inherit;
+  font-size: var(--lab-font-size-sm);
+}
+.sp-rate__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lab-space-2);
+  padding: var(--lab-space-1) var(--lab-space-2);
+  min-height: var(--lab-space-8);
+  min-width: 5rem;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.sp-rate__trigger:hover, .sp-rate__trigger[data-popup-open] { background: var(--lab-color-surface-hover); }
+.sp-rate__trigger svg { transform: rotate(90deg); }
+.sp-rate__trigger[data-popup-open] svg { transform: rotate(-90deg); }
+.sp-rate__positioner { z-index: var(--lab-z-popover); }
+.sp-rate__menu {
+  min-inline-size: max(var(--anchor-width), 6rem);
+  padding: var(--lab-space-1);
+  box-shadow: var(--lab-shadow-raised);
+}
+.sp-rate__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lab-space-2);
+  min-height: var(--lab-space-8);
+  padding-inline: var(--lab-space-2);
+  border-radius: var(--lab-radius-sm);
+  cursor: pointer;
+}
+.sp-rate__item[data-highlighted] { background: var(--lab-color-accent-subtle); color: var(--lab-color-accent-text); }
+.sp-rate__check { display: inline-flex; }
 .sp-scale { grid-column: 1 / -1; }
-.sp-scale-grid { display: grid; grid-template-columns: 1fr 1fr; margin-block: var(--lab-space-4); }
+.sp-scale-grid { display: grid; grid-template-columns: 1fr 1fr; margin-block-start: var(--lab-space-4); }
 .sp-scale-grid > div { padding-inline-end: var(--lab-space-4); }
 .sp-scale-grid > div + div { padding-inline-start: var(--lab-space-5); border-inline-start: 1px solid var(--lab-color-border); }
 .sp-scale-grid h3 { font-size: var(--lab-font-size-md); }
@@ -46,10 +85,6 @@
 .sp-node-grid { display: grid; width: max-content; grid-template-columns: repeat(8, 14px); gap: 3px; }
 .sp-node-grid i { height: 9px; background: repeating-linear-gradient(to right,var(--lab-color-accent) 0 2px,transparent 2px 4px); }
 .sp-rate { display: inline-flex; gap: 8px; align-items: center; margin-top: 4px; }
-.sp-rate select { background: var(--lab-color-surface); color: var(--lab-color-text); border: 1px solid var(--lab-color-border-strong); border-radius: var(--lab-radius-sm); padding: 4px; }
-.sp-scale details { border-top: 1px solid var(--lab-color-border); margin-top: 12px; padding-top: 8px; font-size: var(--lab-font-size-sm); }
-.sp-scale details p { max-width: 80ch; margin: 8px 0; }
-.sp-scale summary { cursor: pointer; }
 .sp-mobile-key { display: flex; justify-content: space-around; font-size: var(--lab-font-size-xs); }
 @media (max-width: 760px) {
   .sp-atlas { grid-template-columns: minmax(0,1fr); }
@@ -91,7 +126,6 @@
 .sp-strip i[data-lit="true"] { background: var(--lab-color-accent); }
 .sp-transport button { min-height: 40px; min-width: 40px; }
 .sp-transport button:first-child { background: var(--lab-color-accent); color: var(--lab-color-accent-fg); border-color: var(--lab-color-accent); min-width: 8em; }
-.sp-caption { font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); margin-top: var(--lab-space-2); }
 .sp-control { margin: 0; }
 .sp-control svg { width: 100%; max-height: 300px; display: block; }
 .sp-control text { font: 12px system-ui, sans-serif; fill: var(--lab-color-text-muted); }

@@ -1,7 +1,7 @@
 // Hash routes in rail order. `#gallery` is handled separately by main.tsx.
 import type { ArtifactId } from '../lib/artifacts';
 
-export type RouteId = 'locate' | 'advance' | 'transport' | 'forecast' | 'spatial' | 'budget' | 'heat';
+export type RouteId = 'locate' | 'forecast' | 'spatial';
 
 export interface RouteDef {
   id: RouteId;
@@ -19,14 +19,9 @@ export interface RouteDef {
 const artifactFile = (id: ArtifactId) => `artifacts/${id}.json`;
 
 export const ROUTES: readonly RouteDef[] = [
-  { id: 'locate', label: 'Locate the tubes', source: 'replay', files: [artifactFile('geometry')] },
-  { id: 'advance', label: 'Advance plasma', source: 'live', files: ['/api/live/status', artifactFile('transport')] },
-  { id: 'transport', label: 'Check transport', source: 'replay', files: [artifactFile('transport')] },
+  { id: 'locate', label: 'W7-X Model', source: 'replay', files: [artifactFile('geometry')] },
   { id: 'forecast', label: 'Forecast replay', source: 'replay', files: [artifactFile('forecast')] },
   { id: 'spatial', label: 'Spatial parallelism', source: 'replay', files: [artifactFile('spatial')] },
-  { id: 'budget', label: 'Budget', source: 'replay', files: [artifactFile('budget')] },
-  // D-027: real VMEC geometry and |B| with an illustrative edge heat model computed in the browser.
-  { id: 'heat', label: 'Heat & field', source: 'model', files: [artifactFile('heatfield')] },
 ];
 
 /** The words for a route's source: the nav prints them under the label of every view that is not a replay. */

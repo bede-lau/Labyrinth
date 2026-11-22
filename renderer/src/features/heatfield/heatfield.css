@@ -270,3 +270,12 @@
   .hf-keys { grid-template-columns: minmax(0, 1fr); }
   .hf-loop__steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+.auto-feedback { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem .7rem; font-size: .88rem; }
+.auto-feedback > span { color: var(--lab-color-text-muted); }
+.auto-feedback__switch { display: inline-flex; align-items: center; gap: .5rem; cursor: pointer; font-weight: 600; }
+.auto-feedback input { appearance: none; margin: 0; width: 2rem; height: 1.15rem; border-radius: 1rem;
+  border: 1px solid var(--lab-color-border-strong); background: var(--lab-color-surface); cursor: pointer; }
+.auto-feedback input::before { content: ''; display: block; margin: .12rem; height: .79rem; width: .79rem; border-radius: 50%; background: var(--lab-color-text-muted); }
+.auto-feedback input:checked { background: var(--lab-color-text); }
+.auto-feedback input:checked::before { transform: translateX(.8rem); background: var(--lab-color-surface); }

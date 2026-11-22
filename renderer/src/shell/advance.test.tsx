@@ -10,9 +10,6 @@ import { ROUTES } from './routes';
 const plotly = vi.hoisted(() => ({ react: vi.fn(), purge: vi.fn() }));
 vi.mock('plotly.js-dist-min', () => ({ default: plotly }));
 vi.mock('../features/geometry/GeometryView', () => ({ GeometryView: () => <p>view:locate</p> }));
-vi.mock('../features/live-gx/LiveView', () => ({ LiveView: () => <p>view:advance</p> }));
-vi.mock('../features/transport/TransportView', () => ({ TransportView: () => <p>view:transport</p> }));
-vi.mock('../features/budget/BudgetView', () => ({ BudgetView: () => <p>view:budget</p> }));
 vi.mock('../features/forecast/ForecastView', () => ({ ForecastView: () => <p>view:forecast</p> }));
 vi.mock('../features/spatial/SpatialView', () => ({ SpatialView: () => <p>view:spatial</p> }));
 vi.mock('../features/heatfield/HeatFieldView', () => ({ HeatFieldView: () => <p>view:heat</p> }));
@@ -30,7 +27,7 @@ const STATUS: LiveStatus = {
 };
 
 beforeEach(() => {
-  history.replaceState(null, '', '#/advance');
+  history.replaceState(null, '', '#/locate');
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -39,8 +36,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test('the billing-alert cases cover every route in the nav, Heat & field included', () => {
-  expect(ROUTES.map((r) => r.id)).toEqual(['locate', 'advance', 'transport', 'forecast', 'spatial', 'budget', 'heat']);
+test('the billing-alert cases cover every route in the nav', () => {
+  expect(ROUTES.map((r) => r.id)).toEqual(['locate', 'forecast', 'spatial']);
 });
 
 test.each(ROUTES.map((r) => r.id))('existing billing alert offers Terminate on %s', async route => {

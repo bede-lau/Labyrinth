@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { bmagColor, normalizeBmag, sceneTheme, themes } from '../../design';
+import { App } from '../../shell/App';
 import { geometryFixture } from './fixture';
 import { GeometryView } from './GeometryView';
 import {
@@ -21,22 +22,13 @@ import { checkGeometry, type GeometryArtifact } from './types';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// WebGL and Plotly do not exist in jsdom: the adapters are replaced by recorders, and the
-// data -> props logic they receive is what is tested.
-const rec = vi.hoisted(() => ({ scene: [] as unknown[], chart: [] as unknown[] }));
+const rec = vi.hoisted(() => ({ scene: [] as unknown[] }));
 vi.mock('./FluxScene', () => ({
   FluxScene: (p: { model: SceneModel; label: string }) => {
     rec.scene.push(p);
     return <div data-testid="scene" data-selected={p.model.selected} aria-label={p.label} role="img" />;
   },
 }));
-vi.mock('./PlotlyChart', () => ({
-  PlotlyChart: (p: { data: { name: string }[]; ariaLabel: string; layout: unknown }) => {
-    rec.chart.push(p);
-    return <div data-testid="chart" role="img" aria-label={p.ariaLabel} data-series={p.data[0]?.name} />;
-  },
-}));
-
 function serve(body: unknown, status = 200) {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status })));
 }
@@ -48,7 +40,6 @@ const pathPoints = (d: string) => [...d.matchAll(/(-?[0-9.]+),(-?[0-9.]+)/g)].ma
 
 beforeEach(() => {
   rec.scene.length = 0;
-  rec.chart.length = 0;
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -134,11 +125,15 @@ test('G7 scene: gray closed surface (seam wrapped), selected tube coloured by |B
   expect(orbitForKey(DEFAULT_ORBIT, 'x')).toBeNull();
   expect(Math.hypot(...cameraPosition(DEFAULT_ORBIT, 6))).toBeCloseTo(DEFAULT_ORBIT.distance * 6);
 
-  // DOM: the scene gets the model, the |B| colour bar is always shown with its label and range.
+  // DOM: the scene gets the model and the disclosure reveals the labelled |B| colour bar.
   serve(g);
   render(<GeometryView />);
   await waitFor(() => expect(screen.getByTestId('scene')).toBeInTheDocument());
   expect(last<{ model: SceneModel }>(rec.scene).model.selected).toBe('bean');
+  const controls = screen.getByText('Model controls', { selector: 'summary' });
+  expect(controls.parentElement).not.toHaveAttribute('open');
+  await userEvent.click(controls);
+  expect(controls.parentElement).toHaveAttribute('open');
   const bar = screen.getByRole('img', { name: /Colour bar: .*\|B\| \/ B_ref/ });
   expect(bar).toHaveTextContent('|B| / Bref');
   expect(within(bar).getByTestId('colorbar').getAttribute('style')).toMatch(/linear-gradient/);
@@ -148,18 +143,27 @@ test('G7 scene: gray closed surface (seam wrapped), selected tube coloured by |B
   expect(colorBarTicks()).toEqual([lo.toFixed(3), ((lo + hi) / 2).toFixed(3), hi.toFixed(3)]);
   expect(bar).toHaveAccessibleName(`Colour bar: Bean (ζ = 0°) coloured by |B| / B_ref from ${lo.toFixed(3)} (dark) to ${hi.toFixed(3)} (light)`);
   expect(screen.getByRole('list', { name: 'Scene key' })).toHaveTextContent(/start θ\* = −π.*centre θ\* = 0.*end θ\* = π/);
+  await userEvent.click(controls);
+  expect(controls.parentElement).not.toHaveAttribute('open');
 });
 
-test('G8 bean/triangular selector is keyboard accessible and switches the scene, the |B| plot and the inset', async () => {
+test('G8 the header GPU assignments popup switches the scene, the |B| plot and the inset by keyboard', async () => {
   const g = geometryFixture();
   serve(g);
   const user = userEvent.setup();
-  render(<GeometryView />);
-  const group = await screen.findByRole('group', { name: 'W7-X GPU assignments' });
+  render(<App />);
+  const header = within(screen.getByRole('banner'));
+  const trigger = await header.findByRole('button', { name: 'GPU assignments' });
+  await user.click(screen.getByText('Model controls', { selector: 'summary' }));
+  expect(trigger.parentElement?.nextElementSibling).toBe(header.getByRole('radiogroup', { name: 'Colour theme' }));
+  expect(screen.queryByRole('group', { name: 'W7-X GPU assignments' })).not.toBeInTheDocument();
+  trigger.focus();
+  await user.keyboard('{Enter}');
+  const popup = await screen.findByRole('dialog', { name: 'GPU assignments' });
+  const group = within(popup).getByRole('group', { name: 'W7-X GPU assignments' });
   const bean = within(group).getByRole('button', { name: /Bean/ });
   expect(bean).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByTestId('scene')).toHaveAttribute('data-selected', 'bean');
-  expect(screen.getByTestId('chart')).toHaveAttribute('data-series', expect.stringContaining('Bean'));
   expect(screen.getByRole('heading', { name: 'Cross-section at ζ = 0°' })).toBeInTheDocument();
 
   bean.focus();
@@ -169,7 +173,6 @@ test('G8 bean/triangular selector is keyboard accessible and switches the scene,
   expect(tri).toHaveFocus();
   expect(screen.getByTestId('scene')).toHaveAttribute('data-selected', 'triangular');
   expect(last<{ model: SceneModel }>(rec.scene).model.tubes.find((t) => t.selected)?.id).toBe('triangular');
-  expect(screen.getByTestId('chart')).toHaveAttribute('data-series', expect.stringContaining('Triangular'));
   expect(screen.getByRole('heading', { name: 'Cross-section at ζ = 36°' })).toBeInTheDocument();
   expect(screen.getByRole('img', { name: /Cross-section at ζ = 36°/ })).toBeInTheDocument();
 
@@ -201,6 +204,10 @@ test('G8 bean/triangular selector is keyboard accessible and switches the scene,
   const [blo, bhi] = beanTube.bmagRange;
   expect(colorBarTicks()).toEqual([blo.toFixed(3), ((blo + bhi) / 2).toFixed(3), bhi.toFixed(3)]);
   expect(within(screen.getByRole('img', { name: /Cross-section at ζ = 0°/ })).getByTestId('inset-boundary')).toHaveAttribute('d', wantBean.boundaryPath!);
+
+  await user.keyboard('{Escape}');
+  expect(screen.queryByRole('dialog', { name: 'GPU assignments' })).not.toBeInTheDocument();
+  await waitFor(() => expect(trigger).toHaveFocus());
 });
 
 test('G9 cross-section inset (solid sampled surface, dashed boundary) and |B|(θ*) chart with units', async () => {
@@ -242,13 +249,13 @@ test('G9 cross-section inset (solid sampled surface, dashed boundary) and |B|(θ
   // Chart spec: |B| vs θ*, units on both axes, start/centre/end markers.
   const spec = bmagChartSpec(tube, 'light');
   const layout = spec.layout as { xaxis: { title: { text: string } }; yaxis: { title: { text: string } } };
-  expect(layout.xaxis.title.text).toBe('Field-line angle θ* (rad)');
+  expect(layout.xaxis.title.text).toBe('Angle from start (°)');
   expect(layout.yaxis.title.text).toBe('Field strength |B| (B<sub>ref</sub>)');
   const line = spec.data[0] as { x: number[]; y: number[] };
-  expect(line.x).toEqual(tube.samples.map((s) => s.thetaStar));
+  expect(line.x).toEqual(tube.samples.map((s) => 180 + s.thetaStar * 180 / Math.PI));
   expect(line.y).toEqual(tube.samples.map((s) => s.bmag));
   expect(spec.data.slice(1).map((d) => (d as { name: string }).name)).toEqual(['start', 'centre', 'end']);
-  expect(spec.summary).toMatch(/^Bean \(ζ = 0°\): 9 samples over θ\* −3\.142 to 3\.142 rad\. \|B\| ranges from/);
+  expect(spec.summary).toMatch(/^Bean \(ζ = 0°\): 9 samples over 0\.000 to 360\.000° from start\. \|B\| ranges from/);
 
   serve(g);
   render(<GeometryView />);
@@ -264,71 +271,18 @@ test('G9 cross-section inset (solid sampled surface, dashed boundary) and |B|(θ
   expect(inset).toHaveAccessibleDescription(/Solid line: the sampled flux surface.*Dashed line: the plasma boundary/);
   expect(inset).toHaveTextContent('Major radius R (m)');
   expect(inset).toHaveTextContent('Z (m)');
-  const chart = screen.getByTestId('chart');
-  expect(chart).toHaveAccessibleName(/\|B\| in units of B_ref against field-line angle θ\* in radians/);
   expect(screen.queryByText(spec.summary)).toBeNull();
 });
 
-test('geometry retains verification status and omits the validation report', async () => {
-  const g = geometryFixture();
-  serve(g);
-  render(<GeometryView />);
-  expect(await screen.findByTestId('geo-verdict')).toHaveTextContent('129-sample acceptance blocked');
+test('Locate shows the scene and cross-section without the field-strength card or status tags', async () => {
+  serve(geometryFixture());
+  const { container } = render(<GeometryView />);
+  await screen.findByRole('region', { name: '3D plasma scene' });
+  expect(screen.queryByRole('heading', { name: /Field strength along the line/i })).toBeNull();
+  expect(container.querySelector('.lab-pill, .lab-prov, .geo-layout__scene header')).toBeNull();
+  expect(screen.queryByText(/equal R and Z scale/)).toBeNull();
   expect(screen.queryByTestId('acceptance129')).toBeNull();
-  expect(document.querySelector('.geo-layout__scene footer')).toBeNull();
-});
-
-test('G10 honesty labels: both checks named above the fold, provenance badge, no replay eyebrow, kind from the artifact, no live pill', async () => {
-  const g = geometryFixture();
-  serve(g);
-  const first = render(<GeometryView />);
-  const scene = await screen.findByRole('region', { name: /Field lines on the ρ = 0\.8 flux surface/ });
-  // DS-8: the two verdicts are named in the first panel, each from its own artifact field.
-  const header = scene.querySelector('.lab-panel__header')!;
-  const verdicts = [...header.querySelectorAll('[data-testid="geo-verdict"] .lab-pill')].map((p) => `${p.getAttribute('data-status')}:${p.textContent}`);
-  expect(verdicts).toEqual(['passed:ρ 0.7 check verified', 'blocked:129-sample acceptance blocked']);
-  // Provenance record on the result panel; the compact view keeps the source on demand.
-  expect(within(scene).getByRole('button', { name: 'Provenance of field-line geometry: Derived, Blocked' })).toBeInTheDocument();
-  expect(scene.querySelector('.lab-panel__eyebrow')).toBeNull();
-  expect(scene).not.toHaveTextContent(/· live|· Live|\bLIVE\b/);
-  // Every panel that shows numbers carries the artifact's provenance kind.
-  const chart = screen.getByRole('region', { name: /Field strength along the line/ });
-  const inset = screen.getByRole('region', { name: /Cross-section at ζ = 0°/ });
-  expect([...chart.querySelectorAll('.lab-pill')].map((p) => p.getAttribute('data-status'))).toEqual(['derived']);
-  expect([...inset.querySelectorAll('.lab-pill')].map((p) => p.getAttribute('data-status'))).toEqual(['derived']);
-  expect(document.querySelector('[data-status="live"]')).toBeNull();
-  first.unmount();
-
-  // The kind is read from the artifact, and the acceptance from validation.acceptance129, never from the
-  // provenance record: a record that says "passed" leaves the acceptance blocked, with the artifact's reason.
-  const other: GeometryArtifact = {
-    ...g,
-    provenance: { ...g.provenance, kind: 'archive', verification: { outcome: 'passed', details: 'synthetic record' } },
-    validation: {
-      ...g.validation,
-      acceptance129: { outcome: 'blocked', details: 'Synthetic reason: the samples are elsewhere. Unblock: fetch them from the archive.' },
-    },
-  };
-  serve(other);
-  const second = render(<GeometryView />);
-  const chart2 = await screen.findByRole('region', { name: /Field strength along the line/ });
-  expect(chart2.querySelector('.lab-pill')).toHaveAttribute('data-status', 'archive');
-  expect(screen.getByRole('region', { name: /Cross-section at ζ = 0°/ }).querySelector('.lab-pill')).toHaveAttribute('data-status', 'archive');
-  const scene2 = screen.getByRole('region', { name: /Field lines on the ρ = 0\.8 flux surface/ });
-  expect([...scene2.querySelectorAll('[data-testid="geo-verdict"] .lab-pill')].map((p) => `${p.getAttribute('data-status')}:${p.textContent}`)).toEqual([
-    'passed:ρ 0.7 check verified',
-    'blocked:129-sample acceptance blocked',
-  ]);
-  expect(screen.queryByTestId('acceptance129')).toBeNull();
-  second.unmount();
-
-  // An artifact is replayed evidence: a "live" provenance kind cannot put a LIVE pill on the chart or the inset.
-  serve({ ...g, provenance: { ...g.provenance, kind: 'live' } });
-  render(<GeometryView />);
-  const chart3 = await screen.findByRole('region', { name: /Field strength along the line/ });
-  expect(chart3.querySelector('.lab-pill')).toHaveAttribute('data-status', 'replay');
-  expect(chart3.querySelector('[data-status="live"]')).toBeNull();
-  expect(screen.getByRole('region', { name: /Cross-section at ζ = 0°/ }).querySelector('[data-status="live"]')).toBeNull();
+  expect(container.querySelector('.geo-layout__scene footer')).toBeNull();
 });
 
 test('DS-15 the cross-section inset is capped at its drawn size, so its labels keep their type size', () => {

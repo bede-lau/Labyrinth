@@ -86,7 +86,7 @@ export function toThreeHex(hex: string): number {
  * sRGB between adjacent stops. The stops are close enough (≈ 5–10 ΔE00 apart) that the
  * interpolation error is below a JND.
  */
-function rampColor(stops: readonly string[], t: number): RGB {
+export function rampColor(stops: readonly string[], t: number): RGB {
   const x = Math.min(1, Math.max(0, Number.isFinite(t) ? t : 0)) * (stops.length - 1);
   const i = Math.min(stops.length - 2, Math.floor(x));
   const f = x - i;

@@ -1,20 +1,14 @@
 import { act, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { VERIFICATION_STATUS } from '../design';
 import { App } from './App';
-import { ROUTES, routeDef } from './routes';
+import { ROUTES } from './routes';
 import type { LiveStatus } from '../lib/liveStatus';
 
 // The shell is tested on its own: each view is replaced by a marker so the shell's routing, the live-session bar
-// and the legend are what is exercised (the views have their own tests). `boom` lets a test make a view throw while
+// and the header are what is exercised (the views have their own tests). `boom` lets a test make a view throw while
 // rendering; the forecast marker also reads the shared live status to prove there is one poller for the shell and views.
-const boom = vi.hoisted(() => ({ spatial: false, heat: false }));
-vi.mock('../features/geometry/GeometryView', () => ({ GeometryView: () => <p>view:locate</p> }));
-vi.mock('../features/live-gx/LiveView', () => ({ LiveView: () => <p>view:advance</p> }));
-vi.mock('../features/transport/TransportView', () => ({ TransportView: () => <p>view:transport</p> }));
-vi.mock('../features/budget/BudgetView', () => ({ BudgetView: () => <p>view:budget</p> }));
+const boom = vi.hoisted(() => ({ spatial: false, locate: false }));
+vi.mock('../features/geometry/GeometryView', () => ({ GeometryView: () => { if (boom.locate) throw new Error('geometry unavailable'); return <p>view:locate</p>; } }));
 vi.mock('../features/forecast/ForecastView', async () => {
   const { useLiveStatus } = await import('../lib/liveStatus');
   return {
@@ -35,12 +29,6 @@ vi.mock('../features/spatial/SpatialView', () => ({
   SpatialView: () => {
     if (boom.spatial) throw new Error('runs[0].ranks is undefined');
     return <p>view:spatial</p>;
-  },
-}));
-vi.mock('../features/heatfield/HeatFieldView', () => ({
-  HeatFieldView: () => {
-    if (boom.heat) throw new Error('surfaces[8].B is undefined');
-    return <p>view:heat</p>;
   },
 }));
 
@@ -71,19 +59,10 @@ const navLabels = () => navLinks().map((l) => l.querySelector('.shell-nav__label
 /** The owner's live-session bar under the header: "Modal session active" with Terminate (launching or live, no danger). */
 const sessionBar = () => screen.queryByText('Modal session active');
 const probe = () => screen.getByTestId('view-live-probe');
-const legend = () => screen.getByRole('region', { name: 'Provenance legend' });
-const legendToggle = () => within(legend()).getByRole('button', { name: 'Provenance legend' });
-async function openLegend(user = userEvent.setup()) {
-  const toggle = legendToggle();
-  if (toggle.getAttribute('aria-expanded') !== 'true') await user.click(toggle);
-  expect(toggle).toHaveAttribute('aria-expanded', 'true');
-  return legend();
-}
-
 beforeEach(() => {
   history.replaceState(null, '', '/');
   boom.spatial = false;
-  boom.heat = false;
+  boom.locate = false;
   vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
 });
 afterEach(() => {
@@ -97,16 +76,15 @@ test('an unknown route opens geometry', async () => {
   history.replaceState(null, '', '#/unknown');
   render(<App />);
   await waitFor(() => expect(location.hash).toBe('#/locate'));
-  expect(screen.getByRole('heading', {level: 1})).toHaveTextContent('Locate the tubes');
+  expect(screen.getByRole('heading', {level: 1})).toHaveTextContent('W7-X Model');
   expect(screen.queryByRole('contentinfo')).toBeNull();
-  expect(screen.getByRole('status', { name: /^Mode: Replay · \$0/ })).toBeInTheDocument();
 });
 
-test('A1 seven keyboard-accessible views, current page and route announcements', async () => {
+test('A1 three keyboard-accessible views, current page and route announcements', async () => {
   const user = userEvent.setup();
   render(<App />);
   const links = within(screen.getByRole('navigation', {name: 'Views'})).getAllByRole('link');
-  expect(navLabels()).toEqual(['Locate the tubes', 'Advance plasma', 'Check transport', 'Forecast replay', 'Spatial parallelism', 'Budget', 'Heat & field']);
+  expect(navLabels()).toEqual(['W7-X Model', 'Forecast replay', 'Spatial parallelism' ]);
   for (const [i, route] of ROUTES.entries()) {
     links[i]!.focus();
     await user.keyboard('{Enter}');
@@ -120,7 +98,7 @@ test('A1 seven keyboard-accessible views, current page and route announcements',
   expect(screen.getByRole('main')).toHaveFocus();
 });
 
-test('A1 navigation reaches all seven views by keyboard and the URL hash names the view; Heat & field names its source', async () => {
+test('A1 navigation reaches all three views by keyboard and the URL hash names the view', async () => {
   const user = userEvent.setup();
   render(<App />);
 
@@ -129,17 +107,9 @@ test('A1 navigation reaches all seven views by keyboard and the URL hash names t
   expect(screen.getByText('view:locate')).toBeInTheDocument();
 
   const links = navLinks();
-  expect(links.map((l) => l.getAttribute('href'))).toEqual(['#/locate', '#/advance', '#/transport', '#/forecast', '#/spatial', '#/budget', '#/heat']);
+  expect(links.map((l) => l.getAttribute('href'))).toEqual(['#/locate', '#/forecast', '#/spatial']);
   expect(links.map((l) => l.getAttribute('href'))).toEqual(ROUTES.map((r) => `#/${r.id}`));
   expect(links[0]).toHaveAttribute('aria-current', 'page');
-  // How a view's data arrives: replay is the app's default and is not repeated; Heat & field is an illustrative model
-  // (D-027), never "replay" or a GX run, and says so in its link (part of its accessible name).
-  expect(links.map((l) => l.querySelector('.shell-nav__source')?.textContent ?? null)).toEqual([null, 'GX run · gated', null, null, null, null, 'illustrative model']);
-  expect(links[6]).toHaveAccessibleName('Heat & field illustrative model');
-  expect(links[6]).not.toHaveTextContent(/replay|GX run/i);
-  expect(routeDef('heat')).toEqual({ id: 'heat', label: 'Heat & field', source: 'model', files: ['artifacts/heatfield.json'] });
-  expect(ROUTES.at(-1)?.id).toBe('heat');
-
   // Keyboard: Tab past the skip link to the nav, then through each link + Enter.
   for (let n = 0; n < 6 && document.activeElement !== links[0]; n++) await user.tab();
   for (const [i, r] of ROUTES.entries()) {
@@ -161,9 +131,9 @@ test('A1 navigation reaches all seven views by keyboard and the URL hash names t
   });
   await waitFor(() => expect(screen.getByText('view:forecast')).toBeInTheDocument());
   act(() => {
-    location.hash = '#/heat';
+    location.hash = '#/spatial';
   });
-  await waitFor(() => expect(screen.getByText('view:heat')).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText('view:spatial')).toBeInTheDocument());
 
   // Unknown hash falls back to the default view and rewrites the URL.
   act(() => {
@@ -171,6 +141,34 @@ test('A1 navigation reaches all seven views by keyboard and the URL hash names t
   });
   await waitFor(() => expect(screen.getByText('view:locate')).toBeInTheDocument());
   expect(location.hash).toBe('#/locate');
+});
+
+test('visited tabs retain their mounted view until the shell is reloaded', async () => {
+  const user = userEvent.setup();
+  const first = render(<App />);
+  expect(screen.queryByText('view:spatial')).toBeNull();
+  const markers = new Map<string, HTMLElement>();
+
+  for (const { id, label } of ROUTES) {
+    await user.click(screen.getByRole('link', { name: label }));
+    const view = await screen.findByText('view:' + id);
+    expect(view).toBeVisible();
+    markers.set(id, view);
+  }
+  for (const { id, label } of ROUTES) {
+    await user.click(screen.getByRole('link', { name: label }));
+    await waitFor(() => expect(markers.get(id)).toBeVisible());
+    expect(screen.getByText('view:' + id)).toBe(markers.get(id));
+    for (const [other, view] of markers) {
+      if (other !== id) expect(view).not.toBeVisible();
+    }
+  }
+
+  first.unmount();
+  render(<App />);
+  expect(screen.getByText('view:spatial')).not.toBe(markers.get('spatial'));
+  expect(screen.queryByText('view:locate')).toBeNull();
+  expect(screen.queryByText('view:forecast')).toBeNull();
 });
 
 test('A1 a route change is announced and moves focus to the view, unless the keyboard is in the nav (FE-12)', async () => {
@@ -194,11 +192,11 @@ test('A1 a route change is announced and moves focus to the view, unless the key
 
   // Keyboard on a nav link: the announcement is made and focus stays on the link (Tab continues along the nav).
   const links = navLinks();
-  links[6]!.focus();
+  links[2]!.focus();
   await user.keyboard('{Enter}');
-  await waitFor(() => expect(announcer).toHaveTextContent('Heat & field view'));
-  expect(screen.getByText('view:heat')).toBeInTheDocument();
-  expect(links[6]).toHaveFocus();
+  await waitFor(() => expect(announcer).toHaveTextContent('Spatial parallelism view'));
+  expect(screen.getByText('view:spatial')).toBeInTheDocument();
+  expect(links[2]).toHaveFocus();
 });
 
 test('DS-5 the active nav tab is centred inside the nav scroller (the page is never scrolled) and hidden edges are flagged', async () => {
@@ -208,10 +206,10 @@ test('DS-5 the active nav tab is centred inside the nav scroller (the page is ne
   const scroller = screen.getByRole('navigation', { name: 'Views' }).querySelector<HTMLElement>('.shell-nav__scroll')!;
   expect(scroller).not.toBeNull();
   const links = navLinks();
-  // Seven 122 px tabs inside a 300 px scroller.
-  Object.defineProperty(scroller, 'clientWidth', { configurable: true, value: 300 });
-  Object.defineProperty(scroller, 'scrollWidth', { configurable: true, value: 854 });
-  scroller.getBoundingClientRect = () => ({ left: 0, width: 300 }) as DOMRect;
+  // Four 122 px tabs inside a 215 px scroller.
+  Object.defineProperty(scroller, 'clientWidth', { configurable: true, value: 215 });
+  Object.defineProperty(scroller, 'scrollWidth', { configurable: true, value: 366 });
+  scroller.getBoundingClientRect = () => ({ left: 0, width: 215 }) as DOMRect;
   links.forEach((l, i) => {
     l.getBoundingClientRect = () => ({ left: i * 122 - scroller.scrollLeft, width: 122 }) as DOMRect;
   });
@@ -223,13 +221,11 @@ test('DS-5 the active nav tab is centred inside the nav scroller (the page is ne
     await waitFor(() => expect(screen.getByText(`view:${id}`)).toBeInTheDocument());
   };
   // The edge cue is state set from the scroll effect: it lands one render after the view (waited for, not raced).
-  await go('forecast'); // tab at 366 px: centre at 366 − (300 − 122) / 2
-  expect(scroller.scrollLeft).toBe(277);
+  await go('forecast'); // 122 − (215 − 122) / 2
+  expect(scroller.scrollLeft).toBe(76);
   await waitFor(() => expect(scroller).toHaveAttribute('data-fade', 'both'));
-  await go('spatial'); // 488 − 89
-  expect(scroller.scrollLeft).toBe(399);
-  await go('heat'); // last tab: clamped to the end (854 − 300), so only the start is hidden
-  expect(scroller.scrollLeft).toBe(554);
+  await go('spatial'); // 244 − (215 − 122) / 2
+  expect(scroller.scrollLeft).toBe(151);
   await waitFor(() => expect(scroller).toHaveAttribute('data-fade', 'start'));
   await go('locate'); // first tab: back at 0, only the end is hidden
   expect(scroller.scrollLeft).toBe(0);
@@ -255,7 +251,7 @@ test('A2 no backend reachable: the app runs fully in replay, with no session bar
   expect(sessionBar()).toBeNull();
   expect(screen.queryByRole('alert')).toBeNull();
   expect(document.querySelector('[data-status="live"]')).toBeNull();
-  expect(within(screen.getByRole('banner')).getByRole('status', { name: /^Mode: Replay · \$0/ })).toBeInTheDocument();
+  expect(within(screen.getByRole('banner')).queryByRole('status', { name: /^Mode:/ })).toBeNull();
   expect(screen.getByRole('main').textContent).not.toMatch(/\bLIVE\b/);
   // Replay still works: the view and the whole nav render.
   expect(screen.getByText('view:forecast')).toBeInTheDocument();
@@ -272,8 +268,6 @@ test.each(SESSION_CASES)('A2 a %s session shows "Modal session active" with Term
   expect(bar).toHaveAttribute('role', 'status');
   expect(within(bar).getByRole('button', { name: 'Terminate' })).toBeEnabled();
   expect(bar.textContent).not.toMatch(/\$0|Replay/);
-  const expected = mode === 'live' ? /^Mode: LIVE · GPU 0 \/ GPU 1/ : /^Mode: Launching/;
-  expect(within(screen.getByRole('banner')).getByRole('status', { name: expected })).toBeInTheDocument();
   expect(screen.queryByRole('alert')).toBeNull(); // a healthy session is not an alert
   expect(screen.getByText(`view:${route}`)).toBeInTheDocument();
 });
@@ -444,7 +438,6 @@ test('A2 a partial or malformed status body never blanks the page: it is rejecte
     expect(navLinks()).toHaveLength(ROUTES.length);
     expect(screen.getByText('view:forecast')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Forecast replay');
-    expect(legend()).toBeInTheDocument();
     r.unmount();
   }
 });
@@ -459,9 +452,9 @@ test('FE-5 the session bar and the views read one shared status store: one polle
   expect(statusCalls(f)).toBe(1);
   // Changing the view does not start another poller or drop the state.
   act(() => {
-    location.hash = '#/heat';
+    location.hash = '#/spatial';
   });
-  await waitFor(() => expect(screen.getByText('view:heat')).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText('view:spatial')).toBeInTheDocument());
   expect(sessionBar()).not.toBeNull();
   act(() => {
     location.hash = '#/forecast';
@@ -475,16 +468,15 @@ test('FE-5 the session bar and the views read one shared status store: one polle
 test('A3 a view that throws shows the named error panel inside the shell, and navigating away recovers', async () => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  boom.heat = true;
+  boom.locate = true;
   boom.spatial = true;
-  history.replaceState(null, '', '#/heat');
+  history.replaceState(null, '', '#/locate');
   render(<App pollMs={60_000} />);
-  expect(screen.getByRole('heading', { name: 'Could not load artifacts/heatfield.json' })).toBeInTheDocument();
-  expect(screen.getByText('surfaces[8].B is undefined')).toBeInTheDocument();
-  // The shell survives: nav, view title and legend are still there.
+  expect(screen.getByRole('heading', { name: 'Could not load artifacts/geometry.json' })).toBeInTheDocument();
+  expect(screen.getByText('geometry unavailable')).toBeInTheDocument();
+  // The shell survives: nav and view title are still there.
   expect(navLinks()).toHaveLength(ROUTES.length);
-  expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Heat & field');
-  expect(legend()).toBeInTheDocument();
+  expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('W7-X Model');
 
   // The boundary is per route: the next view renders instead of the stale error.
   act(() => {
@@ -500,12 +492,8 @@ test('A3 a view that throws shows the named error panel inside the shell, and na
   // Every route names the file its view reads.
   expect(ROUTES.map((r) => [r.id, r.files])).toEqual([
     ['locate', ['artifacts/geometry.json']],
-    ['advance', ['/api/live/status', 'artifacts/transport.json']],
-    ['transport', ['artifacts/transport.json']],
     ['forecast', ['artifacts/forecast.json']],
     ['spatial', ['artifacts/spatial.json']],
-    ['budget', ['artifacts/budget.json']],
-    ['heat', ['artifacts/heatfield.json']],
   ]);
 });
 
@@ -527,11 +515,11 @@ test('FE2-1 a view that fails to render during a billing risk leaves the Termina
       return url === '/api/live/status' ? json(status('fallback', { reason })) : new Response('', { status: 404 });
     }),
   );
-  boom.heat = true;
-  history.replaceState(null, '', '#/heat');
+  boom.locate = true;
+  history.replaceState(null, '', '#/locate');
   render(<App pollMs={60_000} />);
   const alert = await screen.findByRole('alert', { name: 'Danger: TERMINATE FAILED — GPUs may still be billing' });
-  expect(screen.getByRole('heading', { name: 'Could not load artifacts/heatfield.json' })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Could not load artifacts/geometry.json' })).toBeInTheDocument();
   // The alert sits above the view, outside it: the failed view cannot take the control away.
   expect(screen.getByRole('main').contains(alert)).toBe(false);
   const retry = within(alert).getByRole('button', { name: 'Retry terminate' });
@@ -547,101 +535,20 @@ test('FE2-1 a view that fails to render during a billing risk leaves the Termina
   expect(sessionBar()).toBeNull();
 });
 
-// --------------------------------------------------------------------------------------------- A4 / A6 legend
-
-test('A4 a global provenance legend sits under every view: collapsed, opened by keyboard, never a page footer', async () => {
-  const user = userEvent.setup();
-  render(<App pollMs={60_000} />);
-  expect(within(screen.getByRole('banner')).getByText('Is this W7-X heat-flux estimate accurate enough to justify a longer simulation?')).toBeInTheDocument();
-  // On every route, after the view (DOM order) and outside it.
-  for (const r of ROUTES) {
-    act(() => {
-      location.hash = `#/${r.id}`;
-    });
-    await waitFor(() => expect(screen.getByText(`view:${r.id}`)).toBeInTheDocument());
-    const main = screen.getByRole('main');
-    expect(main.contains(legend())).toBe(false);
-    expect(main.compareDocumentPosition(legend()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  }
-  expect(screen.queryByRole('contentinfo')).toBeNull();
-  expect(screen.getByRole('heading', { level: 2, name: 'Provenance legend' })).toBeInTheDocument();
-
-  // Collapsed: only the heading and its toggle show.
-  const toggle = legendToggle();
-  expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  const body = document.getElementById(toggle.getAttribute('aria-controls')!)!;
-  expect(body).not.toBeVisible();
-  expect(within(legend()).queryByRole('heading', { name: 'Where a number comes from' })).toBeNull();
-
-  // Keyboard: focus the toggle, Enter opens, Space closes, Enter opens again.
-  toggle.focus();
-  await user.keyboard('{Enter}');
-  expect(toggle).toHaveAttribute('aria-expanded', 'true');
-  expect(body).toBeVisible();
-  await user.keyboard(' ');
-  expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  await user.keyboard('{Enter}');
-  for (const label of ['Replay', 'Archive', 'Derived', 'PRD-reported', 'Rehearsal', 'Model', 'Verified', 'Unverified', 'Blocked', 'Mismatch', 'Failed']) {
-    expect(within(legend()).getByText(label, { selector: '.lab-pill__text' })).toBeInTheDocument();
-  }
-  // Every pill is explained in words, and the legend never draws a LIVE pill.
-  expect(within(legend()).getByText('Stated in PRD.md; no underlying data in this repo.')).toBeInTheDocument();
-  expect(legend().querySelector('[data-status="live"]')).toBeNull();
-
-  // It stays open across a route change (it is not part of the view).
-  act(() => {
-    location.hash = '#/forecast';
-  });
-  await waitFor(() => expect(screen.getByText('view:forecast')).toBeInTheDocument());
-  expect(legendToggle()).toHaveAttribute('aria-expanded', 'true');
+test.each(['transport', 'advance', 'budget'])('retired route %s returns to Locate', async (id) => {
+  history.replaceState(null, '', '#/' + id);
+  render(<App />);
+  await waitFor(() => expect(location.hash).toBe('#/locate'));
+  expect(screen.getByText('view:locate')).toBeInTheDocument();
 });
 
-test('A4 the legend explains every provenance kind and verification outcome defined in contracts/common.schema.json', async () => {
-  const defs = JSON.parse(readFileSync(resolve(__dirname, '../../../contracts/common.schema.json'), 'utf8')).$defs;
-  const kinds: string[] = defs.provenance.properties.kind.enum;
-  const outcomes: (keyof typeof VERIFICATION_STATUS)[] = defs.verification.properties.outcome.enum;
-  expect(kinds).toEqual(expect.arrayContaining(['archive', 'derived', 'prd-reported', 'live', 'rehearsal', 'model']));
-  expect(outcomes).toEqual(expect.arrayContaining(['passed', 'failed', 'blocked', 'not-applicable']));
-
-  render(<App pollMs={60_000} />);
-  const box = await openLegend();
-  const explained = (statusKind: string) => {
-    const pill = box.querySelector(`dt [data-status="${statusKind}"]`);
-    return pill?.closest('.shell-legend__item')?.querySelector('dd')?.textContent?.trim() ?? null;
-  };
-  // Every kind except `live` has a pill with a sentence; `live` is described in words and never drawn.
-  for (const kind of kinds.filter((k) => k !== 'live')) {
-    expect(explained(kind), `kind ${kind}`).toMatch(/\w+ \w+/);
+test('the shared header strip and provenance legend are absent on each tab', async () => {
+  render(<App />);
+  for (const { id, label } of ROUTES) {
+    act(() => { location.hash = '#/' + id; });
+    await waitFor(() => expect(screen.getByRole('main')).toHaveAccessibleName(label));
+    expect(screen.queryByText('Provenance legend')).toBeNull();
+    expect(screen.queryByText(/Is this W7-X heat-flux estimate/)).toBeNull();
+    expect(within(screen.getByRole('banner')).queryByRole('status', { name: /^Mode:/ })).toBeNull();
   }
-  expect(box.querySelector('[data-status="live"]')).toBeNull();
-  expect(box).toHaveTextContent(/The header shows live mode when the live API confirms it/);
-  expect(box).toHaveTextContent(/The session bar offers Terminate during a run/);
-  // Every outcome, through the design system's own outcome -> status mapping.
-  for (const outcome of outcomes) {
-    expect(explained(VERIFICATION_STATUS[outcome]), `outcome ${outcome}`).toMatch(/\w+ \w+/);
-  }
-  expect(explained('not-applicable')).toBe('No verification applies.');
-});
-
-test('A6 the legend explains the model kind (D-027) next to the other kinds, read from the schema enum', async () => {
-  const defs = JSON.parse(readFileSync(resolve(__dirname, '../../../contracts/common.schema.json'), 'utf8')).$defs;
-  const kinds: string[] = defs.provenance.properties.kind.enum;
-  expect(kinds).toContain('model');
-
-  history.replaceState(null, '', '#/heat');
-  render(<App pollMs={60_000} />);
-  const box = await openLegend();
-  // The model kind sits in the same group as every other provenance kind of the schema (`live` is described in words).
-  const sources = within(box).getByRole('heading', { name: 'Where a number comes from' }).closest('.shell-legend__group') as HTMLElement;
-  const drawn = [...sources.querySelectorAll<HTMLElement>('dt [data-status]')].map((p) => p.dataset.status);
-  expect(drawn).toEqual(expect.arrayContaining(kinds.filter((k) => k !== 'live')));
-  // Explained in words, beside its pill.
-  const pill = sources.querySelector<HTMLElement>('dt [data-status="model"]')!;
-  expect(pill).toHaveTextContent('Model');
-  expect(pill.closest('.shell-legend__item')!.querySelector('dd')).toHaveTextContent(
-    /Illustrative model output: parameters chosen for illustration, not fitted to measurements/,
-  );
-  // Not in the verification group: a model number is not a check outcome.
-  const checks = within(box).getByRole('heading', { name: 'How far it is checked' }).closest('.shell-legend__group') as HTMLElement;
-  expect(checks.querySelector('[data-status="model"]')).toBeNull();
 });

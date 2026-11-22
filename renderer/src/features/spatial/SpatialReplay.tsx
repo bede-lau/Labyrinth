@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
+import { useViewActive } from '../../lib/viewActive';
+
 const STAGES = [
   { id: 'compute', label: 'Both GPUs advance their three planes' },
   { id: 'exchange', label: 'Swap edge data at both boundaries' },
@@ -56,8 +58,9 @@ function ControlDiagram({ phase }: { phase: Phase }) {
   );
 }
 
-export function SpatialReplay({ recorded, children }: { recorded: boolean; children: (phase: Phase) => ReactNode }) {
-  const [index, setIndex] = useState(0);
+export function SpatialReplay({ children }: { children: (phase: Phase) => ReactNode }) {
+  const active = useViewActive();
+  const [index, setIndex] = useState<number>(FIRST_CONTROL);
   const [playing, setPlaying] = useState(false);
   const [finished, setFinished] = useState(false);
   const remaining = useRef(PHASE_MS);
@@ -67,7 +70,7 @@ export function SpatialReplay({ recorded, children }: { recorded: boolean; child
   useEffect(() => { remaining.current = PHASE_MS; }, [index]);
 
   useEffect(() => {
-    if (!playing) return;
+    if (!playing || !active) return;
     const start = performance.now();
     const timer = window.setTimeout(() => {
       if (index === LAST) {
@@ -81,7 +84,7 @@ export function SpatialReplay({ recorded, children }: { recorded: boolean; child
       window.clearTimeout(timer);
       remaining.current = Math.max(0, remaining.current - (performance.now() - start));
     };
-  }, [index, playing]);
+  }, [active, index, playing]);
 
   function go(next: number) {
     setPlaying(false);
@@ -111,7 +114,6 @@ export function SpatialReplay({ recorded, children }: { recorded: boolean; child
         <button type="button" aria-label="Previous stage" disabled={!index} onClick={() => go(index - 1)}>←</button>
         <button type="button" aria-label="Next stage" disabled={index === LAST} onClick={() => go(index + 1)}>→</button>
       </div>
-      <p className="sp-caption">{control ? 'Proposed loop · illustrative heat maps' : recorded ? 'Saved run · illustrative exchange timing' : 'Reported layout · illustrative exchange timing'} · $0 replay</p>
     </div>
   );
 }

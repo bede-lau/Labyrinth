@@ -239,7 +239,8 @@ export function cameraPosition(o: Orbit, extent: number, aspect = 2): [number, n
 // |B|(θ*) chart
 // ---------------------------------------------------------------------------------------------
 
-const PI_TICKS = { vals: [-Math.PI, -Math.PI / 2, 0, Math.PI / 2, Math.PI], text: ['−π', '−π/2', '0', 'π/2', 'π'] };
+export const travelTicks = [0, 90, 180, 270, 360];
+export const travelDegrees = (thetaStar: number) => 180 + thetaStar * 180 / Math.PI;
 const MARKER_SYMBOL: Record<MarkerKind, string> = { start: 'square', centre: 'circle', end: 'triangle-up' };
 const MARKER_LABEL: Record<MarkerKind, string> = { start: 'start', centre: 'centre', end: 'end' };
 
@@ -253,10 +254,10 @@ export interface ChartSpec {
 export function bmagChartSpec(tube: Tube, theme: ThemeName): ChartSpec {
   const style = seriesStyle(tube.id, theme);
   const t = themes[theme];
-  const xs = tube.samples.map((s) => s.thetaStar);
+  const xs = tube.samples.map((s) => travelDegrees(s.thetaStar));
   const ys = tube.samples.map((s) => s.bmag);
   const markers = tubeMarkers(tube);
-  const hover = 'θ* %{x:.3f} rad<br>|B| %{y:.4f} B<sub>ref</sub><extra></extra>';
+  const hover = 'Angle from start %{x:.1f}°<br>|B| %{y:.4f} B<sub>ref</sub><extra></extra>';
   const data = [
     {
       type: 'scatter',
@@ -270,7 +271,7 @@ export function bmagChartSpec(tube: Tube, theme: ThemeName): ChartSpec {
     ...markers.map((m) => ({
       type: 'scatter',
       mode: 'markers',
-      x: [m.sample.thetaStar],
+      x: [travelDegrees(m.sample.thetaStar)],
       y: [m.sample.bmag],
       name: MARKER_LABEL[m.kind],
       showlegend: false,
@@ -283,10 +284,10 @@ export function bmagChartSpec(tube: Tube, theme: ThemeName): ChartSpec {
     margin: { l: 64, r: 16, t: 28, b: 48 },
     hovermode: 'closest',
     xaxis: {
-      title: { text: axisTitle('Field-line angle θ*', 'rad') },
-      tickvals: PI_TICKS.vals,
-      ticktext: PI_TICKS.text,
-      range: [-Math.PI * 1.03, Math.PI * 1.03],
+      title: { text: 'Angle from start (°)' },
+      tickvals: travelTicks,
+      ticktext: travelTicks.map(d => d + '°'),
+      range: [0, 360],
     },
     yaxis: { title: { text: axisTitle('Field strength |B|', 'B_ref') }, tickformat: '.2f' },
   });
@@ -297,11 +298,11 @@ export function bmagChartSpec(tube: Tube, theme: ThemeName): ChartSpec {
     if (y > ys[iMax]!) iMax = i;
   });
   const f = (v: number, d: number) => v.toFixed(d).replace('-', '−');
-  const ariaLabel = `Line chart: field strength |B| in units of B_ref against field-line angle θ* in radians, ${tube.label} tube`;
+  const ariaLabel = `Line chart: field strength |B| in units of B_ref against angle from the start in degrees, ${tube.label} tube`;
   const summary =
-    `${tube.label}: ${tube.samples.length} samples over θ* ${f(xs[0]!, 3)} to ${f(xs[xs.length - 1]!, 3)} rad. ` +
-    `|B| ranges from ${f(ys[iMin]!, 4)} B_ref (θ* ${f(xs[iMin]!, 3)} rad) to ${f(ys[iMax]!, 4)} B_ref (θ* ${f(xs[iMax]!, 3)} rad); ` +
-    `centre (θ* 0) ${f(ys[centreIndex(tube)]!, 4)} B_ref.`;
+    `${tube.label}: ${tube.samples.length} samples over ${f(xs[0]!, 3)} to ${f(xs[xs.length - 1]!, 3)}° from start. ` +
+    `|B| ranges from ${f(ys[iMin]!, 4)} B_ref (angle ${f(xs[iMin]!, 3)}°) to ${f(ys[iMax]!, 4)} B_ref (angle ${f(xs[iMax]!, 3)}°); ` +
+    `centre (180°) ${f(ys[centreIndex(tube)]!, 4)} B_ref.`;
   return { data, layout: layout as unknown as Record<string, unknown>, ariaLabel, summary };
 }
 

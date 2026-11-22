@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { FORECAST_LINES, THEMES, forecastStyle, themes } from '../../design';
-import { absErrorRange, chartSpec, errorChartSpec, errorLineStyle, fluxRange, forecastChartSpec, spokenCaption } from './chart';
+import { absErrorRange, chartSpec, errorChartSpec, fluxRange, forecastChartSpec, spokenCaption } from './chart';
 import { FLUX_UNIT, FORECASTERS, INITIAL, advance, completeState, type ForecastArtifact } from './model';
 
 const ARTIFACT: ForecastArtifact = JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/forecast.json'), 'utf8'));
@@ -16,7 +16,7 @@ test.each(THEMES)('F7 forecastChartSpec (%s): two traces named Predicted and Act
   FORECAST_LINES.forEach((line, i) => {
     const style = forecastStyle(line, theme);
     const trace = spec.data[i]!;
-    expect(trace).toMatchObject({ type: 'scatter', mode: 'lines+markers', name: style.name, line: style.line, connectgaps: false, showlegend: true });
+    expect(trace).toMatchObject({ type: 'scatter', mode: 'lines+markers', name: style.name, line: { ...style.line, dash: 'solid', shape: 'spline' }, connectgaps: false, showlegend: true });
     const marker = trace.marker as Marker;
     expect([marker.color, marker.symbol]).toEqual([style.marker.color, style.marker.symbol]);
   });
@@ -50,7 +50,7 @@ test('F7 the spec carries only drawn values: no undrawn forecast or observation 
         const x = d.x as (number | null)[];
         const shown = x.filter((v) => v !== null).length;
         if (shown === 0) expect([x, d.y]).toEqual([[null], [null]]);
-        expect(m.size.filter((v, i) => v > 0 && x[i] !== null).length * 3).toBe(shown);
+        expect(m.size.filter((v, i) => v > 0 && x[i] !== null).length).toBe(shown);
         expect(m.line.width.map((w) => w > 0)).toEqual(m.size.map((v) => v > 0));
         expect(m).toMatchObject({ opacity: 1 });
       }
@@ -80,7 +80,7 @@ test('F7 the current window is shaded until the replay is complete; the label an
       'after Reveal; Run to end does both for all 8 windows from 1500–1900, in that order.',
   );
   expect(start.layout.annotations!.map((x) => x.text)).toEqual([
-    'Nothing plotted yet: Predict draws the first forecast,<br>Run to end draws all windows',
+    'No points yet',
   ]);
   let s = INITIAL;
   for (let k = 0; k < 3 * N; k++) s = advance(s, N);
@@ -92,7 +92,7 @@ test('F7 the current window is shaded until the replay is complete; the label an
 test('F7 the accessible name and the visible caption speak the units as words ("Q gB,i"), never raw "_" markup', () => {
   expect(forecastChartSpec(ARTIFACT, INITIAL, 'persistence', 'light').label).toBe(
     'Chart: ion heat flux Q i in Q gB,i against time t in a/v th,i, 1500–1900, Predicted (persistence forecast) and Actual ' +
-      '(archived observed window mean) for the stella bean trace, each held over its 50-unit window',
+      '(archived observed window mean) for the stella bean trace, points at the centres of each 50-unit window',
   );
   let s = INITIAL;
   for (let k = 0; k <= 3 * N; k++, s = advance(s, N)) {
@@ -130,22 +130,12 @@ test('F7 (DZ3-8) the visible caption carries the flux unit as a unit to typeset,
 
 /* ---- the owner's Absolute error view (bbf2fc6), combined with D-026 ---------------------------------------- */
 
-test.each(THEMES)('F7 errorChartSpec (%s): |predicted − actual| of persistence and frozen, Predicted’s style on the selected forecaster, the other dotted with squares, both in Predicted’s token colour', (theme) => {
-  const end = completeState(N);
+test.each(THEMES)('absolute error draws one series for the requested forecast (%s)', theme => {
   for (const f of FORECASTERS) {
-    const spec = errorChartSpec(ARTIFACT, end, f, theme);
-    expect(spec.data.map((d) => d.name)).toEqual(['Persistence', 'Frozen']);
-    const predicted = forecastStyle('predicted', theme);
-    FORECASTERS.forEach((fc, i) => {
-      const style = errorLineStyle(fc, f, theme);
-      expect(spec.data[i]).toMatchObject({ type: 'scatter', mode: 'lines+markers', line: style.line, connectgaps: false, showlegend: true });
-      // Never a series colour the line is not (DESIGN.md §6): the forecast token, at full opacity.
-      expect(style.line.color).toBe(themes[theme].plot.predicted);
-      expect((spec.data[i]!.marker as Marker).color).toBe(themes[theme].plot.predicted);
-      expect(spec.data[i]!.marker).toMatchObject({ opacity: 1 });
-      if (fc === f) expect(style).toEqual({ ...predicted, name: fc === 'persistence' ? 'Persistence' : 'Frozen' });
-      else expect([style.line.dash, style.marker.symbol]).toEqual(['dot', 'square']);
-    });
+    const spec = errorChartSpec(ARTIFACT, completeState(N), f, theme);
+    expect(spec.data).toHaveLength(1);
+    expect(spec.data[0]).toMatchObject({ name: f === 'persistence' ? 'Persistence' : 'Frozen',
+      line: forecastStyle('predicted',theme).line, showlegend:true });
     expect(spec.layout.xaxis.range).toEqual([1500, 1900]);
     expect(spec.layout.xaxis.title?.text).toBe('Time t (a/v<sub>th,i</sub>)');
     expect(spec.layout.yaxis.title?.text).toBe('Absolute error |predicted − actual| (Q<sub>gB,i</sub>)');
@@ -162,13 +152,12 @@ test('F7 the error spec draws a window’s |e| only after its Reveal: no hidden 
       const revealed = ARTIFACT.steps.filter((_, i) => i < s.index || (i === s.index && s.phase === 'revealed'));
       // Each line holds exactly the revealed windows' |e|, three points per window (a step); with none revealed it
       // is the single null point that keeps it in the legend.
-      const mids = (d: Record<string, unknown>) => (d.y as (number | null)[]).filter((_, i) => i % 3 === 1);
-      expect(mids(spec.data[0]!), tag).toEqual(revealed.map((st) => st.absErrPersistence));
-      expect(mids(spec.data[1]!), tag).toEqual(revealed.map((st) => st.absErrFrozen));
+      const mids = (d: Record<string, unknown>) => (d.y as (number | null)[]).filter(v => v !== null);
+      expect(mids(spec.data[0]!), tag).toEqual(revealed.map(st => f === 'persistence' ? st.absErrPersistence : st.absErrFrozen));
       if (revealed.length === 0) for (const d of spec.data) expect([d.x, d.y], tag).toEqual([[null], [null]]);
-      const drawn = revealed.flatMap((st) => [st.absErrPersistence, st.absErrFrozen]);
+      const drawn = revealed.map(st => f === 'persistence' ? st.absErrPersistence : st.absErrFrozen);
       expect(spec.layout.yaxis.range, tag).toEqual(absErrorRange(drawn));
-      expect((spec.layout.annotations ?? []).map((a) => a.text), tag).toEqual(drawn.length ? [] : ['Reveal a window to see its error']);
+      expect((spec.layout.annotations ?? []).map((a) => a.text), tag).toEqual(drawn.length ? [] : ['No points yet']);
       const json = JSON.stringify([spec.data, spec.layout]);
       for (const st of ARTIFACT.steps.filter((x) => !revealed.includes(x))) {
         expect(json, tag).not.toContain(String(st.absErrPersistence));
@@ -181,11 +170,11 @@ test('F7 the error spec draws a window’s |e| only after its Reveal: no hidden 
   }
   // The overview: every window, the unit typeset at the end of the caption.
   const all = errorChartSpec(ARTIFACT, completeState(N), 'persistence', 'light');
-  expect(all.summary).toMatch(/^Absolute error \|predicted − actual\| per window\. Persistence, 8 of 8 windows: 1500–1550 0\.0140, .*Frozen, 8 of 8 windows: .*1850–1900 0\.0165\. Absolute error in Q gB,i\.$/);
+  expect(all.summary).toMatch(/^Absolute error \|predicted − actual\| per window\. Persistence, 8 of 8 windows: 1500–1550 0\.0140, .*1850–1900 [0-9.]+\. Absolute error in Q gB,i\.$/);
   expect(all.caption.slice(-2)).toEqual([{ unit: FLUX_UNIT }, '.']);
   expect(all.label).toBe(
-    'Chart: absolute error, predicted minus actual, in Q gB,i against time t in a/v th,i, 1500–1900, of the persistence and frozen ' +
-      'forecasts for the stella bean trace, each held over its 50-unit window',
+    'Chart: absolute error, predicted minus actual, in Q gB,i against time t in a/v th,i, 1500–1900, of the persistence ' +
+      'forecast for the stella bean trace, points at the centres of each 50-unit window',
   );
   // chartSpec picks the metric.
   expect(chartSpec('error', ARTIFACT, INITIAL, 'frozen', 'dark')).toEqual(errorChartSpec(ARTIFACT, INITIAL, 'frozen', 'dark'));

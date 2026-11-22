@@ -336,45 +336,20 @@ export function plottedErrors(steps: readonly ForecastStep[], s: ReplayState): R
   return out;
 }
 
-/** Points of a step line, ready for a Plotly scatter trace. */
-export interface StepLine {
-  x: (number | null)[];
-  y: (number | null)[];
-  /** True at each window's midpoint, the one point per window that carries a marker. */
-  mid: boolean[];
-  /** The window of each point ("1500–1550"), for hover text; null at a gap. */
-  window: (string | null)[];
-}
-
-/**
- * A value held constant over each window [a, b]: the points (a, v), ((a + b)/2, v), (b, v). Contiguous
- * windows join with a vertical riser at the shared edge (a step); a null point breaks the line where a
- * window does not start at the previous one's end, so nothing is drawn across a gap.
- */
-export function stepLine(ws: readonly PlottedWindow[]): StepLine {
-  const out: StepLine = { x: [], y: [], mid: [], window: [] };
-  let prevEnd: number | null = null;
+/** One real marker per window. Break the path across any missing window. */
+export function windowMidpoints(ws: readonly PlottedWindow[]) {
+  const x: (number | null)[] = [];
+  const y: (number | null)[] = [];
+  const window: (string | null)[] = [];
+  let last: number | null = null;
   for (const { window: [a, b], value } of ws) {
-    if (prevEnd !== null && prevEnd !== a) {
-      out.x.push(null);
-      out.y.push(null);
-      out.mid.push(false);
-      out.window.push(null);
-    }
-    const name = formatWindow([a, b]);
-    for (const [x, isMid] of [
-      [a, false],
-      [(a + b) / 2, true],
-      [b, false],
-    ] as const) {
-      out.x.push(x);
-      out.y.push(value);
-      out.mid.push(isMid);
-      out.window.push(name);
-    }
-    prevEnd = b;
+    if (last !== null && a !== last) { x.push(null); y.push(null); window.push(null); }
+    x.push((a + b) / 2);
+    y.push(value);
+    window.push(formatWindow([a, b]));
+    last = b;
   }
-  return out;
+  return { x, y, window };
 }
 
 /**

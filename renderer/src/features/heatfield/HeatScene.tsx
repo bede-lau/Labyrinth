@@ -7,6 +7,7 @@
 // geometry itself.
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { Callout, formatNumber, sceneTheme, type ThemeName } from '../../design';
+import { plasmaMaterials } from '../../design/tokens';
 import type { HeatModel } from './model';
 import {
   ARROW_MARK,
@@ -378,13 +379,17 @@ export function pickCell(THREE: Three, camera: import('three').Camera, surface: 
   ray.setFromCamera(new THREE.Vector2(ndc.x, ndc.y), camera);
   const hit = ray.intersectObject(surface, false)[0];
   if (!hit?.face) return null;
+  return nearestVertex(THREE, surface, hit.face, hit.point);
+}
+
+function nearestVertex(THREE: Three, surface: Mesh, face: {a:number;b:number;c:number}, point: import('three').Vector3) {
   const pos = surface.geometry.getAttribute('position');
   const v = new THREE.Vector3();
-  let best = hit.face.a;
+  let best = face.a;
   let bestD = Infinity;
-  for (const idx of [hit.face.a, hit.face.b, hit.face.c]) {
+  for (const idx of [face.a, face.b, face.c]) {
     v.fromBufferAttribute(pos, idx);
-    const d = v.distanceToSquared(hit.point);
+    const d = v.distanceToSquared(point);
     if (d < bestD) {
       bestD = d;
       best = idx;
@@ -396,13 +401,20 @@ export function pickCell(THREE: Three, camera: import('three').Camera, surface: 
 function disposeGroup(g: Group) {
   g.traverse((o) => {
     const mesh = o as Mesh;
+    const instanced = o as import('three').InstancedMesh;
+    if (instanced.isInstancedMesh) instanced.dispose();
     mesh.geometry?.dispose();
     const mat = mesh.material as import('three').Material | import('three').Material[] | undefined;
     (Array.isArray(mat) ? mat : mat ? [mat] : []).forEach((m) => m.dispose());
   });
 }
 
+const thermalLabel = { ...LABEL, width: 104, height: 22 };
+const compactTargetLabel = { ...thermalLabel, width: 42 };
+
 export interface HoverPoint {
+  section?: boolean;
+  interpolation?: {cells: [number, number, number]; weights: [number, number, number]};
   cell: number;
   /** Pointer position inside the scene box (px). */
   x: number;
@@ -426,6 +438,14 @@ export interface HeatSceneProps {
   onHover?: (h: HoverPoint | null) => void;
   /** Drawn over the scene (the hover read-out). */
   overlay?: ReactNode;
+  /** Optional co-registered geometry in the same VMEC metre coordinate system. */
+  extend?: (three: Three, content: SceneContent) => (frame: HeatSceneProps) => void;
+  displayRevision?: unknown;
+  initialOrbit?: Orbit;
+  inspection?: boolean;
+  showTemperatures?: boolean;
+  followed?: number | null;
+  visiblePlates?: readonly boolean[];
 }
 
 interface Handle {
@@ -459,7 +479,10 @@ export function HeatScene(props: HeatSceneProps) {
   const sliceLabelRef = useRef<HTMLSpanElement | null>(null);
   const sliceLeaderRef = useRef<SVGGElement | null>(null);
   const handle = useRef<Handle | null>(null);
-  const orbit = useRef<Orbit>(DEFAULT_ORBIT);
+  const extension = useRef<((frame: HeatSceneProps) => void) | undefined>(undefined);
+  const [expanded, setExpanded] = useState(false);
+  const inspectSlice = useRef(false);
+  const orbit = useRef<Orbit>(props.initialOrbit ?? DEFAULT_ORBIT);
   const drag = useRef<{ x: number; y: number; orbit: Orbit; moved: boolean } | null>(null);
   const latest = useRef(props);
   latest.current = props;
@@ -483,10 +506,22 @@ export function HeatScene(props: HeatSceneProps) {
     if (!h?.content) return;
     const p = latest.current;
     const model = p.model;
-    const [x, y, z] = cameraPosition(orbit.current, p.geom.extent, h.camera.aspect);
-    h.camera.position.set(x, y, z);
+    const framingExtent = inspectSlice.current ? p.geom.extent * 0.32 : p.geom.extent;
+    const [x, y, z] = cameraPosition(orbit.current, framingExtent, h.camera.aspect);
+    const phi = 2 * Math.PI * p.sliceJ / p.geom.nPhi;
+    const axis = p.sliceJ * p.geom.nTheta * 3;
+    // As magnification increases, bring the selected section under the lens.
+    // A camera aimed at the ring centre would zoom straight into the empty bore.
+    const t = Math.min(1, Math.max(0, (2.7 - orbit.current.distance) / 1.7));
+    const focus = inspectSlice.current ? 1 : p.inspection ? t*t*(3-2*t) : 0;
+    const opposite = axis + 3 * Math.floor(p.geom.nTheta / 2);
+    const centre = (component: number) => focus * 0.5 *
+      (p.geom.positions[axis+component]! + p.geom.positions[opposite+component]!);
+    const cx = centre(0), cy = centre(1), cz = centre(2);
+    const angle = inspectSlice.current ? phi : 0;
+    h.camera.position.set(cx + x*Math.cos(angle)-y*Math.sin(angle), cy + x*Math.sin(angle)+y*Math.cos(angle), cz+z);
     h.camera.up.set(0, 0, 1);
-    h.camera.lookAt(0, 0, 0);
+    h.camera.lookAt(cx, cy, cz);
     h.camera.updateMatrixWorld();
     const el = hostRef.current;
     const w = el?.clientWidth || 600;
@@ -507,6 +542,8 @@ export function HeatScene(props: HeatSceneProps) {
     });
     // The silhouette outline stays at least OUTLINE.px wide as the view zooms or the box resizes.
     h.content.setOutlineOffset(outlineOffset(distance, p.geom.extent, hh, h.camera.fov));
+    extension.current?.(p);
+    if (p.visiblePlates) h.content.plates.children.forEach((mesh, i) => { mesh.visible = !!p.visiblePlates?.[Math.floor(i / 2)]; });
     h.renderer.render(h.scene, h.camera);
     const v = new h.THREE.Vector3();
     const project: Projector = (pt) => {
@@ -515,11 +552,11 @@ export function HeatScene(props: HeatSceneProps) {
     };
     const sliceTargets = sliceLabelTargets(p.geom, p.sliceJ);
     const occ = occlusion.current;
-    const key = `${x},${y},${z},${w},${hh},${p.sliceJ}`;
+    const key = `${cx},${cy},${cz},${x},${y},${z},${w},${hh},${p.sliceJ},${h.content.surface.visible}`;
     if (occ.key !== key || occ.content !== h.content) {
       const surface = h.content.surface;
-      occ.plates = p.geom.plates.map((pl) => hiddenBehindSurface(h.THREE, h.camera, surface, pl.outerEnd));
-      occ.slice = sliceTargets.map((t) => project(t.end).inView && project(t.anchor).inView && !hiddenBehindSurface(h.THREE, h.camera, surface, t.end));
+      occ.plates = p.geom.plates.map((pl) => surface.visible && hiddenBehindSurface(h.THREE, h.camera, surface, pl.outerEnd));
+      occ.slice = sliceTargets.map((t) => project(t.end).inView && project(t.anchor).inView && (!surface.visible || !hiddenBehindSurface(h.THREE, h.camera, surface, t.end)));
       occ.key = key;
       occ.content = h.content;
     }
@@ -532,6 +569,7 @@ export function HeatScene(props: HeatSceneProps) {
       if (leader) {
         if (place) {
           const [x1, y1, x2, y2] = place.leader.map((c) => c.toFixed(1));
+          leader.querySelector('.hf-route-pin')?.setAttribute('transform', `translate(${x1} ${y1})`);
           leader.querySelectorAll('line').forEach((line) => {
             line.setAttribute('x1', x1!);
             line.setAttribute('y1', y1!);
@@ -546,14 +584,33 @@ export function HeatScene(props: HeatSceneProps) {
     // The D1…D4 labels: beyond each plate's outer end, never over the plate, with a leader line back to it (DZ-2);
     // hidden while the plate is behind the torus, where it is not drawn (HF3-2). "Slice φ …" (DZ3-1): placed the same
     // way, beyond a visible point of the ring, clear of the D labels and plates. All inside the scene box (DZ4-1).
+    const roles = p.inspection ? p.geom.plates.map((_,k) => {
+      const route = p.sim.commandedTransfers.find(r => r.from === k || r.to === k);
+      const temperature = p.sim.peakTileC(k);
+      return {route, temperature, hot: temperature >= model.params.tileLimit};
+    }) : [];
     const labels = layoutSceneLabels(
       p.geom.plates,
-      occ.plates,
+      occ.plates.map((hidden,k) => hidden && !roles[k]?.route && !roles[k]?.hot),
       sliceTargets.filter((_, i) => occ.slice[i]),
       project,
       { width: w, height: hh },
+      p.inspection ? (p.showTemperatures === false ? compactTargetLabel : thermalLabel) : LABEL,
     );
-    labels.plates.forEach((place, k) => show(labelRefs.current[k], leaderRefs.current[k], place));
+    if (p.inspection) labelRefs.current.forEach((el,k) => {
+      if (!el) return;
+      const {route, temperature, hot} = roles[k]!;
+      for (const node of [el, leaderRefs.current[k]]) {
+        if (!node) continue;
+        node.dataset.hot = String(hot);
+        node.dataset.followed = String(p.followed != null && (k + 1 === p.followed || (route && route.from + 1 === p.followed)));
+        node.dataset.endpoint = route ? (route.from === k ? 'source' : 'destination') : '';
+        if (route) node.style.setProperty('--route-color', plasmaMaterials.particleColours[route.from]!);
+      }
+      const reading = p.geom.plates[k]!.id + (p.showTemperatures === false ? '' : ' · ' + temperature.toFixed(1) + '°C');
+      if (el.textContent !== reading) el.textContent = reading;
+    });
+    labels.plates.forEach((place, k) => show(labelRefs.current[k], leaderRefs.current[k], p.visiblePlates?.[k] === false ? null : place));
     show(sliceLabelRef.current, sliceLeaderRef.current, labels.slice);
   };
 
@@ -566,8 +623,12 @@ export function HeatScene(props: HeatSceneProps) {
         const el = hostRef.current;
         if (disposed || !el) return;
         const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-        renderer.setSize(el.clientWidth || 600, el.clientHeight || 400);
+        const resize = (w: number, h: number) => {
+          const ratio = latest.current.inspection ? Math.min(3, Math.max(2, window.devicePixelRatio || 1), Math.sqrt(8000000/(w*h))) : Math.min(2, window.devicePixelRatio || 1);
+          renderer.setPixelRatio(ratio);
+          renderer.setSize(w,h);
+        };
+        resize(el.clientWidth || 600, el.clientHeight || 400);
         renderer.domElement.setAttribute('aria-hidden', 'true');
         el.replaceChildren(renderer.domElement);
         const scene = new THREE.Scene();
@@ -588,7 +649,7 @@ export function HeatScene(props: HeatSceneProps) {
             const wv = el.clientWidth;
             const hv = el.clientHeight;
             if (!wv || !hv) return;
-            renderer.setSize(wv, hv);
+            resize(wv, hv);
             camera.aspect = wv / hv;
             camera.updateProjectionMatrix();
             draw.current();
@@ -616,9 +677,10 @@ export function HeatScene(props: HeatSceneProps) {
       disposeGroup(h.content.group);
     }
     h.content = buildContent(h.THREE, geom, theme);
+    extension.current = props.extend?.(h.THREE, h.content);
     h.scene.add(h.content.group);
     draw.current();
-  }, [ready, geom, theme]);
+  }, [ready, geom, theme, props.extend]);
 
   // Every change of the running model redraws (the playback loop advances it once per animation frame).
   useEffect(() => sim.subscribe(() => draw.current()), [sim]);
@@ -626,18 +688,20 @@ export function HeatScene(props: HeatSceneProps) {
   // Display options.
   useEffect(() => {
     if (ready) draw.current();
-  }, [ready, props.colorBy, props.showLines, props.showArrows, props.sliceJ, props.ranges]);
+  }, [ready, props.colorBy, props.showLines, props.showArrows, props.sliceJ, props.ranges, props.displayRevision, props.visiblePlates, props.showTemperatures, props.followed]);
 
   const setOrbit = (o: Orbit) => {
+    latest.current.onHover?.(null);
     orbit.current = o;
     draw.current();
   };
 
+  const reset = () => { inspectSlice.current = false; setOrbit(props.initialOrbit ?? DEFAULT_ORBIT); };
   const onKeyDown = (e: KeyboardEvent) => {
     const next = orbitForKey(orbit.current, e.key);
     if (!next) return;
     e.preventDefault();
-    setOrbit(next);
+    if (e.key === 'Home' || e.key === '0') reset(); else setOrbit(next);
   };
   const hover = (e: PointerEvent) => {
     const h = handle.current;
@@ -649,10 +713,21 @@ export function HeatScene(props: HeatSceneProps) {
     const w = r.width || el.clientWidth;
     const hv = r.height || el.clientHeight;
     if (!w || !hv) return;
-    const cell = pickCell(h.THREE, h.camera, h.content.surface, { x: (x / w) * 2 - 1, y: -(y / hv) * 2 + 1 });
-    latest.current.onHover(cell === null ? null : { cell, x, y });
+    const ray = new h.THREE.Raycaster();
+    ray.setFromCamera(new h.THREE.Vector2((x/w)*2-1, 1-(y/hv)*2), h.camera);
+    const cap = h.content.group.getObjectByName('Thermal cross-section');
+    const surfaces = [h.content.surface, ...(cap ? [cap] : [])].filter(o => o.visible);
+    const hit = ray.intersectObjects(surfaces, false)[0];
+    if (!hit?.face) { latest.current.onHover(null); return; }
+    const cell = nearestVertex(h.THREE, hit.object as Mesh, hit.face, hit.point);
+    const interpolation = hit.barycoord && latest.current.inspection ? {
+      cells: [hit.face.a, hit.face.b, hit.face.c] as [number, number, number],
+      weights: hit.barycoord.toArray(),
+    } : undefined;
+    latest.current.onHover({ cell, x, y, ...(interpolation && {interpolation}), ...(cap === hit.object ? {section:true} : {}) });
   };
   const onPointerDown = (e: PointerEvent) => {
+    hover(e);
     drag.current = { x: e.clientX, y: e.clientY, orbit: orbit.current, moved: false };
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   };
@@ -662,6 +737,7 @@ export function HeatScene(props: HeatSceneProps) {
       hover(e);
       return;
     }
+    latest.current.onHover?.(null);
     d.moved = true;
     setOrbit(
       clampOrbit({ ...d.orbit, azimuth: d.orbit.azimuth - (e.clientX - d.x) * 0.008, elevation: d.orbit.elevation + (e.clientY - d.y) * 0.008 }),
@@ -672,7 +748,7 @@ export function HeatScene(props: HeatSceneProps) {
   };
 
   return (
-    <div className="hf-scene">
+    <div className="hf-scene" data-expanded={expanded}>
       <div
         ref={hostRef}
         className="hf-scene__canvas"
@@ -705,6 +781,14 @@ export function HeatScene(props: HeatSceneProps) {
             >
               <line className="hf-scene__leader-halo" />
               <line className="hf-scene__leader-line" />
+              {props.inspection && <g className="hf-route-pin">
+                <path className="hf-route-origin" d="M0 -6 6 0 0 6 -6 0Z" />
+                <circle className="hf-route-target" r="6" />
+                <circle className="hf-route-centre" r="2" />
+                <svg className="plate-warning" x="-9" y="-24" width="18" height="18" viewBox="0 0 24 24">
+                  <path d="m12 3 10 18H2Z"/><path d="M12 8v5m0 3v1"/>
+                </svg>
+              </g>}
             </g>
           ))}
           <g ref={sliceLeaderRef} className="hf-scene__leader" data-slice="" visibility="hidden">
@@ -719,7 +803,7 @@ export function HeatScene(props: HeatSceneProps) {
               labelRefs.current[k] = el;
             }}
             className="hf-scene__label"
-            style={labelBoxStyle(LABEL)}
+            style={labelBoxStyle(props.inspection ? (props.showTemperatures === false ? compactTargetLabel : thermalLabel) : LABEL)}
             hidden
           >
             {p.id}
@@ -730,7 +814,13 @@ export function HeatScene(props: HeatSceneProps) {
         </span>
       </div>
       {overlay}
-      <button type="button" className="hf-btn hf-scene__reset" onClick={() => setOrbit(DEFAULT_ORBIT)}>
+      {props.inspection && <div className="geo-inspect-tools">
+        <button type="button" className="hf-btn" aria-label="Zoom in" onClick={()=>setOrbit(orbitForKey(orbit.current,'+')!)}>+</button>
+        <button type="button" className="hf-btn" aria-label="Zoom out" onClick={()=>setOrbit(orbitForKey(orbit.current,'-')!)}>−</button>
+        <button type="button" className="hf-btn" onClick={()=>{inspectSlice.current=true;setOrbit({...orbit.current,azimuth:-0.65,elevation:0.52,distance:2.65});}}>Inspect slice</button>
+        <button type="button" className="hf-btn" aria-pressed={expanded} onClick={()=>setExpanded(!expanded)}>{expanded ? 'Collapse' : 'Expand'}</button>
+      </div>}
+      <button type="button" className="hf-btn hf-scene__reset" onClick={reset}>
         Reset view
       </button>
       {error && (

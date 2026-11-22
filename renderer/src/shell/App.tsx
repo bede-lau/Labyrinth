@@ -1,43 +1,28 @@
-import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentType } from 'react';
 import { GeometryView } from '../features/geometry/GeometryView';
-import { LiveView } from '../features/live-gx/LiveView';
-import { TransportView } from '../features/transport/TransportView';
 import { ForecastView } from '../features/forecast/ForecastView';
 import { SpatialView } from '../features/spatial/SpatialView';
-import { BudgetView } from '../features/budget/BudgetView';
-import { HeatFieldView } from '../features/heatfield/HeatFieldView';
+import { ViewActive } from '../lib/viewActive';
 import { useLiveStatus } from '../lib/liveStatus';
 import { ViewErrorBoundary } from './ArtifactGate';
 import { HeaderBoundary } from './Boundary';
-import { ModeAlert, ModeIndicator } from './ModeIndicator';
+import { ModeAlert } from './ModeIndicator';
 import { centeredScrollLeft, fadeEdges, type FadeEdges } from './navScroll';
-import { ProvenanceLegend } from './ProvenanceLegend';
 import { ROUTES, hrefFor, routeDef, sourceLabel, type RouteId } from './routes';
 import { ThemeSwitch } from './ThemeSwitch';
 import { useHashRoute } from './useHashRoute';
 import './shell.css';
-const DECISION_QUESTION = 'Is this W7-X heat-flux estimate accurate enough to justify a longer simulation?';
 
-const VIEWS: Record<RouteId, ComponentType> = {
-  locate: GeometryView,
-  advance: () => <LiveView shellAnnouncesDanger />,
-  transport: TransportView,
+const VIEWS: Record<Exclude<RouteId, 'locate'>, ComponentType> = {
   forecast: ForecastView,
   spatial: SpatialView,
-  budget: BudgetView,
-  heat: HeatFieldView,
 };
 
 // Each navigation glyph describes the view beside it. Text carries the accessible name.
 const ROUTE_GLYPHS: Record<RouteId, string> = {
   locate: 'M12 3c6 0 9 5 7 10s-9 10-14 6-2-9 1-12 4-4 6-4Z M15 7c3 2 0 7-3 9s-6 1-5-2 4-9 8-7Z',
-  advance: 'M13 2 5 13h6l-1 9 9-12h-6l1-8Z',
-  transport: 'M3 5v14h18M5 13l4-4 4 3 6-6M5 16l4-2 4 2 6-4',
   forecast: 'M3 17l5-6 4 2 3-6m3-2 1-1m1 5 1-1M14 7l-1 4',
   spatial: 'M12 2.5 21 7l-9 4.5L3 7zM3 12l9 4.5 9-4.5M3 17l9 4.5 9-4.5',
-  budget: 'M4 5h16v14H4zM8 15v-3m4 3V8m4 7v-5',
-  // A thermometer beside a field line: temperature and |B|.
-  heat: 'M8 4a2 2 0 0 1 4 0v9.5a4 4 0 1 1-4 0Z M10 10v6 M16 5c3 2 4 4.5 4 7s-1 5-4 7',
 };
 
 function Wordmark() {
@@ -45,6 +30,29 @@ function Wordmark() {
     <img alt="" src="/labyrinth-mark.png" width="44" height="44" />
     Labyrinth
   </p>;
+}
+
+function ReactorPhoto() {
+  const dialog = useRef<HTMLDialogElement>(null);
+  return <>
+    <button type="button" className="shell-photo-trigger" title="W7-X photo" aria-label="Open W7-X photo"
+      aria-haspopup="dialog" onClick={() => dialog.current?.showModal()}>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/>
+        <circle cx="9" cy="10" r="1.5"/><path d="m4 17 5-4 3 2 4-5 5 6"/></svg>
+    </button>
+    <dialog ref={dialog} className="shell-photo-dialog" aria-label="Wendelstein 7-X photograph"
+      onClick={e => { if (e.target === dialog.current) dialog.current.close(); }}>
+      <figure>
+        <figcaption><strong>Wendelstein 7-X</strong>
+          <button type="button" aria-label="Close photo" onClick={() => dialog.current?.close()}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+          </button>
+        </figcaption>
+        <img src={import.meta.env.BASE_URL + 'w7x-assembly.jpg'} width="1234" height="816" loading="lazy"
+          alt="Wendelstein 7-X during assembly, with exposed copper coils, vessel ports and support frames" />
+      </figure>
+    </dialog>
+  </>;
 }
 
 export interface AppProps {
@@ -57,7 +65,17 @@ export function App({ pollMs = 2000 }: AppProps) {
   // The shared store (lib/liveStatus.ts): the views that call useLiveStatus read this same state.
   const live = useLiveStatus(pollMs);
   const def = routeDef(route);
-  const View = VIEWS[route];
+  const [visited, setVisited] = useState<RouteId[]>([route]);
+  if (!visited.includes(route)) setVisited([...visited, route]);
+  const scrollPositions = useRef<Partial<Record<RouteId, number>>>({});
+  useLayoutEffect(() => {
+    const y = scrollPositions.current[route] ?? 0;
+    if (window.scrollY !== y) window.scrollTo({top: y, behavior: 'instant'});
+    const remember = () => { scrollPositions.current[route] = window.scrollY; };
+    window.addEventListener('scroll', remember, {passive: true});
+    return () => window.removeEventListener('scroll', remember);
+  }, [route]);
+  const [assignmentsAnchor, setAssignmentsAnchor] = useState<HTMLDivElement | null>(null);
   const mainRef = useRef<HTMLElement>(null);
   const navRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -133,13 +151,11 @@ export function App({ pollMs = 2000 }: AppProps) {
               ))}
             </ul>
           </div>
+          <ReactorPhoto />
         </nav>
-        <ThemeSwitch />
-        <div className="shell-header__context">
-          <p className="shell-header__question">{DECISION_QUESTION}</p>
-          <HeaderBoundary what="mode indicator" resetKey={live}>
-            <ModeIndicator state={live} />
-          </HeaderBoundary>
+        <div className="shell-header__actions">
+          <div ref={setAssignmentsAnchor} className="shell-header__assignments" />
+          <ThemeSwitch />
         </div>
       </header>
       <HeaderBoundary what="live-session alert" resetKey={live}>
@@ -149,15 +165,22 @@ export function App({ pollMs = 2000 }: AppProps) {
         {announcement}
       </div>
       <main ref={mainRef} id="main" className="shell-main" tabIndex={-1} aria-label={def.label}>
-        <h1 className="shell-title">{def.label}</h1>
-        <ViewErrorBoundary key={route} view={def.label} files={def.files}>
-          <View />
-        </ViewErrorBoundary>
+        <h1 className="lab-visually-hidden">{def.label}</h1>
+        {visited.map(id => {
+          const active = id === route;
+          const tab = routeDef(id);
+          const View = id === 'locate' ? null : VIEWS[id];
+          return (
+            <div key={id} hidden={!active}>
+              <ViewActive.Provider value={active}>
+                <ViewErrorBoundary view={tab.label} files={tab.files}>
+                  {View ? <View /> : <GeometryView assignmentsAnchor={active ? assignmentsAnchor : null} />}
+                </ViewErrorBoundary>
+              </ViewActive.Provider>
+            </div>
+          );
+        })}
       </main>
-      {/* The global legend (A4, A6), collapsed under every view. Not a page footer. */}
-      <div className="shell-legend-row">
-        <ProvenanceLegend />
-      </div>
     </div>
   );
 }
