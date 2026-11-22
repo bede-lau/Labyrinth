@@ -1,19 +1,53 @@
 # Labyrinth · status
 
-> **Single source of truth for handoff. Read "Current state" first, then `interface.md`, `architecture.md`, `decision.md`.**
-> Last updated: 2026-11-21 by the maintainer's live-comparison session (D-024) (Claude Code in the owner's checkout `D:\Labyrinth`, Windows + WSL).
-> Branch **`main`** (= the session-4 merge of the owner's bbf2fc6 and `heat-field`). Everything below "Current state" is history, newest first.
-> Every command runs inside WSL through `scripts/dev.sh` — CLAUDE.md "Running commands on this machine" (D-020).
+> **Read "Current state" first, then `interface.md`, `architecture.md` and `decision.md`.**
+> Last updated 2026-11-22 on local branch `handover-verification`. The sections after "Current state" record earlier sessions.
+> Run checks through `scripts/dev.sh`, inside WSL on Windows (D-020).
 
-## HANDOVER — end of session 4 (2026-11-21). Read this first.
+## Current state
+
+The follow-up to merge `628d997` is on local branch `handover-verification`. The independent reviewer found
+that the merge dropped Advance plasma, Check transport, Budget, the global replay/live indicator and the decision
+question. Commit `9e017b6` restores them in the redesigned rail with Heat & field seventh and labelled
+"illustrative model". Global termination remains available across routes. The reviewer approved the follow-up.
+
+The forecast review confirmed the eight-window overview, absolute-error toggle, predicted and observed heat-flux
+lines, error statistics and visible PRD MAE mismatch. The step-through reveals each observation on demand.
+F4, F5 and F7 in `tasks/03-forecast/TASK.md` document the merged behavior.
+
+The spatial verifier found that the merged view omitted the Dommaschk scope label and its timing verification
+badge. Commit `41a506b` restores both. The badge reads its outcome from the saved artifact, including for older
+records whose verification is blocked. The reviewer approved the fix and Chromium confirmed it.
+
+`verify.sh all` passed all 11 stages on the handover source: 71 script tests, 378 backend tests, 1,736 renderer tests,
+schema and artifact freshness checks, typecheck and build. Chromium exercised seven keyboard routes and the forecast
+overview and replay at 390, 900 and 1440 px. The verification used saved artifacts and mocked or unavailable APIs.
+
+All eight handover tasks passed independent verification. The reports under `tasks/<NN-feature>/VERIFY.md`
+record the tested revisions under D-022:
+
+| Tasks | Verified commit |
+|---|---|
+| 00 Scaffold, 01 Geometry | `628d997` |
+| 03 Forecast, 08 Design system, 09 App shell | `9e017b6` |
+| 04 Budget, 06 Live GX | `a9b12b2` |
+| 05 Spatial | `41a506b` |
+
+These verdicts apply to the committed handover. Additional renderer edits in the preview checkout require their
+own verification. Live GX was checked with test doubles in this handover. The owner's earlier Modal rehearsal
+is recorded in the session-4 history.
+Any live deployment must present its own valid qualification record. The PRD forecast MAE mismatch and the
+saturated-agreement limits in D-016 and D-017 still apply.
+
+## HANDOVER — end of session 4 (2026-11-21, historical)
 
 **Where things are.** `main` = the merge commit "Merge origin/main (bbf2fc6) into heat-field" (`git log -1 --merges`). It joins:
 - the owner's redesign from another machine (bbf2fc6): nav rail, GENE-X Dommaschk checkpoints, Modal rehearsal, D-029;
 - branch `heat-field`: the owner's requirement of 2026-11-21, D-026..D-028 — Forecast predicted vs actual with MSE / RMSE / range of MSE /
   range of errors, and the new Heat & field view.
 
-The owner chose "Combine both, merge" and then asked to wrap up and push "anyways" so others can take over (D-030). `origin/heat-field` = 8c919f4,
-the pre-merge state.
+The owner chose "Combine both, merge" and then asked to wrap up and push "anyways" so others can take over (D-030).
+The session push updated both `origin/main` and `origin/heat-field` to `628d997`.
 
 **Gate at the merge commit.** `verify.sh all`: every stage passes — boundary, docs, ruff, 378 backend, artifacts schema-valid and byte-fresh,
 typecheck, 40 files / 1720 renderer tests, build.
@@ -89,7 +123,7 @@ and green; one heat fixer is finishing DZ4-1, keeping the plates drawn over the 
 Then: `verify.sh all` exit 0 → commit `ca1871b` → verifiers started; pushing to `main` was rejected (origin/main had moved to `bbf2fc6`, see above),
 so the 03+04 and 08+09 verifiers were stopped; task 10's verifier finished with PASS.
 
-## Current state (before session 4)
+## Pre-handover baseline (historical)
 
 **Local forecast update (21 November 2026).** Forecast opens on all eight saved windows with heat-flux and absolute-error graphs. The step-through still reveals observations on request. Locate omits the field-strength caption. Task 03 is VERIFYING locally.
 

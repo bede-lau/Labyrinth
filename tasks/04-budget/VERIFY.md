@@ -227,6 +227,7 @@ through other agents' concurrent edits (`tasks/00-scaffold/VERIFY.md`, `common/p
 
 Verdict: PASS
 
+
 (The line above is the Run 1 verdict and covers B1–B5. The verdict for the whole task is the last line of this file.)
 
 ## Run 2 — whole task (2026-11-20, commit 2b1607e)
@@ -743,5 +744,38 @@ $ wsl.exe -e git status --short          (end; the two VERIFY.md files belong to
    new tests at `BudgetView.test.tsx:122-131`, `:244-297`, `:338-456` assert the behaviour each of them changed.
 6. Could not check: the guard panel against a running main process (API stubbed in jsdom, absent from the static
    build), and widths below 1024 px.
+
+Verdict: PASS
+
+## Run 4 — whole task
+Verifier run: 2026-11-22, commit a9b12b2
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| B1 | Live-demo ledger arithmetic | `test_B1_*` | Rebuilt artifact had $21.83 planned and $18.17 remaining. | PASS |
+| B2 | Published stella CPU-hour arithmetic | `test_B2_published_stella_cpu_hours` | Production model returned 46,368 CPU-hours. | PASS |
+| B3 | Full-grid estimates stay in printed ranges | `test_B3_*` | Artifact printed 14.4 days/$3,173 and 28.9 days/$6,346. | PASS |
+| B4 | GX benchmark is PRD-reported context | `test_B4_gx_benchmark_is_prd_reported_context_only` | Rebuilt scenario kind was `prd-reported`. | PASS |
+| B5 | Shared pricing drives budget and guard | `test_B5_pricing_constants_exported_for_budget_guard` | Guard plan was $2.65 live/$7.73 rehearsal/$26.21 total. | PASS |
+| B6 | Ledger bar states posted, planned and remaining | `BudgetView.test.tsx` | Chromium at 1024/1440/1920 px had the complete $40 ledger label and no page overflow. | PASS |
+| B7 | Scenario cards distinguish PRD figures and arithmetic | `BudgetView.test.tsx` | Chromium rendered all four cards at 1024/1440/1920 px with `PRD base estimate`. | PASS |
+
+### Real output
+```
+$ bash scripts/verify.sh all at 9e017b6
+PASS: all 11 stages, 378 main tests, 1736 renderer tests.
+$ python3 -m pytest -q main/tests/test_budget.py
+13 passed in 0.01s
+$ npm --prefix renderer run -s test -- src/features/budget/BudgetView.test.tsx
+Test Files 1 passed; Tests 21 passed
+$ python3 scripts/check_boundaries.py
+boundary: OK (208 files scanned)
+$ git diff --stat 9e017b6 a9b12b2
+tasks/06-live-gx/TASK.md changed only; no task 04 owner path changed.
+```
+
+### Findings
+The earlier layout finding is covered by the offline Chromium viewport probes above.
 
 Verdict: PASS

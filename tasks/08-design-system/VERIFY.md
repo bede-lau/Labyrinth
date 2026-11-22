@@ -800,3 +800,25 @@ No defect found in what this run checked. Status of the run-1 findings at 3faed3
 - `verify.sh all` on the shared tree, by instruction (maintainer's result quoted above).
 
 Verdict: PASS
+
+## Run 3 — whole task
+Verifier run: 2026-11-22, commit 9e017b6
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| D1 | Design documentation covers system rules and components | `renderer/src/design/designDoc.test.ts` | Read the current DESIGN.md sections for status, charts, scenes and components | PASS |
+| D2 | Theme tokens meet contrast requirements | `renderer/src/design/contrast.test.ts` | Ran the full focused design suite in both themes | PASS |
+| D3 | Series palette remains distinct under simulated colour vision | `renderer/src/design/palette.test.ts` | Reviewed the independent negative controls and both simulation models used by the test | PASS |
+| D4 | Plot and scene themes derive from tokens | Design token, plot and scene tests | Imported token data directly through Node and compared the named scene values | PASS |
+| D5 | Primitives provide tested semantics and controls | `renderer/src/design/components/components.test.tsx` | Browser exercised the visible provenance disclosure and model status content | PASS |
+| D6 | Heat and field ramps, diverter and model status meet the requirement | `ramps.test.ts`, `palette.test.ts`, `Gallery.test.tsx` and component tests | Direct token probe measured light field-to-heat separation of 39.66 and dark separation of 34.92, with diverter edge contrasts 17.87 and 14.95 | PASS |
+### Real output
+`PATH=/Users/bedelau/Desktop/Labyrinth/app-checkout/.venv/bin:$PATH VITEST_MAX_WORKERS=2 bash scripts/dev.sh bash scripts/verify.sh all` exited 0. Summary: 71 script tests, 378 backend tests, renderer typecheck, 1736 renderer tests and build all passed.
+
+`PATH=/Users/bedelau/Desktop/Labyrinth/app-checkout/.venv/bin:$PATH VITEST_MAX_WORKERS=2 bash scripts/dev.sh npm --prefix renderer run -s test -- src/features/forecast src/design src/shell src/lib` exited 0. 26 files and 1529 tests passed.
+
+`PATH=/Users/bedelau/Desktop/Labyrinth/app-checkout/.venv/bin:$PATH bash scripts/dev.sh python3 scripts/check_boundaries.py` exited 0. `boundary: OK (208 files scanned)`.
+### Findings
+Colour-vision checks are deterministic simulations. The Chromium probe at 390, 900 and 1440 px loaded Heat and field, opened the model provenance explanation and recorded no page errors. It does not substitute for usability testing with colour-deficient people or a screen-reader session.
+
+Verdict: PASS

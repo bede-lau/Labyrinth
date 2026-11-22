@@ -20,6 +20,8 @@ Frontend:
 | S5–S6 | `renderer/src/features/spatial/*.test.tsx` |
 
 ## Status
-VERIFYING
+DONE
+
+Independent verification passed at `41a506b` on 2026-11-22. See the final run in [VERIFY.md](VERIFY.md).
 
 Previous baseline verified at commit 3faed3a: tasks/05-spatial/VERIFY.md final run, `Verdict: PASS` (external verifier, 2026-11-20). Reviewer APPROVE in the 2026-11-20 review round (status.md, Session 3).

@@ -286,3 +286,47 @@ No blocking or major defects.
 - By design, not a defect: after 6 consecutive blocks the Stop hook releases with 0 (D-003, `scripts/hooks/stop_verify.sh:78-81`).
 
 Verdict: PASS
+
+## Run 5 — whole task
+Verifier run: 2026-11-22, commit 628d997
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| 1 | `main/` and `renderer/` are separated and cross-process imports are rejected | `python3 scripts/check_boundaries.py --self-test` | The self-test caught 134 planted violations and accepted 25 clean files across three OS flavours. A normal scan covered 208 repository files during the whole-repository gate. | PASS |
+| 2 | The full gate has every required stage and exits 2 for bad invocation | `bash scripts/verify.sh all` | `bash scripts/verify.sh nope` returned 2 with the documented scope error. | PASS |
+| 3 | PostToolUse boundary hook and Stop loop block failures | `pytest scripts/tests -k 'post_edit_hook or stop_hook or stop_launcher or settings'` | `.claude/settings.json` defines PostToolUse and Stop hooks and their configured scripts exist. | PASS |
+| 4 | Raw inputs are pinned and checked | `pytest main/tests/test_common.py -k 'sha256 or pinned'` | The working tree contains 14 tracked raw input files. | PASS |
+| 5 | Required handoff documentation exists and passes its gate | `python3 scripts/check_docs.py` | `status.md`, `architecture.md`, `decision.md`, `CLAUDE.md`, and every task specification are present. | PASS |
+
+### Real output
+```
+$ bash scripts/verify.sh all
+boundary self-test: OK (134 violations caught, 25 clean files passed, 3 OS flavours agree)
+boundary: OK (208 files scanned)
+docs: OK (11 task folders)
+71 passed in 26.24s
+All checks passed!
+378 passed in 51.10s
+artifacts: schema-valid
+artifacts: fresh (byte-identical rebuild)
+Test Files  40 passed (40)
+Tests  1720 passed (1720)
+verify.sh: all stages passed.
+
+$ bash scripts/verify.sh nope
+verify.sh: unknown scope 'nope' (expected all|main|renderer|boundary|artifacts|docs)
+exit=2
+
+$ pytest scripts/tests -k 'post_edit_hook or stop_hook or stop_launcher or settings'
+17 passed, 54 deselected in 6.30s
+$ pytest main/tests/test_common.py -k 'sha256 or pinned'
+7 passed, 7 deselected in 0.01s
+$ python3 scripts/check_docs.py
+docs: OK (11 task folders)
+```
+
+### Findings
+No defects found in the current scaffold implementation. The checks were run in an isolated worktree at the merge commit. `renderer/node_modules` was symlinked into that worktree only for the renderer gate.
+
+Verdict: PASS

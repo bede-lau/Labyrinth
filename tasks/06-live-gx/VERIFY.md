@@ -969,6 +969,7 @@ differ after restore: 0
 
 Verdict: PASS
 
+
 ## Run 4 — whole task (D-024, new outcome L11)
 
 Verifier run: 2026-11-21, commit 77fd8b6
@@ -1286,5 +1287,50 @@ ls: cannot access '/home/qqbot/.labyrinth': No such file or directory
 - **Cannot be checked without Modal (D-011, unchanged since run 3):** real GX output cadence (and so how many live bean samples
   fall in 200–400 within a 15-minute slot), real device IDs, cancel latency and billing. Everything here ran against
   `FakeBackend`, my own backend, the committed archive and my synthetic archives.
+
+Verdict: PASS
+
+## Run 5 — whole task
+Verifier run: 2026-11-22, commit a9b12b2
+
+### Outcomes
+| # | Expected outcome | Test | Independent probe | Result |
+|---|---|---|---|---|
+| L1 | Guard enforces prices, ceiling and reconciliation | `test_L1_*` | Production budget plan used $2.65 live and $7.73 rehearsal allocations. | PASS |
+| L2 | Workers overlap on assigned GPUs and archive units | `test_L2_*` | Full module run used injected local workers only. | PASS |
+| L3 | Worker failures create labelled fallback and stop peers | `test_L3_*` | Full module run covered launch, poll and timeout paths. | PASS |
+| L4 | Missing Modal access is unavailable without network calls | `test_L4_*` | Fresh state returned unavailable and loaded no `modal` module. | PASS |
+| L5 | Restart resumes at checkpoint time | `test_L5_*` | Full module run covered restart and rejected backwards clocks. | PASS |
+| L6 | Workers terminate after retrieval and exceptions | `test_L6_*` | Full module run covered shutdown, late spawn, signal and kill switch paths. | PASS |
+| L7 | Status snapshots validate | `test_L7_every_status_snapshot_validates` | Full module run validated service and orchestrator snapshots. | PASS |
+| L8 | Modal declaration is isolated and invalid qualification blocks launch | `test_L8_*` | Fresh state returned unavailable with `Not qualified`; neither `modal` nor `modal_app` imported. | PASS |
+| L11 | Live comparison remains conservative | `test_L11_*` | Targeted comparison suite contacted no live provider. | PASS |
+| L9 | Live panel communicates unavailable/fallback/live | `LiveView.test.tsx` | Focused browser-environment suite covered evidence playback. | PASS |
+| L10 | Launch needs eligible status and exact-cost confirmation | `LiveView.test.tsx` | Focused suite covered idle, settled fallback, stale and unresolved-stop paths. | PASS |
+
+### Real output
+```
+$ bash scripts/verify.sh all at 9e017b6
+PASS: all 11 stages, 378 main tests, 1736 renderer tests.
+$ python3 -m pytest -q main/tests/test_live_gx.py
+231 passed in 25.09s
+$ python3 -m pytest -q main/tests/test_live_gx.py -k L11
+17 passed, 214 deselected in 3.14s
+$ npm --prefix renderer run -s test -- src/features/live-gx/LiveView.test.tsx
+Test Files 1 passed; Tests 63 passed
+$ npm --prefix renderer run -s test -- src/shell/App.test.tsx src/shell/advance.test.tsx
+Test Files 2 passed; Tests 76 passed
+$ python3 scripts/check_docs.py
+docs: OK (11 task folders)
+$ LABYRINTH_STATE_DIR=<fresh temporary directory> PYTHONPATH=main python3 <qualification probe>
+{'mode': 'unavailable', 'qualified': False, 'reason': 'Not qualified: no recorded GX rehearsal has verified initialization and checkpoint continuation.'}
+modal-loaded False
+modal-app-loaded False
+$ git diff --stat 9e017b6 a9b12b2
+tasks/06-live-gx/TASK.md changed only; final docs gate passed and no owner source path changed.
+```
+
+### Findings
+Real Modal deployment, GPU execution, cancellation latency and billing remain unverified. This run used local fakes, saved data and isolated state only.
 
 Verdict: PASS
