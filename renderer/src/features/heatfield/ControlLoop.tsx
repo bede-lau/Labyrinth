@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { balanceTargets, type HeatTransfer } from './loadBalance';
-import type { ModelState } from './model';
+import type { HeatTransfer } from './loadBalance';
+import { decideSteps, FORECAST_CHUNK, LoopController, type LoopOutcome } from './loopPolicy';
 import type { Simulation } from './sim';
 
 export interface LoopDecision {
@@ -30,51 +30,52 @@ export function ControlLoop({ disabled = false, balanceHeat = false, openPredict
   const next = useRef(0);
   useEffect(() => {
     if (!enabled || !playing) return;
-    const steps = Math.max(1, Math.round(horizonS / sim.model.params.dt));
+    const controller = new LoopController(sim, horizonS, balanceHeat);
+    const steps = controller.horizonSteps;
+    // A worker's answer is still applied if it arrives within this many steps of the request (a decision that
+    // includes a release look-ahead takes longer than a plain forecast).
+    const tolerance = Math.max(steps, Math.round(1 / sim.model.params.dt));
     let previous = sim.state.n;
     let worker: Worker | undefined;
     let pending = false;
     let closed = false;
     let requestedAt = sim.state.n;
     let incremental = false;
-    let shadow: ModelState | undefined;
-    const off = sim.coils.map(() => 0);
-    function apply(peakTileC: number[]) {
-      const coils = peakTileC.map(t => Number(t > sim.model.params.tileLimit));
-      const transfers = balanceHeat ? balanceTargets(peakTileC, sim.model.params.tileLimit, sim.model.params.Tcool) : [];
-      // Hold each field configuration long enough for a transfer to be visible.
-      // Keep polling at the prediction interval when only local sweeping is needed.
-      if (transfers.length) next.current = sim.state.n + Math.ceil(1.8 / sim.model.params.dt);
-      if (balanceHeat || coils.some((on, k) => on !== sim.coils[k])) sim.setCoils(coils, transfers);
+    let job: Generator<void, LoopOutcome> | undefined;
+    function apply(outcome: LoopOutcome) {
+      controller.apply(outcome);
+      // No hold after a transfer: a transfer is only adopted when its forecast beats the one in force, so the
+      // loop keeps polling at the prediction interval.
       onDecision?.({
-        time: sim.time, peakTileC, coils, transfers,
+        time: sim.time, peakTileC: outcome.peakTileC, coils: outcome.coils, transfers: outcome.transfers,
         drive: Float32Array.from(sim.model.drive(sim.coils, sim.absoluteTime)),
       });
-      setActive(coils.flatMap((on, k) => on ? [k + 1] : []));
+      setActive(outcome.coils.flatMap((on, k) => on ? [k + 1] : []));
     }
     function update() {
       if (sim.state.n < previous) {
         next.current = sim.state.n;
-        shadow = undefined;
+        job = undefined;
+        controller.reset();
       }
       const elapsed = Math.max(0, sim.state.n - previous);
       previous = sim.state.n;
       if (pending) return;
       if (incremental) {
-        if (!shadow) {
+        if (!job) {
           if (sim.state.n < next.current) return;
-          shadow = sim.state;
-          requestedAt = shadow.n;
+          requestedAt = sim.state.n;
           next.current = requestedAt + steps;
+          job = decideSteps(sim.model, controller.request());
         }
-        // Run the forecast ahead of the drawing clock, in bounded frame-sized
-        // batches, when a worker cannot keep up with fast playback.
-        const left = requestedAt + steps - shadow.n;
-        shadow = sim.model.advance(shadow, off, Math.min(left, Math.max(1, elapsed * 2)));
-        if (shadow.n === requestedAt + steps) {
-          const peaks = sim.model.diagnostics(shadow, off).peakTileC;
-          shadow = undefined;
-          apply(peaks);
+        // Run the forecast in bounded frame-sized batches when a worker cannot keep up with fast playback.
+        for (let budget = Math.max(1, elapsed * 2); budget > 0; budget -= FORECAST_CHUNK) {
+          const r = job.next();
+          if (r.done) {
+            job = undefined;
+            apply(r.value);
+            break;
+          }
         }
         return;
       }
@@ -83,9 +84,9 @@ export function ControlLoop({ disabled = false, balanceHeat = false, openPredict
       next.current = requestedAt + steps;
       if (worker) {
         pending = true;
-        worker.postMessage({state: sim.state, steps});
+        worker.postMessage({request: controller.request()});
       } else {
-        apply(sim.predict(steps, off).peakTileC);
+        apply(controller.decide());
       }
     }
     if (openPredictor && typeof Worker !== 'undefined') {
@@ -101,10 +102,10 @@ export function ControlLoop({ disabled = false, balanceHeat = false, openPredict
       update();
     }
     if (worker) {
-      worker.onmessage = ({data}: MessageEvent<number[]>) => {
+      worker.onmessage = ({data}: MessageEvent<LoopOutcome>) => {
         if (closed) return;
         pending = false;
-        if (sim.state.n >= requestedAt && sim.state.n <= requestedAt + steps) apply(data);
+        if (sim.state.n >= requestedAt && sim.state.n <= requestedAt + tolerance) apply(data);
         else useIncrementalForecast();
       };
       worker.onerror = useIncrementalForecast;

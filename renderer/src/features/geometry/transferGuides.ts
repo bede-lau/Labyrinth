@@ -5,6 +5,9 @@ import { plasmaMaterials } from '../../design/tokens';
 
 type Three = typeof import('three');
 
+/** Dash spacings travelled per second of model time. */
+const FLOW_SPEED = 1.5;
+
 // Each guide follows the short toroidal arc between its two strike footprints.
 // The arrowheads point toward the receiver even when the clock is paused.
 export function buildTransferGuides(T: Three, art: HeatfieldArtifact) {
@@ -34,23 +37,35 @@ export function buildTransferGuides(T: Three, art: HeatfieldArtifact) {
     route.visible = false;
     route.add(rim, fill, ...tips);
     group.add(route);
+    let point: ((f: number) => import('three').Vector3) | undefined;
     let destination = -1;
-    return (to: number | undefined) => {
+    const dash = new T.Object3D();
+    return (to: number | undefined, strength: number, time: number) => {
       route.visible = to !== undefined;
-      if (to === undefined || destination === to) return;
-      destination = to;
-      route.name = site.id + ' → ' + sites[to]!.id;
-      const delta = sites[to]!.phi - site.phi;
-      const span = Math.atan2(Math.sin(delta), Math.cos(delta));
-      const point = (f: number) => {
-        const phi = site.phi + f*span;
-        const theta = art.diverters.thetaCentre + 0.35*edge.iota*Math.sin(sites.length*f*span);
-        const [r,z] = sampleRZ(edge, nTheta, nPhi, theta, phi);
-        return new T.Vector3(...toXYZ(r,z,phi));
-      };
-      const dash = new T.Object3D();
+      if (to === undefined) return;
+      if (destination !== to) {
+        destination = to;
+        route.name = site.id + ' → ' + sites[to]!.id;
+        const delta = sites[to]!.phi - site.phi;
+        const span = Math.atan2(Math.sin(delta), Math.cos(delta));
+        point = (f: number) => {
+          const phi = site.phi + f*span;
+          const theta = art.diverters.thetaCentre + 0.35*edge.iota*Math.sin(sites.length*f*span);
+          const [r,z] = sampleRZ(edge, nTheta, nPhi, theta, phi);
+          return new T.Vector3(...toXYZ(r,z,phi));
+        };
+        tips.forEach((tip,i) => {
+          const f = i === 0 ? 0.46 : 0.88;
+          tip.position.copy(point!(f));
+          tip.quaternion.setFromUnitVectors(up, point!(f+0.005).sub(point!(f-0.005)).normalize());
+        });
+      }
+      // Dashes flow from sender to receiver on model time; brightness follows the applied fraction.
+      material.opacity = 0.25 + 0.75*Math.min(1, strength/0.4);
+      const shift = (time*FLOW_SPEED) % 1;
       for (let i = 0; i < dashes; i++) {
-        const start = point(i/dashes), end = point((i+0.73)/dashes);
+        const f0 = (i + shift)/dashes, f1 = Math.min(1, (i + shift + 0.73)/dashes);
+        const start = point!(f0), end = point!(f1);
         dash.position.copy(start).lerp(end, 0.5);
         const direction = end.clone().sub(start);
         const length = direction.length();
@@ -63,17 +78,13 @@ export function buildTransferGuides(T: Three, art: HeatfieldArtifact) {
         fill.setMatrixAt(i, dash.matrix);
       }
       rim.instanceMatrix.needsUpdate = fill.instanceMatrix.needsUpdate = true;
-      tips.forEach((tip,i) => {
-        const f = i === 0 ? 0.46 : 0.88;
-        tip.position.copy(point(f));
-        tip.quaternion.setFromUnitVectors(up, point(f+0.005).sub(point(f-0.005)).normalize());
-      });
     };
   });
-  return {group, update(transfers: readonly HeatTransfer[], visible?: readonly boolean[]) {
+  return {group, update(transfers: readonly HeatTransfer[], visible?: readonly boolean[], applied: readonly HeatTransfer[] = transfers, time = 0) {
     guides.forEach((setTarget, from) => {
       const route = transfers.find(r => r.from === from);
-      setTarget(route && visible?.[from] !== false && visible?.[route.to] !== false ? route.to : undefined);
+      const strength = applied.find(r => r.from === from && r.to === route?.to)?.fraction ?? 0;
+      setTarget(route && visible?.[from] !== false && visible?.[route.to] !== false ? route.to : undefined, strength, time);
     });
   }};
 }

@@ -779,8 +779,12 @@ test('H15 one switch predicts and adjusts the field; switching off releases the 
   const control = screen.getByRole('switch', { name: 'Control loop' });
   expect(control).not.toBeChecked();
   await user.click(control);
-  const expected = model.diagnostics(model.advance(start, OFF, Math.round(HORIZON_S / P.dt)), OFF)
-    .peakTileC.map(t => String(t > P.tileLimit));
+  // Every coil is off when the loop is switched on, so the forecast with the coils as they are is the all-off one.
+  // While any diverter is predicted hot, every coil goes on (not just the hot diverters' own).
+  const predicted = model.diagnostics(model.advance(start, OFF, Math.round(HORIZON_S / P.dt)), OFF).peakTileC;
+  expect(predicted.some(t => t > P.tileLimit)).toBe(true);
+  expect(predicted.some(t => t <= P.tileLimit)).toBe(true); // a mixed case: the old rule switched on only some coils
+  const expected = IDS.map(() => 'true');
   const coils = () => IDS.map(id => screen.getByRole('button', { name: 'Field adjustment ' + id }).getAttribute('aria-pressed'));
   await waitFor(() => expect(coils()).toEqual(expected));
   await user.click(control);

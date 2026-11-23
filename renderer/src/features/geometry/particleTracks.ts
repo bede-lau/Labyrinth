@@ -66,7 +66,8 @@ export function createParticleTracks(art: HeatfieldArtifact, sim: Simulation) {
     previous = time;
     const field = sim.field();
     const loads = sim.model.stripLoads(sim.state, sim.coils, sim.transfers);
-    const drive = sim.model.drive(sim.coils, sim.absoluteTime);
+    // The model's own strike line of each diverter (θ where its footprint sits under the applied coils).
+    const strike = sim.model.strikeLines(sim.coils, sim.state.n);
     return tracks.map((track, from) => {
       const source = sites[from]!.phi;
       const route = sim.commandedTransfers.find(r => r.from === from);
@@ -81,14 +82,17 @@ export function createParticleTracks(art: HeatfieldArtifact, sim: Simulation) {
       const centre = motion(track.leg, time).phi;
       const phase = 1.9*time + tau*from/sites.length;
       const phi = wrap(centre + 0.13*Math.sin(phase));
-      // Circulate near the strike footprint between transfers. Sample the
-      // applied sweep in space so a new destination cannot switch the offset.
-      const sweep = sites.reduce((sum, site, k) => {
+      // Circulate near the strike footprint between transfers. The swept offset is the model's strike line
+      // of the nearby diverters, weighted by toroidal distance, so it is exact at each footprint.
+      let weight = 0, shift = 0;
+      sites.forEach((site, k) => {
         const d = shortestArc(phi, site.phi);
-        return sum + drive[k]! * Math.exp(-d*d/0.24);
-      }, 0);
+        const w = Math.exp(-d*d/0.24);
+        weight += w;
+        shift += w * (strike[k]! - sim.model.thetaD);
+      });
       const theta = art.diverters.thetaCentre + 0.48*Math.cos(phase) +
-        0.35*edge.iota*Math.sin(sites.length*(centre-source)) + sim.model.params.sweepAmplitude*sweep;
+        0.35*edge.iota*Math.sin(sites.length*(centre-source)) + shift/weight;
       const [r,z] = sampleRZ(edge,nTheta,nPhi,theta,phi);
       const position = toXYZ(r,z,phi);
       if (track.history.at(-1)?.time === time) track.history.pop();

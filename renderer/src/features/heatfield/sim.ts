@@ -1,6 +1,6 @@
 // The view's running model: one state, the coil switches the user set, and listeners (the 3D scene redraws
 // on every change; React refreshes at ~10 Hz). Pure TypeScript; the playback loop lives in usePlayback.
-import { controlRamp, type AppliedControls } from './controlRamp';
+import { controlRamp, type AppliedControls, type RampSpec } from './controlRamp';
 import type { HeatTransfer } from './loadBalance';
 import { cloneState, type Diagnostics, type HeatModel, type ModelState } from './model';
 
@@ -12,11 +12,20 @@ export class Simulation {
   private applied: AppliedControls;
   private target: AppliedControls;
   private ramp?: (step: number) => AppliedControls;
+  private rampSpec?: RampSpec;
   private endStep = 0;
   controlTime = 0;
   get transfers() { return this.applied.transfers; }
   get commandedCoils() { return this.target.coils; }
   get commandedTransfers() { return this.target.transfers; }
+  /** What is applied at the current solver step (mid-ramp it lies between the old and the commanded controls). */
+  get appliedControls(): AppliedControls { return this.applied; }
+  /** What was last commanded: the controls the model is heading for. */
+  get commandedControls(): AppliedControls { return this.target; }
+  /** The cross-fade still running toward the commanded controls, if any. */
+  get ongoingRamp(): RampSpec | undefined { return this.rampSpec; }
+  /** Solver steps one change of controls takes to apply in full. */
+  get responseSteps(): number { return Math.round(this.responseSeconds / this.model.params.dt); }
   private listeners = new Set<() => void>();
   private fieldCache: { n: number; key: string; B: Float64Array } | null = null;
   /** Bumped on every change, so derived values can be cached by it. */
@@ -53,7 +62,7 @@ export class Simulation {
     this.st = this.model.advance(this.st, this.coils, steps, this.transfers, this.ramp);
     if (this.ramp) {
       this.applied = this.ramp(this.st.n);
-      if (this.st.n >= this.endStep) this.ramp = undefined;
+      if (this.st.n >= this.endStep) this.ramp = this.rampSpec = undefined;
     }
     this.changed();
   }
@@ -74,8 +83,10 @@ export class Simulation {
     const steps = Math.round(this.responseSeconds / this.model.params.dt);
     if (steps > 0) {
       this.endStep = this.st.n + steps;
+      this.rampSpec = {start: this.applied, end: this.target, first: this.st.n, steps};
       this.ramp = controlRamp(this.applied, this.target, this.st.n, steps);
     } else {
+      this.ramp = this.rampSpec = undefined;
       this.applied = this.target;
     }
     this.changed();
@@ -85,7 +96,7 @@ export class Simulation {
   reset(): void {
     this.st = cloneState(this.start);
     this.applied = this.target = {coils: this.coils.map(() => 0), transfers: []};
-    this.ramp = undefined;
+    this.ramp = this.rampSpec = undefined;
     this.controlTime = 0;
     this.changed();
   }

@@ -197,7 +197,7 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
     guides.group.visible = layers.particles;
     if (layers.particles) {
       const routes = frame.sim.commandedTransfers;
-      guides.update(frame.followed == null ? routes : routes.filter(r => r.from + 1 === frame.followed), frame.visiblePlates);
+      guides.update(frame.followed == null ? routes : routes.filter(r => r.from + 1 === frame.followed), frame.visiblePlates, frame.sim.transfers, time);
       particles.update(frame.followed);
     }
   };

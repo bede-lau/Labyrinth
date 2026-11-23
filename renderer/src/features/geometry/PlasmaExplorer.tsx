@@ -148,6 +148,13 @@ export function PlasmaExplorer({ onPowerOff, tracks, followed, feedback, onFeedb
         onFeedback(enabled);
         setLayers(current => ({...current, lines: enabled || manualLines.current}));
       }} sim={sim} horizonS={0.25} playing={playback.playing} play={() => playback.setPlaying(true)} />
+      {/* TEMPORARY demo: force a heat transfer from the hottest diverter to the coolest, to see the animation. */}
+      <button type="button" className="hf-btn" disabled={!powered} onClick={() => {
+        if (sim.commandedTransfers.length) { sim.setCoils(sim.commandedCoils, []); return; }
+        const peaks = sim.coils.map((_, k) => sim.peakTileC(k));
+        const from = peaks.indexOf(Math.max(...peaks)), to = peaks.indexOf(Math.min(...peaks));
+        sim.setCoils(sim.commandedCoils, [{from, to: to === from ? (from + 1) % peaks.length : to, fraction: 0.4}]);
+      }}>Demo transfer</button>
     </div>
     <div className="plasma-transport">
       <button type="button" className="hf-btn" disabled={!powered} onClick={() => playback.setPlaying(!playback.playing)}>

@@ -7,14 +7,16 @@ export interface HeatTransfer {
 // Pair the hottest predicted tile with the coolest available receiver.
 // Fractions are bounded to split the thermal headroom, using the tile model's
 // linear temperature rise above its coolant as a proxy for incoming load.
-export function balanceTargets(peaks: readonly number[], limit: number, coolant: number): HeatTransfer[] {
+// With `equalize`, a receiver that is itself above the limit is allowed: when every diverter is hot the hottest
+// still hands part of its load to the coolest, up to half the gap between them.
+export function balanceTargets(peaks: readonly number[], limit: number, coolant: number, equalize = false): HeatTransfer[] {
   const order = peaks.map((_, i) => i).sort((a, b) => peaks[a]! - peaks[b]!);
   const transfers: HeatTransfer[] = [];
   while (order.length >= 2) {
     const from = order.pop()!, to = order.shift()!;
     const hot = peaks[from]!, cool = peaks[to]!;
-    if (hot <= limit || hot <= cool || cool >= limit) break;
-    const headroom = Math.min(limit - cool, (hot - cool) / 2);
+    if (hot <= limit || hot <= cool || (cool >= limit && !equalize)) break;
+    const headroom = equalize && cool >= limit ? (hot - cool) / 2 : Math.min(limit - cool, (hot - cool) / 2);
     const fraction = Math.min(0.4, headroom / (hot - coolant));
     if (fraction > 0) transfers.push({ from, to, fraction });
   }

@@ -5,6 +5,14 @@ export interface AppliedControls {
   transfers: readonly HeatTransfer[];
 }
 
+/** A cross-fade in progress: how to rebuild its `controlRamp` (the fields are plain data, so a worker can be sent them). */
+export interface RampSpec {
+  start: AppliedControls;
+  end: AppliedControls;
+  first: number;
+  steps: number;
+}
+
 // Cross-fade both the sending and receiving fractions on one solver clock.
 // Interrupted ramps start at the levels already applied at the decision step.
 export function controlRamp(start: AppliedControls, end: AppliedControls, first: number, duration: number) {
