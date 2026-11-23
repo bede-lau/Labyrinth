@@ -229,7 +229,7 @@ export function GeometryContent({ g, assignmentsAnchor }: { g: GeometryArtifact;
 
       </div>
       <div className="geo-comparison" key={run}>
-        {sim && <FieldChangeCard sim={sim} />}
+        {sim && tracks && <FieldChangeCard sim={sim} tracks={tracks} followed={followed} />}
         {lanes && sim && <CalculationLog tubes={lanes} decision={decision} sim={sim} enabled={feedback} />}
         {tracks && sim && <ParticleReadout tracks={tracks} sim={sim} followed={followed} onFollow={setFollowed} />}
       </div>

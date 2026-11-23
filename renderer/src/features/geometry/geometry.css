@@ -415,3 +415,6 @@
 @media (max-width: 689px) { .field-change { order: 3; } }
 .field-change__log { height: 7.5rem; overflow-y: auto; scrollbar-gutter: stable; }
 .field-change__log th { position: sticky; top: 0; background: var(--lab-color-surface); }
+.field-change .field-change__cursor circle { stroke: var(--particle-ink); stroke-width: 1.6; }
+.field-change__target rect, .field-change__cursor rect { stroke: var(--particle-ink); stroke-width: 1; }
+.field-change svg :is(.field-change__target-label, .field-change__cursor text) { fill: var(--particle-ink); font-weight: 700; }
