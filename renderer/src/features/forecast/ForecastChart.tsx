@@ -6,7 +6,7 @@ import { PlotlyChart } from './PlotlyChart';
 
 const METRICS: readonly { value: ChartMetric; label: string }[] = [
   { value: 'flux', label: 'Heat flux' },
-  { value: 'error', label: 'Absolute error' },
+  { value: 'error', label: 'Percentage error' },
 ];
 
 

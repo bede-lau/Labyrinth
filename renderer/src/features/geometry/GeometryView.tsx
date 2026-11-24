@@ -13,6 +13,7 @@ import { FluxScene } from './FluxScene';
 import { createTubeField } from './tubeResponse';
 import { createParticleTracks } from './particleTracks';
 import { ParticleReadout } from './ParticleReadout';
+import { FieldChangeCard } from './FieldChangeCard';
 import { CalculationLog } from './CalculationLog';
 import type { LoopDecision } from '../heatfield/ControlLoop';
 import { ColorBar } from './ColorBar';
@@ -227,8 +228,9 @@ export function GeometryContent({ g, assignmentsAnchor }: { g: GeometryArtifact;
       </Panel>
 
       </div>
-      <div className="geo-comparison">
-        {lanes && sim && <CalculationLog key={run} tubes={lanes} decision={decision} sim={sim} enabled={feedback} />}
+      <div className="geo-comparison" key={run}>
+        {sim && <FieldChangeCard sim={sim} />}
+        {lanes && sim && <CalculationLog tubes={lanes} decision={decision} sim={sim} enabled={feedback} />}
         {tracks && sim && <ParticleReadout tracks={tracks} sim={sim} followed={followed} onFollow={setFollowed} />}
       </div>
       {assignmentsAnchor && createPortal(

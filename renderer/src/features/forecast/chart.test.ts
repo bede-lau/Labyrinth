@@ -128,55 +128,32 @@ test('F7 (DZ3-8) the visible caption carries the flux unit as a unit to typeset,
   }
 });
 
-/* ---- the owner's Absolute error view (bbf2fc6), combined with D-026 ---------------------------------------- */
+/* ---- the percentage-error view: |predicted − actual| / actual, both forecasters as bars ------------------- */
 
-test.each(THEMES)('absolute error draws one series for the requested forecast (%s)', theme => {
-  for (const f of FORECASTERS) {
-    const spec = errorChartSpec(ARTIFACT, completeState(N), f, theme);
-    expect(spec.data).toHaveLength(1);
-    expect(spec.data[0]).toMatchObject({ name: f === 'persistence' ? 'Persistence' : 'Frozen',
-      line: forecastStyle('predicted',theme).line, showlegend:true });
-    expect(spec.layout.xaxis.range).toEqual([1500, 1900]);
-    expect(spec.layout.xaxis.title?.text).toBe('Time t (a/v<sub>th,i</sub>)');
-    expect(spec.layout.yaxis.title?.text).toBe('Absolute error |predicted − actual| (Q<sub>gB,i</sub>)');
-    expect(spec.layout.hovermode).toBe('closest');
-  }
+const pctOf = (st: (typeof ARTIFACT.steps)[number], f: 'persistence' | 'frozen') => (100 * Math.abs(st[f] - st.observed)) / st.observed;
+
+test.each(THEMES)('percentage error draws both forecasters as bars (%s)', theme => {
+  const spec = errorChartSpec(ARTIFACT, completeState(N), 'persistence', theme);
+  expect(spec.data.map(d => [d.type, d.name])).toEqual([['bar', 'Persistence'], ['bar', 'Frozen']]);
+  expect(spec.layout.xaxis.range).toEqual([1500, 1900]);
+  expect(spec.layout.yaxis.title?.text).toBe('Percentage error (%)');
+  expect(spec.layout.shapes?.filter(sh => sh.type === 'line')).toHaveLength(2); // one mean line per forecaster
 });
 
-test('F7 the error spec draws a window’s |e| only after its Reveal: no hidden error in the data, axis, annotations or summary', () => {
+test('the percentage-error spec draws a window only after its Reveal, with no hidden value anywhere', () => {
   let s = INITIAL;
   for (let k = 0; k <= 3 * N; k++, s = advance(s, N)) {
-    for (const f of FORECASTERS) {
-      const spec = errorChartSpec(ARTIFACT, s, f, 'light');
-      const tag = `state ${s.index}/${s.phase}, ${f}`;
-      const revealed = ARTIFACT.steps.filter((_, i) => i < s.index || (i === s.index && s.phase === 'revealed'));
-      // Each line holds exactly the revealed windows' |e|, three points per window (a step); with none revealed it
-      // is the single null point that keeps it in the legend.
-      const mids = (d: Record<string, unknown>) => (d.y as (number | null)[]).filter(v => v !== null);
-      expect(mids(spec.data[0]!), tag).toEqual(revealed.map(st => f === 'persistence' ? st.absErrPersistence : st.absErrFrozen));
-      if (revealed.length === 0) for (const d of spec.data) expect([d.x, d.y], tag).toEqual([[null], [null]]);
-      const drawn = revealed.map(st => f === 'persistence' ? st.absErrPersistence : st.absErrFrozen);
-      expect(spec.layout.yaxis.range, tag).toEqual(absErrorRange(drawn));
-      expect((spec.layout.annotations ?? []).map((a) => a.text), tag).toEqual(drawn.length ? [] : ['No points yet']);
-      const json = JSON.stringify([spec.data, spec.layout]);
-      for (const st of ARTIFACT.steps.filter((x) => !revealed.includes(x))) {
-        expect(json, tag).not.toContain(String(st.absErrPersistence));
-        expect(spec.summary, tag).not.toContain(st.absErrPersistence.toFixed(4));
-      }
-      expect(spokenCaption(spec.caption), tag).toBe(spec.summary);
-      expect(spec.label, tag).not.toMatch(/[_{}]/);
-      expect(spec.summary, tag).not.toMatch(/[_{}]/);
-    }
+    const spec = errorChartSpec(ARTIFACT, s, 'persistence', 'light');
+    const tag = `state ${s.index}/${s.phase}`;
+    const revealed = ARTIFACT.steps.filter((_, i) => i < s.index || (i === s.index && s.phase === 'revealed'));
+    const ys = (d: Record<string, unknown>) => (d.y as (number | null)[]).filter(v => v !== null);
+    expect(ys(spec.data[0]!), tag).toEqual(revealed.map(st => pctOf(st, 'persistence')));
+    expect(ys(spec.data[1]!), tag).toEqual(revealed.map(st => pctOf(st, 'frozen')));
+    expect((spec.layout.annotations ?? []).map((a) => a.text), tag).toEqual(revealed.length ? [] : ['No points yet']);
+    const json = JSON.stringify([spec.data, spec.layout]);
+    for (const st of ARTIFACT.steps.filter((x) => !revealed.includes(x))) expect(json, tag).not.toContain(String(pctOf(st, 'persistence')));
+    expect(spokenCaption(spec.caption), tag).toBe(spec.summary);
   }
-  // The overview: every window, the unit typeset at the end of the caption.
-  const all = errorChartSpec(ARTIFACT, completeState(N), 'persistence', 'light');
-  expect(all.summary).toMatch(/^Absolute error \|predicted − actual\| per window\. Persistence, 8 of 8 windows: 1500–1550 0\.0140, .*1850–1900 [0-9.]+\. Absolute error in Q gB,i\.$/);
-  expect(all.caption.slice(-2)).toEqual([{ unit: FLUX_UNIT }, '.']);
-  expect(all.label).toBe(
-    'Chart: absolute error, predicted minus actual, in Q gB,i against time t in a/v th,i, 1500–1900, of the persistence ' +
-      'forecast for the stella bean trace, points at the centres of each 50-unit window',
-  );
-  // chartSpec picks the metric.
   expect(chartSpec('error', ARTIFACT, INITIAL, 'frozen', 'dark')).toEqual(errorChartSpec(ARTIFACT, INITIAL, 'frozen', 'dark'));
   expect(chartSpec('flux', ARTIFACT, INITIAL, 'frozen', 'dark')).toEqual(forecastChartSpec(ARTIFACT, INITIAL, 'frozen', 'dark'));
 });

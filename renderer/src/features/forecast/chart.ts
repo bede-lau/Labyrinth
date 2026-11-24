@@ -18,12 +18,13 @@ import {
   type SeriesStyle,
   type ThemeName,
 } from '../../design';
+import { percentErrors } from './accuracy';
 import {
   FLUX_UNIT,
+  FORECASTERS,
   FORECASTER_LABEL,
   TIME_UNIT,
   nextAction,
-  plottedErrors,
   plottedWindows,
   windowMidpoints,
   type ForecastArtifact,
@@ -60,7 +61,6 @@ export interface ForecastChartSpec {
 }
 
 const MEAN_DP = 3;
-const ERR_DP = 4;
 
 /** What each line is, in words (hover text, summary, accessible name). */
 export function lineMeaning(line: ForecastLine, f: Forecaster): string {
@@ -248,49 +248,55 @@ export function forecastChartSpec(a: ForecastArtifact, s: ReplayState, f: Foreca
   };
 }
 
+/** Colour of each forecaster in the accuracy charts: persistence takes Predicted's token, frozen the teal series colour. */
+export function forecasterColor(f: Forecaster, theme: ThemeName): string {
+  return f === 'persistence' ? themes[theme].plot.predicted : themes[theme].series.bean;
+}
+
 /**
- * The owner's absolute-error view for replay state `s`: |predicted − actual| of both forecasters (persistence,
- * then frozen), each window's error drawn only once the window is revealed (`plottedErrors`), drawn at the
- * window midpoint like the heat flux. `f`, the forecaster drawn as Predicted, keeps Predicted's line style.
+ * Percentage error per revealed window, 100·|predicted − actual| / actual, both forecasters as grouped bars at the
+ * window midpoints, each with a dashed line at its mean (MAPE). Computed here from the archived window means.
  */
-export function errorChartSpec(a: ForecastArtifact, s: ReplayState, f: Forecaster, theme: ThemeName): ForecastChartSpec {
-  const { n, span } = frame(a, s);
-  const errors = plottedErrors(a.steps, s);
-  const shown = errors.persistence.length;
+export function errorChartSpec(a: ForecastArtifact, s: ReplayState, _f: Forecaster, theme: ThemeName): ForecastChartSpec {
+  const { n, span, t0, t1 } = frame(a, s);
+  const pct = percentErrors(a.steps, s);
+  const shown = pct.persistence.length;
   const empty = shown === 0;
-
-  const layout = layoutFor(
-    a,
-    s,
-    theme,
-    'Absolute error |predicted − actual|',
-    absErrorRange(errors[f].map(w => w.value)),
-    '.3f',
-    empty ? 'No points yet' : null,
-  );
-
+  const top = empty ? 1 : Math.max(...FORECASTERS.flatMap((fc) => pct[fc].map((w) => w.abs)), 0.5) * 1.25;
+  const layout = layoutFor(a, s, theme, 'Percentage error |predicted − actual| / actual', [0, top], '.1f', empty ? 'No points yet' : null);
+  layout.yaxis = { ...layout.yaxis, title: { ...layout.yaxis.title, text: 'Percentage error (%)' }, ticksuffix: '%' };
+  layout.barmode = 'group';
+  layout.bargap = 0.35;
+  layout.hovermode = 'x unified';
+  if (!empty) {
+    layout.shapes = [
+      ...(layout.shapes ?? []),
+      ...FORECASTERS.map((fc) => {
+        const m = pct[fc].reduce((sum, w) => sum + w.abs, 0) / shown;
+        return { type: 'line' as const, xref: 'x', yref: 'y', x0: t0, x1: t1, y0: m, y1: m, line: { color: forecasterColor(fc, theme), width: 1.5, dash: 'dash' } };
+      }),
+    ];
+  }
+  const data = FORECASTERS.map((fc) => ({
+    type: 'bar',
+    name: `${FORECASTER_LABEL[fc]}`,
+    x: pct[fc].length ? pct[fc].map((w) => (w.window[0] + w.window[1]) / 2) : [null],
+    y: pct[fc].length ? pct[fc].map((w) => w.abs) : [null],
+    customdata: pct[fc].map((w) => formatWindow(w.window)),
+    marker: { color: forecasterColor(fc, theme), line: { width: 0 } },
+    hovertemplate: `${FORECASTER_LABEL[fc]}: %{y:.2f}%<extra></extra>`,
+  }));
   const label =
-    `Chart: absolute error, predicted minus actual, in ${spokenUnit(FLUX_UNIT)} against time t in ${spokenUnit(TIME_UNIT)}, ${span}, ` +
-    `of the ${f} forecast for the stella bean trace, points at the centres of each ${formatNumber(a.windowWidth, 0)}-unit window`;
-
+    `Chart: percentage error of the persistence and frozen forecasts against time t in ${spokenUnit(TIME_UNIT)}, ${span}, ` +
+    'one pair of bars per revealed window, dashed lines at each mean';
   const caption: CaptionPart[] = empty
-    ? [`Nothing plotted yet. A window's absolute errors appear after its Reveal; Run to end does all ${n} windows from ${span}, in order.`]
+    ? [`Nothing plotted yet. A window's percentage errors appear after its Reveal; Run to end does all ${n} windows from ${span}, in order.`]
     : [
-        'Absolute error |predicted − actual| per window. ' +
-          `${FORECASTER_LABEL[f]}, ${shown} of ${n} windows: ${list(errors[f], ERR_DP)}. ` +
-          (shown < n ? 'Later windows are not plotted until they are revealed. ' : '') +
-          'Absolute error in ',
-        { unit: FLUX_UNIT },
-        '.',
+        `Percentage error per window, ${shown} of ${n} windows. ` +
+          FORECASTERS.map((fc) => `${FORECASTER_LABEL[fc]}: ${pct[fc].map((w) => `${formatWindow(w.window)} ${w.abs.toFixed(2)}%`).join(', ')}.`).join(' ') +
+          (shown < n ? ' Later windows are not plotted until they are revealed.' : ''),
       ];
-
-  return {
-    data: [windowTrace(errorLineStyle(f, f, theme), errors[f], `${FORECASTER_LABEL[f]} |predicted − actual|`, ERR_DP)],
-    layout,
-    label,
-    summary: spokenCaption(caption),
-    caption,
-  };
+  return { data, layout, label, summary: spokenCaption(caption), caption };
 }
 
 /** The spec of `metric` (the owner's toggle) for state `s`. */

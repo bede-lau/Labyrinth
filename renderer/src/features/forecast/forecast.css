@@ -31,3 +31,18 @@
 .fc-btn--primary { background: var(--lab-color-accent); border-color: var(--lab-color-accent); color: var(--lab-color-accent-fg); }
 .fc-btn--primary:hover:not(:disabled) { background: var(--lab-color-accent-hover); }
 .fc-btn:disabled { cursor: not-allowed; background: var(--lab-color-surface-sunken); border-color: var(--lab-color-border); color: var(--lab-color-text-subtle); }
+
+/* Accuracy summary */
+.fc-accuracy { margin-top: var(--lab-space-6); padding-top: var(--lab-space-5); border-top: 1px solid var(--lab-color-border); display: flex; flex-direction: column; gap: var(--lab-space-4); }
+.fc-accuracy h3 { margin: 0; font-size: var(--lab-font-size-md); font-weight: var(--lab-font-weight-semibold); color: var(--lab-color-text); }
+.fc-accuracy__head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--lab-space-2); }
+.fc-accuracy__source, .fc-accuracy__empty { font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); }
+.fc-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--lab-space-3); }
+.fc-tile { display: flex; flex-direction: column; gap: var(--lab-space-1); padding: var(--lab-space-3) var(--lab-space-4); border: 1px solid var(--lab-color-border); border-radius: var(--lab-radius-md); background: var(--lab-color-surface-sunken); }
+.fc-tile__label { font-size: var(--lab-font-size-xs); color: var(--lab-color-text-muted); }
+.fc-tile__value { font-size: var(--lab-font-size-xl, 1.5rem); font-weight: var(--lab-font-weight-semibold); color: var(--lab-color-text); font-variant-numeric: tabular-nums; }
+.fc-tile__note { font-size: var(--lab-font-size-xs); color: var(--lab-color-text-subtle); font-variant-numeric: tabular-nums; }
+.fc-accuracy__body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--lab-space-5); align-items: start; }
+.fc-accuracy__body .fc-chart { height: 280px; }
+.fc-accuracy__meaning { margin: 0; padding-left: var(--lab-space-5); display: flex; flex-direction: column; gap: var(--lab-space-2); font-size: var(--lab-font-size-sm); line-height: 1.5; color: var(--lab-color-text); }
+@media (max-width: 760px) { .fc-accuracy__body { grid-template-columns: 1fr; } }

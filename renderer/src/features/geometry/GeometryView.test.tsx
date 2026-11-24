@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { bmagColor, normalizeBmag, sceneTheme, themes } from '../../design';
 import { App } from '../../shell/App';
 import { geometryFixture } from './fixture';
-import { GeometryView } from './GeometryView';
+import { GeometryView, GeometryContent } from './GeometryView';
 import {
   bmagChartSpec,
   buildSceneModel,
@@ -288,4 +288,19 @@ test('Locate shows the scene and cross-section without the field-strength card o
 test('DS-15 the cross-section inset is capped at its drawn size, so its labels keep their type size', () => {
   const css = readFileSync(resolve(__dirname, 'geometry.css'), 'utf8');
   expect(css).toMatch(/\.geo-inset__svg\s*\{[^}]*max-width:\s*320px/);
+});
+
+test('each power cycle leaves exactly one fresh field graph and calculation log', async () => {
+  serve(JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/heatfield.json'), 'utf8')));
+  render(<GeometryContent g={geometryFixture()} assignmentsAnchor={null} />);
+  const user = userEvent.setup();
+  for (let cycle = 0; cycle < 2; cycle++) {
+    const graph = await screen.findByRole('region', { name: 'Magnetic field change' });
+    await user.click(await screen.findByRole('button', { name: 'Start reactor' }));
+    await user.click(screen.getByRole('button', { name: 'Power off' }));
+    expect(graph).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Magnetic field change' })).toHaveTextContent('0.00 s');
+    expect(screen.getByRole('table', { name: 'Field change log' })).toHaveTextContent('—');
+    expect(screen.getByRole('region', { name: 'Calculation log' })).toHaveTextContent('Control loop off');
+  }
 });

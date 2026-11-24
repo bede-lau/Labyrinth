@@ -13,7 +13,8 @@ const plotly = vi.hoisted(() => ({
 vi.mock('plotly.js-dist-min', () => ({ default: plotly }));
 
 const artifact: ForecastArtifact = JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/forecast.json'), 'utf8'));
-const trace = (i: number) => plotly.react.mock.lastCall?.[1][i];
+// The main chart is the first plot on the page (the accuracy summary below it is a second one).
+const trace = (i: number) => plotly.react.mock.calls.filter(c => c[0] === screen.queryAllByTestId('forecast-plot')[0]).at(-1)?.[1][i];
 const values = (i: number) => (trace(i)?.y as (number | null)[] | undefined)?.filter(v => v !== null);
 const button = (name: string) => screen.getByRole('button', { name });
 
@@ -30,7 +31,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test('the replay opens on the saved heat flux chart with controls and no visible narrative or statistics', async () => {
+test('the replay opens on the saved heat flux chart with controls, and the percentage-error view scores both forecasters', async () => {
   const user = userEvent.setup();
   render(<ForecastView />);
   const run = await screen.findByRole('button', { name: 'Run to end' });
@@ -38,7 +39,7 @@ test('the replay opens on the saved heat flux chart with controls and no visible
   await waitFor(() => expect(values(0)).toEqual(artifact.steps.map(step => step.persistence)));
   expect(values(1)).toEqual(artifact.steps.map(step => step.observed));
   expect(trace(1)?.line).toMatchObject({ shape: 'spline', dash: 'solid' });
-  const figure = screen.getByRole('figure');
+  const figure = screen.getAllByRole('figure')[0]!;
   expect(figure).toHaveAccessibleDescription(/archived observed window mean/);
   expect(figure.querySelector('figcaption')).toHaveClass('lab-visually-hidden');
   expect(screen.queryByRole('table', { hidden: true })).toBeNull();
@@ -46,9 +47,9 @@ test('the replay opens on the saved heat flux chart with controls and no visible
 
   expect(screen.queryByRole('radio', {name: 'Frozen'})).toBeNull();
   expect(screen.getByRole('heading', {name: 'Mean heat flux'})).toBeVisible();
-  await user.click(button('Absolute error'));
-  await waitFor(() => expect(values(0)).toEqual(artifact.steps.map(step => step.absErrPersistence)));
-  expect(values(1)).toBeUndefined();
+  await user.click(button('Percentage error'));
+  await waitFor(() => expect(values(0)).toEqual(artifact.steps.map(step => (100 * Math.abs(step.persistence - step.observed)) / step.observed)));
+  expect(screen.getByRole('region', { name: 'Forecast accuracy' })).toHaveTextContent(/statistically significant/);
 });
 
 test('manual replay reveals one observation at a time', async () => {
