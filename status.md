@@ -34,7 +34,13 @@ The owner asked whether the model obeys physics, then chose: remove the heat tra
   parameters were physical; now only T_ped, T_t, γ, n_u, α, m_i are, the rest is stated as illustrative) and seven minors
   (tuning-band wording, the cold-edge deposition limitation, H11 title and vacuous bounds, 3-decimal labels in the
   W7-X and Geometry views, dead CSS and the `hf-route-pin` → `hf-plate-pin` rename, two comments). All fixed.
-- **Before `main`:** `verify.sh` in WSL and the verifier for tasks 08, 09, 10 (and 01, 03, 05). Nothing committed.
+- **Committed** on the branch as `879b1ce` (not pushed). **Before `main`:** `verify.sh` in WSL and the verifier for tasks
+  08, 09, 10 (and 01, 03, 05).
+- **WSL setup, 2026-11-25:** the WSL package is installed and the Virtual Machine Platform component enabled (both
+  elevated, exit 0); firmware virtualization is on (Ryzen 7 5800H). A Windows restart is pending before WSL2 can
+  start. **The owner chose to skip WSL for now** and push the branch (not `main`) without `verify.sh`. When resumed: install Ubuntu (`wsl --install -d Ubuntu`, which asks the owner for a Linux user name and password),
+  then `wsl.exe -e bash scripts/setup-dev.sh`, then `wsl.exe -e bash scripts/dev.sh bash scripts/verify.sh all`, then the
+  verifier on tasks 01, 03, 05, 08, 09, 10.
 
 ### What is on `control-loop-hysteresis` (2026-11-23/24, not in `main`)
 Two commits on top of `main` (`0e38a91`):
