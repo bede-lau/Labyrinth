@@ -1,11 +1,40 @@
 # Labyrinth · status
 
 > **Read "Current state" first, then `interface.md`, `architecture.md` and `decision.md`.**
-> Last updated 2026-11-24 on branch `control-loop-hysteresis` (pushed as `origin/control-loop-hysteresis`, not merged into `main`).
+> Last updated 2026-11-25 on branch `control-loop-hysteresis` (`origin/control-loop-hysteresis` is behind the local branch; not merged into `main`).
 > The sections after "Current state" record earlier sessions.
 > Run checks through `scripts/dev.sh`, inside WSL on Windows (D-020).
 
 ## Current state
+
+### 2026-11-25 (later): heat model version 2 — physics retune, heat transfers removed (D-031, NOT committed)
+The owner asked whether the model obeys physics, then chose: remove the heat transfers, and a physical retune.
+- **Model v2** (`tasks/10-heat-field/MODEL.md`, `main/…/heatfield/model.py`, `renderer/…/heatfield/model.ts`, contract):
+  the heat flux is the sheath law with two-point pressure balance, q = (γ/2)·n_u·e·T·c_s(T_t)·sin α·(B/B₀)·g; LCFS
+  0.1 keV, target 20 eV; unit conversions are artifact parameters (H8 holds). At realistic values (4e19 m⁻³, 2°) the tiles
+  stay ~450 °C and the loop has nothing to do; only the top of the tuning ranges (6e19 m⁻³, 4°) overheats D1/D4
+  (~1290 °C at ~13 MW/m², above the 10 MW/m² design load). **The owner did not answer which operating point to use; the
+  maintainer took this high-power case** (stated in the artifact text). Changing it is two parameter values + rebuild.
+- **Artifact** regenerated natively (scratch venv with `main/requirements.txt`): the unchanged model rebuilt
+  byte-identically first (only `\` vs `/` in three source paths, normalised); geometry bytes unchanged; manifest digest
+  updated. Backend: `test_heatfield.py` 23/24 natively — the 24th compares `build()`'s source path, which has `\` on
+  Windows only; 2 geometry tests fail natively with or without this change; `test_live_gx`/`test_server` need POSIX.
+- **Heat transfers removed** from the renderer: `loadBalance.ts`, `transferGuides.ts`, tracer routes (each tracer now
+  circles its own diverter), label endpoints/route pins, the loop's transfer weighing and `balanceHeat`, the "Demo
+  transfer" button. `AppliedControls` is coils only.
+- **Display:** temperatures now shown to 3 decimals in keV, LCFS colour range rounded to 0.005 keV. On the cross-section's
+  0.07–3 keV slice scale the ~0.1 keV edge is under 1 % of the ramp, so the cold footprint is no longer visible *in the
+  slice* (DZ-4 weakened; the edge strip still shows it at ≥ 12 ΔE00). Possible follow-up: a log or split scale.
+- **Known, stated, not fixed:** deposition is not energy-coupled to the plasma sink (also true of v1); with a cold edge
+  (startup) the sheath law still deposits from n_u·T_t, so tiles warm a little before the edge heats.
+- **Gates (native):** renderer 49 files / 1,734 tests pass, `tsc` clean; `check_boundaries.py` OK; `check_docs.py` reports
+  the same six stale VERIFY.md as before (needs the verifier). `verify.sh` not run (needs WSL). Tasks 08, 09, 10 reopen
+  until re-verified.
+- **Review 2026-11-25: APPROVED** on the second pass. First pass requested changes: one major (the text claimed *all*
+  parameters were physical; now only T_ped, T_t, γ, n_u, α, m_i are, the rest is stated as illustrative) and seven minors
+  (tuning-band wording, the cold-edge deposition limitation, H11 title and vacuous bounds, 3-decimal labels in the
+  W7-X and Geometry views, dead CSS and the `hf-route-pin` → `hf-plate-pin` rename, two comments). All fixed.
+- **Before `main`:** `verify.sh` in WSL and the verifier for tasks 08, 09, 10 (and 01, 03, 05). Nothing committed.
 
 ### What is on `control-loop-hysteresis` (2026-11-23/24, not in `main`)
 Two commits on top of `main` (`0e38a91`):

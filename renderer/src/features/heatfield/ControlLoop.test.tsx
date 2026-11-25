@@ -21,10 +21,10 @@ function meter(model: HeatModel) {
   const original = model.advance.bind(model);
   let forecast = 0;
   let playback = false;
-  (model as { advance: HeatModel['advance'] }).advance = (st, coils, steps, transfers, at) => {
+  (model as { advance: HeatModel['advance'] }).advance = (st, coils, steps, at) => {
     if (playback) playback = false;
     else forecast += steps;
-    return original(st, coils, steps, transfers, at);
+    return original(st, coils, steps, at);
   };
   return {
     take: () => { const f = forecast; forecast = 0; return f; },
@@ -41,7 +41,7 @@ function drive(sim: Simulation, stepsPerFrame: number, seconds: number, each?: (
   // Stable callbacks, as the app passes them: a new onDecision each render would restart the loop's effect.
   const onDecision = (d: LoopDecision) => { decisions.push(d); };
   const play = () => {};
-  const view = render(<ControlLoop balanceHeat onDecision={onDecision} sim={sim} horizonS={0.25} playing play={play} />);
+  const view = render(<ControlLoop onDecision={onDecision} sim={sim} horizonS={0.25} playing play={play} />);
   act(() => { fireEvent.click(view.getByRole('switch')); });
   work.take();
   let hottest = -Infinity, worstFrame = 0;
@@ -140,7 +140,7 @@ function heldFullDecision(workers: number) {
       opened.push(w);
       return w as unknown as Worker;
     };
-    const view = render(<ControlLoop balanceHeat sim={sim} horizonS={0.25} playing play={() => {}} openPredictor={openPredictor} />);
+    const view = render(<ControlLoop sim={sim} horizonS={0.25} playing play={() => {}} openPredictor={openPredictor} />);
     act(() => { fireEvent.click(view.getByRole('switch')); });
     let hottest = -Infinity;
     for (let f = 0; f < Math.round(20 / (17 * sim.model.params.dt)); f++) {
@@ -176,7 +176,7 @@ function withWorkers<T>(sim: Simulation, body: (w: { full: FakeWorker; guard: Fa
   const decisions: LoopDecision[] = [];
   const onDecision = (d: LoopDecision) => { decisions.push(d); };
   const openPredictor = () => { const w = new FakeWorker(sim.model); opened.push(w); return w as unknown as Worker; };
-  const view = render(<ControlLoop balanceHeat sim={sim} horizonS={0.25} playing play={() => {}} openPredictor={openPredictor} onDecision={onDecision} />);
+  const view = render(<ControlLoop sim={sim} horizonS={0.25} playing play={() => {}} openPredictor={openPredictor} onDecision={onDecision} />);
   try {
     act(() => { fireEvent.click(view.getByRole('switch')); });
     expect(opened).toHaveLength(2);
@@ -221,7 +221,7 @@ test.each(['error', 'late answer'])('worker path: a worker %s switches the loop 
 }, 120_000);
 
 test('a coil switched by hand while a decision runs is not reverted when that decision ends', () => {
-  // Unheated model: the tiles idle at ~1150-1380 deg C with every coil off, so a release probe is refused and its
+  // Unheated model: the tiles idle at ~1080-1290 deg C with every coil off, so a release probe is refused and its
   // outcome keeps every coil on. Applied after D1 was switched off by hand, that stale outcome would turn D1 back on.
   const model = modelFor(saved());
   const sim = new Simulation(model, spunUpState(model), 0);
@@ -230,15 +230,17 @@ test('a coil switched by hand while a decision runs is not reverted when that de
   // Just past the minimum on-time the release probe (3,000+ steps, ~70 frames) is running: switch D1 off mid-probe.
   const handFrame = Math.round((DEFAULT_LOOP_CONFIG.minOnS + 0.1) / (17 * dt));
   let handTime = -1;
-  const run = drive(sim, 17, DEFAULT_LOOP_CONFIG.minOnS + 2, (f) => {
+  // 4 s after the hand switch: D1's tile (τ_tile 1 s) climbs back towards the limit within that time.
+  const run = drive(sim, 17, DEFAULT_LOOP_CONFIG.minOnS + 4, (f) => {
     if (f === handFrame) {
       sim.setCoil(0, false);
       handTime = sim.time;
     }
   });
   expect(handTime).toBeGreaterThan(0);
-  // After the hand switch, a decision may switch D1 on again only because a diverter is forecast hot.
+  // After the hand switch, the first decision that switches D1 on again does so because a diverter is forecast hot
+  // (later ones may keep it on by hysteresis). A stale outcome applied after the switch would do it without that.
   const after = run.decisions.filter((d) => d.time >= handTime && d.coils[0] === 1);
-  expect(after.length).toBeGreaterThan(0); // the tiles are hot with D1 off, so the loop does switch it on again
-  expect(after.every((d) => d.peakTileC.some((p) => p > tileLimit))).toBe(true);
+  expect(after.length).toBeGreaterThan(0); // the tiles heat with D1 off, so the loop does switch it on again
+  expect(after[0]!.peakTileC.some((p) => p > tileLimit)).toBe(true);
 }, 300_000);

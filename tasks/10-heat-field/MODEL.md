@@ -1,8 +1,11 @@
-# Illustrative edge heat model, version 1 (D-027)
+# Reduced edge heat model, version 2 (D-027, D-031)
 
-**What this is.** A reduced model chosen to illustrate the owner's loop (heat map → predicted heat movement → change
-the magnetic field → new heat map) on the **real** W7-X geometry and |B| of `wout_w7x_kjm.nc`. Its parameters are
-chosen for illustration, not fitted to measurements. It is **not** a simulation of W7-X, its diverter positions are
+**What this is.** A reduced model of the owner's loop (heat map → predicted heat movement → change the magnetic
+field → new heat map) on the **real** W7-X geometry and |B| of `wout_w7x_kjm.nc`. Version 2 (D-031) replaces version 1's
+free heat-flux scale with the sheath heat-transmission law and puts the plasma temperatures at physical values
+(0.1 keV at the LCFS, 20 eV at the target). The edge temperatures and sheath-law inputs (T_ped, T_t, γ, n_u, α, m_i)
+are physical orders of magnitude; the transport, footprint, coil and tile parameters remain illustrative. None is
+fitted to measurements, and the operating point is a **high-power case** at the top of the tuning ranges (below). It is **not** a simulation of W7-X, its diverter positions are
 schematic (the owner's four; W7-X has ten divertor units) and its "control coils" are not a validated coil response
 (PRD: that remains a later milestone). Every number it produces is labelled `model`.
 
@@ -24,11 +27,11 @@ document exactly; a change here changes both implementations and the golden valu
   implementations start from identical inputs. Parameters are likewise used as written.
 - Diverters k = 0…3 (D1…D4) at φ_k = kπ/2, i.e. on grid planes j_k = k·nPhi/4.
 
-## Parameters (artifact `model.parameters`; values are the starting point, see "Tuning")
+## Parameters (artifact `model.parameters`; values are the starting point, see "Tuning"; the artifact writes every value to 7 significant figures, e.g. keV 1.602177e-16)
 
 | Name | Symbol | Value | Unit | Meaning |
 |---|---|---|---|---|
-| Tped | T_ped | 1.0 | keV | edge temperature the core supplies (no sinks) |
+| Tped | T_ped | 0.1 | keV | LCFS temperature the core supplies (no sinks); W7-X separatrix ~0.05–0.15 keV |
 | Tcore0 | T_0 | 3.0 | keV | core temperature on axis (cross-sections only) |
 | rhoBlend | ρ_b | 0.7 | – | inside ρ_b the cross-section shows the core profile only |
 | tauE | τ_E | 0.5 | s | relaxation time towards T_ped |
@@ -36,7 +39,7 @@ document exactly; a change here changes both implementations and the golden valu
 | Dperp0 | D_⊥0 | 0.2 | rad²/s | cross-field (θ) diffusivity at B = B0 |
 | B0 | B_0 | 2.5 | T | reference field |
 | tauDiv | τ_div | 0.02 | s | exhaust time at the centre of a diverter footprint |
-| Ttarget | T_t | 0.01 | keV | plasma temperature at the target |
+| Ttarget | T_t | 0.02 | keV | plasma temperature at the target (attached divertor, ~10–30 eV) |
 | sigmaPhi | σ_φ | 0.06 | rad | footprint width in φ |
 | sigmaTheta | σ_θ | 0.12 | rad | footprint width in θ |
 | sweepAmplitude | A_s | 0.30 | rad | strike-line excursion when a coil is on |
@@ -44,8 +47,14 @@ document exactly; a change here changes both implementations and the golden valu
 | epsilon | ε | 0.03 | – | relative |B| perturbation of one coil at its centre |
 | sigmaCoilPhi | σ_cφ | 0.20 | rad | coil envelope width in φ |
 | sigmaCoilTheta | σ_cθ | 0.60 | rad | coil envelope width in θ |
-| heatFluxScale | W_q | 0.2 | MW m⁻² per keV s⁻¹ | converts exhaust rate into target heat flux |
-| tileGain | K | 100 (tuned: 165, D-028) | °C per MW m⁻² | steady tile temperature rise per unit heat flux |
+| sheathGamma | γ | 7 | – | sheath heat-transmission coefficient |
+| nSep | n_u | 4e19 (tuned: 6e19, D-031) | m⁻³ | upstream (separatrix) density; tuning range 1e19–6e19 |
+| ionMass | m_i | 1 | u | ion mass (hydrogen plasma) |
+| incidence | α | 0.0349066 = 2° (tuned: 0.0698132 = 4°, D-031) | rad | field-line incidence angle on the target; tuning range 1°–4° |
+| keV | keV | 1.602176634e-16 | J | unit conversion (data, so no implementation holds a constant) |
+| amu | u | 1.66053906660e-27 | kg | unit conversion |
+| MW | MW | 1e6 | W | unit conversion |
+| tileGain | K | 100 | °C per MW m⁻² | steady tile surface temperature rise per unit heat flux |
 | Tcool | T_cool | 30 | °C | coolant / cold tile temperature |
 | tauTile | τ_tile | 1.0 | s | tile thermal time constant |
 | tileLimit | T_lim | 1200 | °C | illustrative tile surface limit |
@@ -79,7 +88,9 @@ Let `wrap(x) = x − 2π·floor(x/(2π) + 0.5)` and `g(x, σ) = exp(−x²/(2σ�
 8. Cross-field term (conservative): D⁺ = (D⊥[i,j] + D⊥[i+1,j])/2, D⁻ = (D⊥[i,j] + D⊥[i−1,j])/2;
    X[c] = (D⁺·(T[i+1,j] − T[i,j]) − D⁻·(T[i,j] − T[i−1,j]))/dθ².
 9. Source S[c] = (T_ped − T[c])/τ_E; sink L[c] = Σ_k g_k[c]·(T[c] − T_t)/τ_div.
-10. Heat flux onto diverter k: q_k[c] = W_q·(B[c]/B_0)·g_k[c]·(T[c] − T_t)/τ_div (MW/m²);
+10. Heat flux onto diverter k (sheath law, two-point pressure balance n_t·T_t = n_u·T/2, T the upstream temperature):
+    c_s = √(2·T_t·keV/(m_i·amu)), S = (γ/2)·n_u·keV·c_s·sin α / MW (MW m⁻² per keV),
+    q_k[c] = S·(B[c]/B_0)·g_k[c]·T[c] (MW/m²);
     strip load Q_k[i] = Σ_j q_k[i,j]·dφ/(√(2π)·σ_φ).
 11. Tiles: Tt_k[i] ← Tt_k[i] + Δt·(T_cool + K·Q_k[i] − Tt_k[i])/τ_tile.
 12. Plasma: T[c] ← T[c] + Δt·(P + X + S − L)[c].
@@ -88,7 +99,12 @@ The continuous equation this discretises (shown in the view):
 
 ∂T/∂t = D_∥ ∂²T/∂ℓ² + ∂/∂θ(D_⊥(B) ∂T/∂θ) + (T_ped − T)/τ_E − Σ_k g_k(θ, φ, t)·(T − T_t)/τ_div,
 with ∂/∂ℓ = ∂/∂φ + ι ∂/∂θ, D_⊥(B) = D_⊥0·(B_0/B)², B = B_VMEC·(1 + ε Σ_k a_k(t) h_k), a_k = c_k cos(2πft),
-θ_s,k(t) = θ_d + A_s a_k(t); tiles τ_tile dT_tile/dt = T_cool + K·Q_k − T_tile.
+θ_s,k(t) = θ_d + A_s a_k(t); deposition q_k = (γ/2)·n_u·e·T·c_s(T_t)·sin α·(B/B_0)·g_k;
+tiles τ_tile dT_tile/dt = T_cool + K·Q_k − T_tile.
+
+The deposition is not energy-coupled to the sink term: τ_div sets where and how fast the edge cools, the sheath law
+sets the load. The model therefore does not conserve energy between plasma and target (nor did version 1). n_u is
+fixed whatever the plasma state, so a cold edge (T = T_t) still deposits (γ/2)·n_u·e·T_t·c_s·sin α.
 
 Stability: every update weight is non-negative (the step is monotone, so T stays between T_t and T_ped) when
 Δt·(2D_∥/dφ² + 2·max D⊥/dθ² + 1/τ_E + max Σ_k g_k/τ_div) ≤ 1. With the table's values this is ≈ 0.74; the reference
@@ -119,13 +135,19 @@ Each checkpoint records `step`, `t`, `probesT`, `meanT`, `peakTileC`, `peakHeatF
 
 ## Tuning (backend, once; then frozen)
 
-The illustration must show both regimes, so `heatFluxScale` and `tileGain` (only these two) may be changed from the
-values above. Requirements, checked by tests and recorded in `model.limitations`:
+The view must show both regimes, so `nSep` and `incidence` (only these two) may be changed from the values above,
+each only within its stated range. Requirements, checked by tests and recorded in `model.limitations`:
 - `coils-off` at step 3000 (= the view's starting state): at least one diverter's peak tile temperature is above
   `tileLimit` and at least one is below it.
 - all coils on from step 0 (a test scenario, not necessarily golden): every peak tile temperature is below
   `tileLimit` at step 3000.
 - The stability condition above holds (≤ 1).
 The chosen values are written to the artifact; MODEL.md's table is the starting point, the artifact is the truth.
-Outcome (D-028): `tileGain` 165, `heatFluxScale` 0.2. Coils off at 3 s: D1 1320, D2 1115, D3 1106, D4 1315 °C; all coils on
-from 0 s: D1 575, D2 486, D3 473, D4 573 °C. Stability number 0.7355.
+Outcome (D-031): at the starting values (4e19 m⁻³, 2°) the coils-off peak loads are ~4.4 MW/m² and the tiles ~450 °C:
+no diverter reaches the limit. Tile temperatures are linear in n_u·sin α (deposition does not feed back into T), so only
+a narrow band near the top of both ranges (n_u·sin α ≳ 0.93× the top value) meets the requirements; the corner was
+chosen: `nSep` 6e19, `incidence` 4°. Coils
+off at 3 s: peak loads 13.2, 11.1, 11.0, 13.2 MW/m² (above the 10 MW/m² W7-X target design load), tiles D1 1292,
+D2 1091, D3 1081, D4 1287 °C; all coils on from 0 s: D1 557, D2 470, D3 458, D4 555 °C. Stability number 0.7355
+(unchanged: the plasma equation did not change). The model is therefore a high-power case, and says so.
+Version 1 (D-028): `tileGain` 165, `heatFluxScale` 0.2, T_ped 1 keV, T_t 0.01 keV.

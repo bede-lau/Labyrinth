@@ -6,7 +6,6 @@ import { rampColor } from '../../design/sceneTheme';
 import { plasmaMaterials } from '../../design/tokens';
 import type { Group, MeshBasicMaterial } from 'three';
 import { buildContent as buildTubes } from './FluxScene';
-import { buildTransferGuides } from './transferGuides';
 import { buildTargets } from './divertorTargets';
 import { buildReactorHardware } from './reactorHardware';
 import type { SceneModel } from './model';
@@ -127,8 +126,7 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
   });
   content.group.add(core);
   const particles = particleMarks(three, tracks);
-  const guides = buildTransferGuides(three, art);
-  content.group.add(particles.group, guides.group);
+  content.group.add(particles.group);
 
   let lastPlane = -1;
   let hardware: Group | undefined;
@@ -194,11 +192,6 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
       color.needsUpdate = true;
     }
     particles.group.visible = layers.particles && time > 0;
-    guides.group.visible = layers.particles;
-    if (layers.particles) {
-      const routes = frame.sim.commandedTransfers;
-      guides.update(frame.followed == null ? routes : routes.filter(r => r.from + 1 === frame.followed), frame.visiblePlates, frame.sim.transfers, time);
-      particles.update(frame.followed);
-    }
+    if (layers.particles) particles.update(frame.followed);
   };
 }

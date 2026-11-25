@@ -260,11 +260,13 @@ def test_H3_four_schematic_diverters_at_quarter_turns():
 
 
 # ---- H4: the reference model ----------------------------------------------------------------------------------------
-MODEL_MD_TABLE = {  # tasks/10-heat-field/MODEL.md "Parameters" (heatFluxScale and tileGain are tunable)
-    "Tped": (1.0, "keV"), "Tcore0": (3.0, "keV"), "rhoBlend": (0.7, "–"), "tauE": (0.5, "s"), "Dpar": (2.5, "rad²/s"),
-    "Dperp0": (0.2, "rad²/s"), "B0": (2.5, "T"), "tauDiv": (0.02, "s"), "Ttarget": (0.01, "keV"), "sigmaPhi": (0.06, "rad"),
+MODEL_MD_TABLE = {  # tasks/10-heat-field/MODEL.md "Parameters", version 2 (nSep and incidence are tunable)
+    "Tped": (0.1, "keV"), "Tcore0": (3.0, "keV"), "rhoBlend": (0.7, "–"), "tauE": (0.5, "s"), "Dpar": (2.5, "rad²/s"),
+    "Dperp0": (0.2, "rad²/s"), "B0": (2.5, "T"), "tauDiv": (0.02, "s"), "Ttarget": (0.02, "keV"), "sigmaPhi": (0.06, "rad"),
     "sigmaTheta": (0.12, "rad"), "sweepAmplitude": (0.30, "rad"), "sweepFrequency": (2.0, "Hz"), "epsilon": (0.03, "–"),
-    "sigmaCoilPhi": (0.20, "rad"), "sigmaCoilTheta": (0.60, "rad"), "heatFluxScale": (0.2, "MW m⁻² per keV s⁻¹"),
+    "sigmaCoilPhi": (0.20, "rad"), "sigmaCoilTheta": (0.60, "rad"), "sheathGamma": (7.0, "–"), "nSep": (4.0e19, "m⁻³"),
+    "ionMass": (1.0, "u"), "incidence": (0.03490659, "rad"), "keV": (1.602177e-16, "J"), "amu": (1.660539e-27, "kg"),
+    "MW": (1.0e6, "W"),
     "tileGain": (100.0, "°C per MW m⁻²"), "Tcool": (30.0, "°C"), "tauTile": (1.0, "s"), "tileLimit": (1200.0, "°C"),
     "dt": (0.001, "s"), "spinup": (3.0, "s"),
 }
@@ -279,7 +281,10 @@ def test_H4_parameters_are_the_model_md_table_except_the_two_tunable_ones():
         assert rec["unit"] == unit, name
         if name not in model.TUNED:
             assert rec["value"] == value, name
-    assert {n: params[n]["value"] for n in model.TUNED} == {"heatFluxScale": 0.2, "tileGain": 165.0}
+    assert {n: params[n]["value"] for n in model.TUNED} == {"nSep": 6.0e19, "incidence": 0.06981317}
+    for n in model.TUNED:  # inside the stated ranges
+        lo, hi = model.TUNING_RANGES[n]
+        assert lo <= params[n]["value"] <= hi, n
     assert model.MODEL_MD_START == {n: MODEL_MD_TABLE[n][0] for n in model.TUNED}
 
 
@@ -338,8 +343,10 @@ def _literal_step(inp: model.Inputs, T: np.ndarray, tiles: np.ndarray, n: int, c
             X = (d_plus * (T[j, ip] - c) - d_minus * (c - T[j, im])) / dth**2
             S = (p["Tped"] - c) / p["tauE"]  # 9
             L = sum(G[k, j, i] * (c - p["Ttarget"]) / p["tauDiv"] for k in range(4))
-            for k in range(4):  # 10
-                q = p["heatFluxScale"] * (B[j, i] / p["B0"]) * G[k, j, i] * (c - p["Ttarget"]) / p["tauDiv"]
+            c_s = math.sqrt(2 * p["Ttarget"] * p["keV"] / (p["ionMass"] * p["amu"]))
+            for k in range(4):  # 10: sheath law with two-point pressure balance
+                q = (p["sheathGamma"] / 2 * p["nSep"] * p["keV"] * c_s * math.sin(p["incidence"]) / p["MW"]
+                     * (B[j, i] / p["B0"]) * G[k, j, i] * c)
                 Q[k, i] += q * dph / (math.sqrt(TAU) * p["sigmaPhi"])
             T_new[j, i] = c + p["dt"] * (P + X + S - L)  # 12
     tiles_new = tiles + p["dt"] * (p["Tcool"] + p["tileGain"] * Q - tiles) / p["tauTile"]  # 11
@@ -362,7 +369,8 @@ def test_H4_one_step_is_model_md_transcribed_literally():
 
 
 def test_H4_uniform_pedestal_without_sinks_or_coils_stays_exactly_uniform():
-    inp = written_inputs().with_params(tauDiv=math.inf)
+    # No exhaust (tau_div infinite) and no deposition (n_u = 0: the sheath law is not energy-coupled to the sink).
+    inp = written_inputs().with_params(tauDiv=math.inf, nSep=0.0)
     m = model.Model(inp)
     _, st = model.run(m, model.ALL_OFF, [400])
     assert np.all(st.T == inp.params["Tped"])  # exactly, every cell
@@ -527,7 +535,9 @@ def test_H5_regime_requirements_hold():
     assert all(v < limit for v in on), on
     assert p["spinup"]["value"] == 3.0 == _golden("coils-off", 3000)["t"]  # the view's starting state
     lim = built()["model"]["limitations"]
-    assert "tileGain changed from MODEL.md's starting value 100 to 165" in lim and "heatFluxScale kept at 0.2" in lim
+    assert "nSep changed from MODEL.md's starting value 4e+19 to 6e+19" in lim
+    assert "incidence changed from MODEL.md's starting value 0.0349066 to 0.0698132" in lim
+    assert "high-power case" in lim and "10 MW/m² W7-X target design load" in lim
     assert "D1, D4 above the illustrative 1200 °C tile limit and D2, D3 below it" in lim
     assert "all below the limit" in lim
     assert model.regime(model.Model(written_inputs()), built()["model"]["golden"]["scenarios"])["ok"] is True
@@ -535,7 +545,7 @@ def test_H5_regime_requirements_hold():
 
 def test_H5_model_text_states_what_the_model_is():
     m = built()["model"]
-    assert m["version"] == 1 and m["name"] and m["summary"]
+    assert m["version"] == 2 and m["name"] and m["summary"]
     ids = [e["id"] for e in m["equations"]]
     assert ids == ["heat", "parallel", "cross-field", "field", "strike-line", "footprint", "deposition", "tiles"]
     assert all(e["text"] and e["meaning"] for e in m["equations"])
@@ -545,11 +555,14 @@ def test_H5_model_text_states_what_the_model_is():
                    "B_s = surfaces[last].B", "T₊[i,j] = (1−w)·T[i+p, j+1] + w·T[i+p+1, j+1]", "λ neglected"):
         assert phrase in m["discretization"], phrase
     lim = m["limitations"]
-    for phrase in ("Illustrative reduced model, not a simulation of W7-X", "not fitted to measurements", "schematic",
+    for phrase in ("Reduced model, not a simulation of W7-X", "not fitted to measurements", "schematic",
                    "ten island-divertor units", "coil response is not validated", "later milestone",
                    "stream function λ neglected", "not the GENE-X spatial-parallel run"):
         assert phrase in lim, phrase
-    assert "illustrative" in m["summary"] and "not a simulation of W7-X" in m["summary"]
+    assert "sheath heat-transmission law" in m["summary"] and "not a simulation of W7-X" in m["summary"]
+    assert "remain illustrative" in m["summary"] and "remain illustrative" in m["limitations"]
+    assert "cold edge (T = T_t) deposits" in m["limitations"]
+    assert "high-power case" in m["summary"]
 
 
 # ---- H6: provenance, determinism, schema, manifest ------------------------------------------------------------------
@@ -568,7 +581,7 @@ def test_H6_provenance_geometry_derived_and_model_model():
     assert prov["kind"] == "model"
     assert prov["verification"]["outcome"] == "not-applicable"
     details = prov["verification"]["details"]
-    assert "Illustrative model, not a W7-X simulation" in details and "not fitted to measurements" in details
+    assert "Reduced model, not a W7-X simulation" in details and "not fitted to measurements" in details
     assert "golden checkpoints" in details and "2e-06" in details
     assert prov["coverage"]["tStart"] == 0.0 and prov["coverage"]["tEnd"] == 3.0
     for p in (geo, prov):

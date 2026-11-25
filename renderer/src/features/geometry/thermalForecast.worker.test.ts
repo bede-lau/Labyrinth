@@ -17,7 +17,7 @@ test('the forecast worker answers a loop request with the decision a synchronous
 
   const sim = startupSimulation(art);
   sim.advance(6500);
-  const request = new LoopController(sim, 0.25, true).request();
+  const request = new LoopController(sim, 0.25).request();
   scope.onmessage!({ data: { request } } as MessageEvent);
   expect(posted).toHaveLength(1);
   expect(posted[0]).toEqual(decideLoop(heatedEdge(art), request));

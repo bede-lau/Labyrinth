@@ -370,3 +370,30 @@ The bundled Modal stella bean geometry and input are the 129-sample reference at
 Read the saved checkpoint bounds and traced GPU mapping for the Dommaschk replay. Recompute the means and 39-value reference check for each controlled run. Timing and kernel activity come from separate recorded experiments. Spatial fixture contracts accept both derived and earlier PRD-reported figures.
 
 The budget uses “PRD base estimate” for the GPU, CPU and RAM calculation. The guard estimate includes additional allowances.
+
+## D-031 · Heat model version 2: a sheath heat-flux law, physical edge temperatures, no heat transfers (owner, 2026-11-25)
+**Context.** Asked whether the Heat & field / W7-X model "obeys physics", the maintainer found that it does in its geometry
+and |B| (VMEC) and in the shape of its transport equation, but not in its numbers: a 1 keV LCFS (W7-X: ~0.1 keV), a free
+heat-flux scale W_q, and "heat transfers" that moved a fraction of one diverter's load onto another, which nothing in a
+stellarator divertor can do. The owner chose: remove the transfers; a physical retune, not a mere rescale.
+**Decision.**
+1. MODEL.md version 2. The edge temperatures and sheath-law inputs are physical orders of magnitude; the transport,
+   footprint, coil and tile parameters remain illustrative. Step 10 becomes the sheath heat-transmission law with two-point pressure balance,
+   q_k = (γ/2)·n_u·e·T·c_s(T_t)·sin α·(B/B_0)·g_k, c_s = √(2eT_t/m_i); T_ped 0.1 keV, T_t 0.02 keV, γ 7, hydrogen.
+   The unit conversions (keV, amu, MW) are artifact parameters, so neither implementation holds a numeric constant (H8).
+   `heatFluxScale` is gone; `tileGain` returns to MODEL.md's 100. Contract `heatfield.schema.json` lists the new
+   parameters (sheathGamma, nSep, ionMass, incidence, keV, amu, MW).
+2. Tuning: only `nSep` (1e19–6e19 m⁻³) and `incidence` (1°–4°), within those ranges. At the starting values (4e19, 2°)
+   no tile reaches the 1200 °C limit (~4.4 MW/m², ~450 °C). Only a narrow band near the top of both ranges
+   (n_u·sin α ≳ 0.93× the top value; tiles are linear in it) gives the regime the view needs; the corner (6e19, 4°) was taken (coils off: D1/D4 ~1290 °C at ~13 MW/m², above the 10 MW/m² W7-X target design load). The owner did not
+   pick an operating point when asked; the maintainer chose this high-power case, which the summary, the limitations
+   and MODEL.md state plainly. It is two parameter values to change.
+3. Heat transfers are removed from the renderer: load balancer, transfer dashes, tracer routes, label endpoints, the
+   loop's transfer weighing and the "Demo transfer" button. The coils' strike-line sweep is the only control.
+4. Known and stated, not fixed: the deposited heat flux is not energy-coupled to the plasma's exhaust term (as in
+   version 1), the sheath/two-point/lumped-tile pieces are textbook simplifications, the four diverters stay schematic,
+   and the coil response stays unvalidated.
+**Consequences.** `artifacts/heatfield.json` regenerated (geometry bytes unchanged; the model block and goldens new) and
+its manifest digest updated. Tasks 08, 09 and 10 are reopened until re-verified. The artifact was rebuilt natively on
+Windows with the pinned requirements; the unchanged model rebuilt byte-identically there first, so the build is the
+reference build, but `verify.sh` (WSL, D-020) has not run on it.

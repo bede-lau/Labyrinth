@@ -1,6 +1,7 @@
-"""Illustrative edge heat model, version 1: the Python reference of tasks/10-heat-field/MODEL.md (D-027 §3, §5).
+"""Reduced edge heat model, version 2: the Python reference of tasks/10-heat-field/MODEL.md (D-027 §3, §5; D-031).
 
-This is NOT a simulation of W7-X. Its parameters are chosen for illustration and not fitted to measurements, its four
+This is NOT a simulation of W7-X. Its edge temperatures and sheath-law inputs are physical orders of magnitude, its
+transport, footprint, coil and tile parameters are illustrative, none is fitted to measurements, its four
 diverters are schematic and its control coils are not a validated coil response. Every output is provenance `model`.
 
 The renderer's TypeScript port reads every input from `artifacts/heatfield.json` and must reproduce the golden
@@ -26,20 +27,24 @@ import numpy as np
 TWO_PI = 2 * math.pi
 N_DIVERTERS = 4
 
-# name: (value, unit, symbol, description). MODEL.md's table, except the tuned tileGain (MODEL.md "Tuning": only
-# heatFluxScale and tileGain may change; MODEL_MD_START holds the starting values). Tile temperatures depend only on the
-# product K*W_q; heatFluxScale keeps 0.2 (peak heat flux ~7-8 MW/m^2) and K = 165 puts the 1200 degC limit between the
-# coils-off diverters at 3 s (D1, D4 ~1320 degC above it; D2, D3 ~1110 degC below it), all coils on stay below (~575 degC).
+# name: (value, unit, symbol, description). MODEL.md's table (version 2, D-031). Only nSep and incidence are tuned
+# (MODEL.md "Tuning", each inside its stated range; MODEL_MD_START holds the starting values). The heat flux follows the
+# sheath heat-transmission law with two-point pressure balance; keV, amu and MW are unit conversions carried as data so
+# that neither implementation holds a numeric constant of the model. At the starting values (4e19 m^-3, 2 deg) the
+# coils-off peaks are ~4.4 MW/m^2 and ~450 degC: no diverter reaches the limit. Only the top of both ranges (6e19 m^-3,
+# 4 deg: ~13 MW/m^2, above the 10 MW/m^2 W7-X target design load) meets the tuning rule. Tile temperatures are linear
+# in n_u*sin(alpha) (deposition does not feed back into T), so the regime holds in a narrow band n_u*sin(alpha) >~ 0.93x
+# the top value; the corner was chosen. The model is a high-power edge case, and says so (D-031).
 PARAMETERS: dict[str, tuple[float, str, str, str]] = {
-    "Tped": (1.0, "keV", "T_ped", "edge temperature the core supplies (no sinks)"),
+    "Tped": (0.1, "keV", "T_ped", "LCFS temperature the core supplies (no sinks); W7-X separatrix ~0.05-0.15 keV"),
     "Tcore0": (3.0, "keV", "T_0", "core temperature on axis (cross-sections only)"),
     "rhoBlend": (0.7, "–", "ρ_b", "inside ρ_b the cross-section shows the core profile only"),
     "tauE": (0.5, "s", "τ_E", "relaxation time towards T_ped"),
     "Dpar": (2.5, "rad²/s", "D_∥", "diffusivity along the field line (per radian of φ)"),
-    "Dperp0": (0.2, "rad²/s", "D_⊥0", "cross-field (θ) diffusivity at B = B_0"),
+    "Dperp0": (0.2, "rad²/s", "D_⊥0", "cross-field (θ) diffusivity at B = B0"),
     "B0": (2.5, "T", "B_0", "reference field"),
     "tauDiv": (0.02, "s", "τ_div", "exhaust time at the centre of a diverter footprint"),
-    "Ttarget": (0.01, "keV", "T_t", "plasma temperature at the target"),
+    "Ttarget": (0.02, "keV", "T_t", "plasma temperature at the target (attached divertor, ~10-30 eV)"),
     "sigmaPhi": (0.06, "rad", "σ_φ", "footprint width in φ"),
     "sigmaTheta": (0.12, "rad", "σ_θ", "footprint width in θ"),
     "sweepAmplitude": (0.30, "rad", "A_s", "strike-line excursion when a coil is on"),
@@ -47,16 +52,23 @@ PARAMETERS: dict[str, tuple[float, str, str, str]] = {
     "epsilon": (0.03, "–", "ε", "relative |B| perturbation of one coil at its centre"),
     "sigmaCoilPhi": (0.20, "rad", "σ_cφ", "coil envelope width in φ"),
     "sigmaCoilTheta": (0.60, "rad", "σ_cθ", "coil envelope width in θ"),
-    "heatFluxScale": (0.2, "MW m⁻² per keV s⁻¹", "W_q", "converts exhaust rate into target heat flux"),
-    "tileGain": (165.0, "°C per MW m⁻²", "K", "steady tile temperature rise per unit heat flux"),
+    "sheathGamma": (7.0, "–", "γ", "sheath heat-transmission coefficient (standard value ~7)"),
+    "nSep": (6.0e19, "m⁻³", "n_u", "upstream (separatrix) density; tuned within 1e19-6e19 m⁻³ (top: high-power case)"),
+    "ionMass": (1.0, "u", "m_i", "ion mass (hydrogen plasma)"),
+    "incidence": (0.06981317, "rad", "α", "field-line incidence angle on the target (4°); tuned within 1-4° (top)"),
+    "keV": (1.602176634e-16, "J", "keV", "one keV in joules (unit conversion)"),
+    "amu": (1.66053906660e-27, "kg", "u", "atomic mass unit (unit conversion)"),
+    "MW": (1.0e6, "W", "MW", "one megawatt in watts (unit conversion)"),
+    "tileGain": (100.0, "°C per MW m⁻²", "K", "steady tile surface temperature rise per unit heat flux"),
     "Tcool": (30.0, "°C", "T_cool", "coolant / cold tile temperature"),
     "tauTile": (1.0, "s", "τ_tile", "tile thermal time constant"),
     "tileLimit": (1200.0, "°C", "T_lim", "illustrative tile surface limit"),
     "dt": (0.001, "s", "Δt", "time step"),
     "spinup": (3.0, "s", "t_spin", "the view starts from the state after this time with every coil off"),
 }
-MODEL_MD_START = {"heatFluxScale": 0.2, "tileGain": 100.0}  # MODEL.md's starting values of the two tunable parameters
-TUNED = ("heatFluxScale", "tileGain")
+MODEL_MD_START = {"nSep": 4.0e19, "incidence": 0.03490659}  # MODEL.md's starting values of the two tunable parameters
+TUNED = ("nSep", "incidence")
+TUNING_RANGES = {"nSep": (1.0e19, 6.0e19), "incidence": (0.01745329, 0.06981317)}
 
 PROBES: tuple[tuple[int, int], ...] = ((12, 0), (12, 18), (12, 36), (12, 54), (0, 0), (24, 9), (36, 27), (6, 45))
 RELATIVE_TOLERANCE = 2e-6
@@ -200,10 +212,17 @@ class Model:
         g_theta = np.stack([gauss(wrap(self.theta - tk), self.inp.params["sigmaTheta"]) for tk in ts])
         return self.g_phi[:, :, None] * g_theta[:, None, :]
 
-    def strip_loads(self, T: np.ndarray, B: np.ndarray, g: np.ndarray) -> np.ndarray:
-        """Step 10: q_k = W_q (B/B_0) g_k (T - T_t)/tau_div (MW/m^2); Q_k[i] = sum_j q_k[i, j] dphi/(sqrt(2 pi) sigma_phi)."""
+    def sheath_factor(self) -> float:
+        """Step 10, constant part: (gamma/2) n_u e c_s(T_t) sin(alpha) / MW, in MW m^-2 per keV of upstream temperature;
+        c_s(T_t) = sqrt(2 T_t keV / (m_i amu)) (T_e = T_i at the target)."""
         p = self.inp.params
-        q = p["heatFluxScale"] * (B / p["B0"])[None, :, :] * g * ((T - p["Ttarget"]) / p["tauDiv"])[None, :, :]
+        c_s = math.sqrt(2 * p["Ttarget"] * p["keV"] / (p["ionMass"] * p["amu"]))
+        return p["sheathGamma"] / 2 * p["nSep"] * p["keV"] * c_s * math.sin(p["incidence"]) / p["MW"]
+
+    def strip_loads(self, T: np.ndarray, B: np.ndarray, g: np.ndarray) -> np.ndarray:
+        """Step 10: q_k = (gamma/2) n_u e T c_s(T_t) sin(alpha) (B/B_0) g_k (MW/m^2); Q_k[i] = sum_j q_k[i, j] dphi/(sqrt(2 pi) sigma_phi)."""
+        p = self.inp.params
+        q = self.sheath_factor() * (B / p["B0"])[None, :, :] * g * T[None, :, :]
         return q.sum(axis=1) * self.strip_factor
 
     # ---- the step ---------------------------------------------------------------------------------------------------

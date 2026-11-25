@@ -153,12 +153,12 @@ test('H9 the scene starts from the spun-up state, colours by temperature or |B| 
   expect(Array.from(s.sim.state.T)).toEqual(Array.from(start.T));
   expect(s.sim.coils).toEqual(OFF);
   expect([s.colorBy, s.showLines, s.showArrows]).toEqual(['temperature', true, false]);
-  // Fixed temperature range: the coldest start value rounded down to 0.05 keV, to T_ped.
+  // Fixed temperature range: the coldest start value rounded down to 0.005 keV, to T_ped.
   expect(s.ranges.lcfsT[1]).toBe(P.Tped);
-  expect(formatNumber(s.ranges.lcfsT[0], 2)).toBe('0.65');
+  expect(formatNumber(s.ranges.lcfsT[0], 3)).toBe('0.070');
 
   const scene = panel('W7-X last closed flux surface: model temperature and |B|');
-  const tempBar = within(scene).getByRole('img', { name: /^Colour bar: Temperature in keV from 0\.65 \(coldest end in yellow\) to 1\.00 \(hottest end in red\)/ });
+  const tempBar = within(scene).getByRole('img', { name: /^Colour bar: Temperature in keV from 0\.070 \(coldest end in yellow\) to 0\.100 \(hottest end in red\)/ });
   expect(tempBar).toHaveAccessibleName(/anything colder takes the coldest colour/);
   const tempHead = tempBar.closest('.hf-colorbar')!;
   expect(tempHead).toHaveTextContent('Temperature (keV)');
@@ -447,7 +447,7 @@ test('H11 the toroidal-angle slider (5° steps) and Go to D1–D4 choose the sli
   expect(fills.filter((f) => grays.includes(f!))).toEqual([]);
 });
 
-test('H11 the slice temperature bar starts at the data floor, so the cold footprint under a coil-off plate shows in the slice and follows the coils (DZ-4)', async () => {
+test('H11 the slice temperature bar starts at the data floor; the cold footprint under a coil-off plate shows on the edge strip, is colder in the slice ring, and follows the coils (DZ-4)', async () => {
   const user = userEvent.setup();
   renderContent();
   const ranges = lastScene().ranges;
@@ -456,15 +456,15 @@ test('H11 the slice temperature bar starts at the data floor, so the cold footpr
   for (const v of start.T) tMin = Math.min(tMin, v);
   expect(ranges.sliceT[0]).toBe(ranges.lcfsT[0]);
   expect(ranges.sliceT[0]).toBeLessThanOrEqual(tMin);
-  expect(ranges.sliceT[0]).toBeGreaterThan(tMin - 0.05);
+  expect(ranges.sliceT[0]).toBeGreaterThan(tMin - 0.005);
   expect(ranges.sliceT[0]).toBeGreaterThan(P.Ttarget);
   expect(ranges.sliceT[1]).toBe(P.Tcore0);
   const xsPanel = panel('Cross-section at φ = 0° (D1)');
   const bar = within(xsPanel).getByRole('img', {
-    name: /^Colour bar: Temperature in keV from 0\.65 \(coldest end in yellow\) to 3\.00 \(hottest end in red\)/,
+    name: /^Colour bar: Temperature in keV from 0\.070 \(coldest end in yellow\) to 3\.000 \(hottest end in red\)/,
   });
   expect(bar).toHaveAccessibleName(/anything colder takes the coldest colour/);
-  expect(bar).toHaveTextContent('0.65 · coldest');
+  expect(bar).toHaveTextContent('0.070 · coldest');
 
   // Outer-ring cells (ρ 0.875–1) at plane j from MODEL.md's cross-section formula, independently, and their ramp position.
   const [lo, hi] = ranges.sliceT;
@@ -484,16 +484,15 @@ test('H11 the slice temperature bar starts at the data floor, so the cold footpr
   };
 
   // At the start (every coil off after the spin-up) the D1 footprint sits under the plate, θ 82.5°–97.5° round the
-  // strike line at 90°: low on the ramp, clearly below every outer cell 45° or more away from it.
+  // strike line at 90°: below every outer cell 45° or more away from it.
   const under = [11, 12];
   const away = Array.from({ length: 48 }, (_, i) => i).filter((i) => i <= 5 || i >= 18);
-  under.forEach((i) => expect(ramp(cellT(start.T, 0, i)), `cell 7:${i}`).toBeLessThan(0.1));
-  away.forEach((i) => expect(ramp(cellT(start.T, 0, i)), `cell 7:${i}`).toBeGreaterThan(0.13));
-  // On the old T_t…T_0 bar the footprint sat a quarter of the way up the ramp, beside the rest of the ring.
-  expect((cellT(start.T, 0, 12) - P.Ttarget) / (P.Tcore0 - P.Ttarget)).toBeGreaterThan(0.25);
+  // With a realistic ~0.1 keV edge under a 3 keV core (D-031) the outer ring sits low on this linear ramp, so the
+  // footprint is only colder than the ring round it here; the edge strip below shows it on the edge's own scale.
+  const footprintMax = Math.max(...under.map((i) => ramp(cellT(start.T, 0, i))));
+  away.forEach((i) => expect(ramp(cellT(start.T, 0, i)), `cell 7:${i}`).toBeGreaterThan(footprintMax));
   // The slice draws exactly those positions.
   for (const i of [...under, 0, 30]) expectFill(i, ramp(cellT(start.T, 0, i)));
-  const footprintFill = fillOf(12);
 
   // The edge strip (DZ3-3): the LCFS temperature at this φ on the 3D surface's range (ranges.lcfsT), drawn just
   // outside the LCFS. There the footprint under D1 stands at least 12 ΔE00 (the series gate) off every strip cell
@@ -514,15 +513,15 @@ test('H11 the slice temperature bar starts at the data floor, so the cold footpr
   for (const i of under) expect(Math.min(...away.map((k) => dE(edgeHex(i), edgeHex(k)))), `strip ${i}`).toBeGreaterThanOrEqual(12);
   expect(Math.min(...away.map((k) => dE(cellHex(12), cellHex(k))))).toBeLessThan(12);
   // Its colour bar says what it shows.
-  expect(within(xsPanel).getByRole('img', { name: /^Colour bar: Edge \(LCFS\), same scale as the 3D view in keV from 0\.65 \(coldest end in yellow\) to 1\.00/ })).toBeInTheDocument();
+  expect(within(xsPanel).getByRole('img', { name: /^Colour bar: Edge \(LCFS\), same scale as the 3D view in keV from 0\.070 \(coldest end in yellow\) to 0\.100/ })).toBeInTheDocument();
   const footprintEdge = edgeHex(12);
 
   // Moving the slider off the diverter (φ 45°) the cold patch is gone: the same cell is warmer and drawn warmer, and
   // on the strip the change is at least 12 ΔE00.
   fireEvent.change(screen.getByRole('slider', { name: /^Toroidal angle φ/ }), { target: { value: '45' } });
-  expect(ramp(cellT(start.T, 9, 12))).toBeGreaterThan(ramp(cellT(start.T, 0, 12)) + 0.05);
+  // (On the slice's 0.07-3 keV ramp the ~0.1 keV edge spans under 1 % of the scale (D-031): warmer, not visibly so.)
+  expect(ramp(cellT(start.T, 9, 12))).toBeGreaterThan(ramp(cellT(start.T, 0, 12)));
   expectFill(12, ramp(cellT(start.T, 9, 12)));
-  expect(fillOf(12)).not.toEqual(footprintFill);
   expectEdge(start.T, 9, 12);
   expect(dE(edgeHex(12), footprintEdge)).toBeGreaterThanOrEqual(12);
 
@@ -535,9 +534,8 @@ test('H11 the slice temperature bar starts at the data floor, so the cold footpr
   const ring = Array.from({ length: 48 }, (_, i) => cellT(swept, 0, i));
   const coldest = ring.indexOf(Math.min(...ring));
   expect(coldest).toBe(14);
-  expect(ramp(ring[coldest]!)).toBeLessThan(0.1);
   // The cell the footprint left is now clearly warmer than the one it moved to.
-  expect(ramp(ring[11]!)).toBeGreaterThan(ramp(ring[14]!) + 0.03);
+  expect(ramp(ring[11]!)).toBeGreaterThan(ramp(ring[14]!));
   for (const i of [11, 12, 14]) expectFill(i, ramp(ring[i]!));
   // On the strip the move is plain to see: the cell it left and the cell it moved to are 12 ΔE00 or more apart, and the
   // cell it moved to has changed by as much since the start.
@@ -812,16 +810,16 @@ test('H16 the equation, the parameter table and the honesty notes are shown; eve
     expect(dt, e.id).toBeDefined();
     expect(dt.textContent).toBe(e.text.replace(/_/g, ''));
   }
-  // Parameter table: symbol, value, unit and meaning of all 23 parameters, from the artifact.
+  // Parameter table: symbol, value, unit and meaning of all 29 parameters, from the artifact.
   const params = screen.getByRole('table', { name: /Parameters as written in artifacts\/heatfield.json/ });
   const rows = within(params).getAllByRole('row').slice(1);
-  expect(rows).toHaveLength(23);
+  expect(rows).toHaveLength(29);
   for (const [name, p] of Object.entries(ART.model.parameters)) {
     const row = params.querySelector<HTMLElement>(`tr[data-parameter="${name}"]`)!;
     expect(row.querySelector('th')!.textContent).toBe(p.symbol.replace('_', ''));
     expect(cells(row)).toEqual([trimNumber(p.value), p.unit, p.description]);
   }
-  expect(params.querySelector('tr[data-parameter="tileGain"] td')).toHaveTextContent('165');
+  expect(params.querySelector('tr[data-parameter="tileGain"] td')).toHaveTextContent('100');
   expect(screen.getByText(norm(ART.model.limitations))).toBeInTheDocument();
 
   // Model status on every panel that shows model numbers; geometry and |B| say Derived (VMEC).

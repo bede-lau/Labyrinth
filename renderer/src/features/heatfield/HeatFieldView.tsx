@@ -302,7 +302,7 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
   // The key draws the arrow and the slice marks over the surface's own ramp, as they appear in 3D.
   const markGround = colorBy === 'temperature' ? heatGradientCss(theme) : fieldGradientCss(theme);
   const tempBar = (range: readonly [number, number], note: string) => (
-    <ColorBar kind="temperature" range={range} theme={theme} title="Temperature" unit="keV" decimals={2} status={modelPill} note={note} />
+    <ColorBar kind="temperature" range={range} theme={theme} title="Temperature" unit="keV" decimals={3} status={modelPill} note={note} />
   );
   const fieldBar = (
     <ColorBar
@@ -421,7 +421,7 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
           {colorBy === 'temperature'
             ? tempBar(
                 ranges.lcfsT,
-                `Fixed range: ${formatNumber(ranges.lcfsT[0], 2)} keV (just below the coldest surface temperature at the start) to the pedestal temperature T_ped; anything colder takes the coldest colour.`,
+                `Fixed range: ${formatNumber(ranges.lcfsT[0], 3)} keV (just below the coldest surface temperature at the start) to the pedestal temperature T_ped; anything colder takes the coldest colour.`,
               )
             : fieldBar}
           <ul className="hf-key" aria-label="Scene key">
@@ -508,7 +508,7 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
             <>
               {tempBar(
                 ranges.sliceT,
-                `Fixed range: ${formatNumber(ranges.sliceT[0], 2)} keV (just below the coldest surface temperature at the start, as on the 3D surface) to the core temperature T_0 on the axis; anything colder takes the coldest colour.`,
+                `Fixed range: ${formatNumber(ranges.sliceT[0], 3)} keV (just below the coldest surface temperature at the start, as on the 3D surface) to the core temperature T_0 on the axis; anything colder takes the coldest colour.`,
               )}
               <ColorBar
                 kind="temperature"
@@ -516,7 +516,7 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
                 theme={theme}
                 title="Edge (LCFS), same scale as the 3D view"
                 unit="keV"
-                decimals={2}
+                decimals={3}
                 status={modelPill}
                 note="The strip just outside the last closed flux surface: its model temperature at this φ on the 3D surface's range, where the cold footprint under a diverter and its move with the field adjustments show."
               />

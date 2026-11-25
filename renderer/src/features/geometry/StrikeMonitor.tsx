@@ -21,7 +21,7 @@ export function StrikeMonitor({ sim }: { sim: Simulation }) {
     const limit = (params.tileLimit - params.Tcool) / params.tileGain;
     const samples = new Float64Array(indices.length);
     const render = () => {
-      const loads = sim.model.stripLoads(sim.state, sim.coils, sim.transfers);
+      const loads = sim.model.stripLoads(sim.state, sim.coils);
       for (let k = 0; k < nDiverters; k++) {
         const row = rows[k]!;
         const bins = row.querySelectorAll<HTMLElement>('i');

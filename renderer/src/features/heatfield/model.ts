@@ -9,7 +9,6 @@
 // The coils of step n are those of the coil-schedule entry with the largest fromStep ≤ n; they drive step n → n+1
 // and the diagnostics of the state after n steps (the reference's convention, written in model.discretization).
 import type { AppliedControls } from './controlRamp';
-import { distributeLoads, type HeatTransfer } from './loadBalance';
 import type { CoilScheduleEntry, HeatfieldArtifact, ParameterName } from './types';
 
 const TWO_PI = 2 * Math.PI;
@@ -88,10 +87,10 @@ export interface HeatModel {
   /** One step n → n+1 (a new state; the input is not changed). */
   step(state: ModelState, coils: Coils): ModelState;
   /** `steps` steps using the supplied control envelope, or fixed coils by default. */
-  advance(state: ModelState, coils: Coils, steps: number, transfers?: readonly HeatTransfer[], controlsAt?: (step: number) => AppliedControls): ModelState;
+  advance(state: ModelState, coils: Coils, steps: number, controlsAt?: (step: number) => AppliedControls): ModelState;
   /** Step 10 for the state and coils at t_n: Q_k[i] (MW/m²) at k·nTheta + i. */
-  stripLoads(state: ModelState, coils: Coils, transfers?: readonly HeatTransfer[]): Float64Array;
-  diagnostics(state: ModelState, coils: Coils, transfers?: readonly HeatTransfer[]): Diagnostics;
+  stripLoads(state: ModelState, coils: Coils): Float64Array;
+  diagnostics(state: ModelState, coils: Coils): Diagnostics;
   /** Run from the initial condition with a coil schedule; diagnostics at each checkpoint step. */
   run(schedule: readonly CoilScheduleEntry[], checkpoints: readonly number[]): { checkpoints: Diagnostics[]; state: ModelState };
   /** Heat-flow vector in angle space (MODEL.md, renderer only): F_φ and F_θ per cell. */
@@ -152,6 +151,10 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
   const w = sigmaCells - shift;
   // Step 10: strip-load normalisation dφ/(√(2π)·σ_φ).
   const stripFactor = dPhi / (Math.sqrt(TWO_PI) * p.sigmaPhi);
+  // Step 10, constant part (MODEL.md v2, D-031): sheath law with two-point pressure balance,
+  // (γ/2)·n_u·keV·c_s(T_t)·sin α / MW in MW m⁻² per keV of upstream temperature, c_s = √(2·T_t·keV/(m_i·amu)).
+  const soundSpeed = Math.sqrt((2 * p.Ttarget * p.keV) / (p.ionMass * p.amu));
+  const sheath = (((p.sheathGamma / 2) * p.nSep * p.keV * soundSpeed) * Math.sin(p.incidence)) / p.MW;
   const dPhi2 = dPhi * dPhi;
   const dTheta2 = dTheta * dTheta;
 
@@ -199,7 +202,7 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     return out;
   };
 
-  /** Step 10: Q_k[i] = Σ_j W_q·(B/B_0)·g_k·(T − T_t)/τ_div · dφ/(√(2π)σ_φ). */
+  /** Step 10: Q_k[i] = Σ_j sheath·(B/B_0)·g_k·T · dφ/(√(2π)σ_φ). */
   const loadsFrom = (T: Float64Array, B: Float64Array, gTh: Float64Array, out: Float64Array) => {
     out.fill(0);
     for (let k = 0; k < nDiv; k++) {
@@ -210,7 +213,7 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
         const row = j * nTheta;
         for (let i = 0; i < nTheta; i++) {
           const c = row + i;
-          const q = ((p.heatFluxScale * (B[c]! / p.B0)) * (gpj * gTh[base + i]!)) * ((T[c]! - p.Ttarget) / p.tauDiv);
+          const q = ((sheath * (B[c]! / p.B0)) * (gpj * gTh[base + i]!)) * T[c]!;
           out[base + i] = out[base + i]! + q;
         }
       }
@@ -225,7 +228,7 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
   const loads = new Float64Array(nDiv * nTheta);
 
   /** Steps 1–12 from (T, tiles) at step n into (Tn, tilesN). */
-  const stepInto = (n: number, T: Float64Array, tiles: Float64Array, coils: Coils, Tn: Float64Array, tilesN: Float64Array, transfers?: readonly HeatTransfer[]) => {
+  const stepInto = (n: number, T: Float64Array, tiles: Float64Array, coils: Coils, Tn: Float64Array, tilesN: Float64Array) => {
     const reservoir = heating?.(time(n));
     const a = drive(coils, time(n)); // 1
     fieldFromDrive(a, B); // 2, 3
@@ -234,8 +237,7 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
       const r = p.B0 / B[c]!;
       dPerp[c] = p.Dperp0 * (r * r); // 6
     }
-    loadsFrom(T, B, gTh, loads);
-    if (transfers?.length) distributeLoads(loads, nTheta, transfers); // 10
+    loadsFrom(T, B, gTh, loads); // 10
     for (let x = 0; x < nDiv * nTheta; x++) {
       tilesN[x] = tiles[x]! + (p.dt * (p.Tcool + p.tileGain * loads[x]! - tiles[x]!)) / p.tauTile; // 11
     }
@@ -274,18 +276,18 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     return { n: st.n + 1, T, tiles };
   };
 
-  const advance = (st: ModelState, coils: Coils, steps: number, transfers?: readonly HeatTransfer[], controlsAt?: (step: number) => AppliedControls): ModelState => {
+  const advance = (st: ModelState, coils: Coils, steps: number, controlsAt?: (step: number) => AppliedControls): ModelState => {
     if (steps <= 0) return st;
     let T = new Float64Array(nCells);
     let tiles = new Float64Array(nDiv * nTheta);
     const first = controlsAt?.(st.n);
-    stepInto(st.n, st.T, st.tiles, first?.coils ?? coils, T, tiles, first?.transfers ?? transfers);
+    stepInto(st.n, st.T, st.tiles, first?.coils ?? coils, T, tiles);
     if (steps === 1) return { n: st.n + 1, T, tiles };
     let T2 = new Float64Array(nCells);
     let tiles2 = new Float64Array(nDiv * nTheta);
     for (let s = 1; s < steps; s++) {
       const applied = controlsAt?.(st.n + s);
-      stepInto(st.n + s, T, tiles, applied?.coils ?? coils, T2, tiles2, applied?.transfers ?? transfers);
+      stepInto(st.n + s, T, tiles, applied?.coils ?? coils, T2, tiles2);
       [T, T2] = [T2, T];
       [tiles, tiles2] = [tiles2, tiles];
     }
@@ -299,11 +301,9 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     return a.map((ak) => thetaD + p.sweepAmplitude * ak);
   };
 
-  const stripLoads = (st: ModelState, coils: Coils, transfers?: readonly HeatTransfer[]) => {
+  const stripLoads = (st: ModelState, coils: Coils) => {
     const a = drive(coils, time(st.n));
-    const flux = loadsFrom(st.T, fieldFromDrive(a, new Float64Array(nCells)), footprintTheta(a), new Float64Array(nDiv * nTheta));
-    if (transfers?.length) distributeLoads(flux, nTheta, transfers);
-    return flux;
+    return loadsFrom(st.T, fieldFromDrive(a, new Float64Array(nCells)), footprintTheta(a), new Float64Array(nDiv * nTheta));
   };
 
   const maxPerDiverter = (arr: Float64Array) =>
@@ -313,7 +313,7 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
       return m;
     });
 
-  const diagnostics = (st: ModelState, coils: Coils, transfers?: readonly HeatTransfer[]): Diagnostics => {
+  const diagnostics = (st: ModelState, coils: Coils): Diagnostics => {
     let sum = 0;
     for (let c = 0; c < nCells; c++) sum += st.T[c]!;
     return {
@@ -322,7 +322,7 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
       probesT: probes.map(([i, j]) => st.T[j * nTheta + i]!),
       meanT: sum / nCells,
       peakTileC: maxPerDiverter(st.tiles),
-      peakHeatFlux: maxPerDiverter(stripLoads(st, coils, transfers)),
+      peakHeatFlux: maxPerDiverter(stripLoads(st, coils)),
     };
   };
 

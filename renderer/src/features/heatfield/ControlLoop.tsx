@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import type { HeatTransfer } from './loadBalance';
 import type { AppliedControls } from './controlRamp';
 import { decideSteps, LoopController, type LoopOutcome, type LoopProgress } from './loopPolicy';
 import type { Simulation } from './sim';
@@ -15,13 +14,10 @@ export const INCREMENTAL_RATE = 3;
 export const GUARD_SHARE = 2 / 3;
 
 const sameControls = (a: AppliedControls, b: AppliedControls) =>
-  a.coils.length === b.coils.length && a.coils.every((v, i) => Boolean(v) === Boolean(b.coils[i])) &&
-  a.transfers.length === b.transfers.length &&
-  a.transfers.every((r, i) => r.from === b.transfers[i]!.from && r.to === b.transfers[i]!.to && r.fraction === b.transfers[i]!.fraction);
+  a.coils.length === b.coils.length && a.coils.every((v, i) => Boolean(v) === Boolean(b.coils[i]));
 
 export interface LoopDecision {
   time: number;
-  transfers: readonly HeatTransfer[];
   peakTileC: number[];
   coils: readonly number[];
   drive: Float32Array<ArrayBuffer>;
@@ -29,7 +25,6 @@ export interface LoopDecision {
 
 interface ControlLoopProps {
   disabled?: boolean;
-  balanceHeat?: boolean;
   openPredictor?: () => Worker;
   onDecision?: (decision: LoopDecision) => void;
   sim: Simulation;
@@ -40,13 +35,13 @@ interface ControlLoopProps {
   onChange?: () => void;
 }
 
-export function ControlLoop({ disabled = false, balanceHeat = false, openPredictor, sim, horizonS, playing, play, onChange, onToggle, onDecision }: ControlLoopProps) {
+export function ControlLoop({ disabled = false, openPredictor, sim, horizonS, playing, play, onChange, onToggle, onDecision }: ControlLoopProps) {
   const [enabled, setEnabled] = useState(false);
   const [active, setActive] = useState<number[]>([]);
   const next = useRef(0);
   useEffect(() => {
     if (!enabled || !playing) return;
-    const controller = new LoopController(sim, horizonS, balanceHeat);
+    const controller = new LoopController(sim, horizonS);
     const steps = controller.horizonSteps;
     // A worker's answer is still applied if it arrives within this many steps of the request (a decision that
     // includes a release look-ahead takes longer than a plain forecast).
@@ -72,10 +67,8 @@ export function ControlLoop({ disabled = false, balanceHeat = false, openPredict
     function apply(outcome: LoopOutcome): number {
       const flips = controller.apply(outcome);
       if (outcome.provisional) return flips; // the decision itself is logged when it ends
-      // No hold after a transfer: a transfer is only adopted when its forecast beats the one in force, so the
-      // loop keeps polling at the prediction interval.
       onDecision?.({
-        time: sim.time, peakTileC: outcome.peakTileC, coils: outcome.coils, transfers: outcome.transfers,
+        time: sim.time, peakTileC: outcome.peakTileC, coils: outcome.coils,
         drive: Float32Array.from(sim.model.drive(sim.coils, sim.absoluteTime)),
       });
       setActive(outcome.coils.flatMap((on, k) => on ? [k + 1] : []));
@@ -196,7 +189,7 @@ export function ControlLoop({ disabled = false, balanceHeat = false, openPredict
       guarding?.worker.terminate();
       next.current = sim.state.n;
     };
-  }, [sim, enabled, playing, horizonS, onDecision, balanceHeat, openPredictor]);
+  }, [sim, enabled, playing, horizonS, onDecision, openPredictor]);
   return <div className="auto-feedback">
     <span>{enabled ? (playing ? (active.length ? 'Adjusting ' + active.map(k => 'D' + k).join(' · ') : 'Monitoring heat') : 'Paused') : 'Off'}</span>
     <label className="auto-feedback__switch">

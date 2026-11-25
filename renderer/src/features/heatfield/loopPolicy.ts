@@ -3,27 +3,23 @@
 //
 // What it does, every decision (see ControlLoop.tsx for the cadence):
 //  1. Forecast the tiles ahead with the controls the model has NOW (each coil in its present state, the cross-fade
-//     in progress, the heat transfers in force) -- not with every coil off. A diverter that is cool only because its
+//     in progress) -- not with every coil off. A diverter that is cool only because its
 //     coil is on therefore stays cool in the forecast, and its coil is not switched off.
 //     The guard look-ahead is the decision interval PLUS the coil response time PLUS `guardSlackS`: a coil commanded
 //     now is fully in only `responseSteps` later, and the next decision may come up to one frame after the horizon.
 //     A crossing seen only inside the plain horizon could no longer be prevented (review 2026-11-24, finding 1).
 //     Peaks are sampled every FORECAST_SAMPLE steps of a forecast (and at its end), not every step.
 //  2. If any diverter is predicted above the tile limit, every coil is switched on and stays on. Coils that are
-//     already on in a hot diverter are never touched. This is yielded as soon as it is known, before any transfer
-//     is weighed, so a caller running the decision over several frames can switch the coils on at once.
+//     already on in a hot diverter are never touched. This is yielded as soon as it is known, before the guard
+//     forecast ends, so a caller running the decision over several frames can switch the coils on at once.
 //  3. A coil that is on goes off only after a minimum on-time, and only if a longer look-ahead with it off keeps
 //     EVERY tile below the release temperature (hysteresis: on above the limit, off below ~1000 deg C). Release is
 //     all-or-nothing by design: one diverter still between the release temperature and the limit keeps every
 //     ready coil on. Probing costs a few seconds of model time, so it is not repeated more often than `probeRetryS`,
 //     and a request may forbid it (`allowProbe: false`) for a quick guard-only decision.
-//  4. A heat transfer is adopted only if its forecast lowers the maximum predicted tile temperature by at least
-//     `transferMarginC`; otherwise the transfers in force are left alone. There is no hold: with this test a
-//     transfer cannot be replaced by one that is no better, so nothing needs holding in place to stop flutter.
-//     Transfers are weighed only while a diverter is predicted hot, and dropped once every coil is off: a policy
-//     choice (the model itself would move load without coils), and the reason transfers are rare.
+// The coils' strike-line sweep is the only control: there is no "heat transfer" between diverters (D-031: nothing in
+// a stellarator divertor pipes heat from one target to another).
 import { controlRamp, type AppliedControls, type RampSpec } from './controlRamp';
-import { balanceTargets, type HeatTransfer } from './loadBalance';
 import type { HeatModel, ModelState } from './model';
 import type { Simulation } from './sim';
 
@@ -36,8 +32,6 @@ export interface LoopConfig {
   releaseHorizonS: number;
   /** Shortest interval between release look-aheads (s). */
   probeRetryS: number;
-  /** A transfer must lower the predicted maximum by at least this much (deg C). */
-  transferMarginC: number;
   /** Extra guard look-ahead beyond horizon + coil response, for a decision that lands a frame late (s). */
   guardSlackS: number;
 }
@@ -47,7 +41,6 @@ export const DEFAULT_LOOP_CONFIG: LoopConfig = {
   minOnS: 5,
   releaseHorizonS: 3,
   probeRetryS: 5,
-  transferMarginC: 2,
   guardSlackS: 0.05,
 };
 
@@ -68,7 +61,6 @@ export interface LoopRequest {
   responseSteps: number;
   horizonSteps: number;
   memory: LoopMemory;
-  balanceHeat: boolean;
   config: LoopConfig;
   /** false: never run a release look-ahead in this decision (a quick guard check). Default true. */
   allowProbe?: boolean;
@@ -76,7 +68,6 @@ export interface LoopRequest {
 
 export interface LoopOutcome {
   coils: number[];
-  transfers: HeatTransfer[];
   /**
    * Peak tile temperature of each diverter over the guard look-ahead with the controls the model had when asked
    * (deg C), sampled every FORECAST_SAMPLE steps.
@@ -102,14 +93,12 @@ export type LoopProgress = LoopOutcome | number;
 
 interface Plan {
   coils: readonly number[];
-  transfers: readonly HeatTransfer[];
   ramp?: (step: number) => AppliedControls;
 }
 
-/** Per-diverter peak tile temperature over a forecast: with the starting state, and after it (what a control can change). */
+/** Per-diverter peak tile temperature over a forecast, the starting state included. */
 interface Forecast {
   max: number[];
-  ahead: number[];
 }
 
 interface Work {
@@ -125,7 +114,6 @@ function* forecastMax(model: HeatModel, from: ModelState, plan: Plan, steps: num
   onSample?: (peaks: readonly number[]) => LoopOutcome | undefined): Generator<LoopProgress, Forecast> {
   const { nDiverters: nDiv, nTheta } = model;
   const peaks = Array<number>(nDiv).fill(-Infinity);
-  const ahead = Array<number>(nDiv).fill(-Infinity);
   const note = (st: ModelState, into: number[]) => {
     for (let k = 0; k < nDiv; k++) {
       for (let i = 0; i < nTheta; i++) into[k] = Math.max(into[k]!, st.tiles[k * nTheta + i]!);
@@ -137,23 +125,20 @@ function* forecastMax(model: HeatModel, from: ModelState, plan: Plan, steps: num
     // Never cross a sample boundary inside one piece: the peaks are the same however the work is chunked.
     const toSample = FORECAST_SAMPLE - (done % FORECAST_SAMPLE);
     const piece = Math.min(chunk, toSample, steps - done);
-    st = model.advance(st, plan.coils, piece, plan.transfers, plan.ramp);
+    st = model.advance(st, plan.coils, piece, plan.ramp);
     done += piece;
     work.steps += piece;
     if (done % FORECAST_SAMPLE === 0 || done === steps) {
       note(st, peaks);
-      note(st, ahead);
       const early = onSample?.(peaks);
       if (early) yield early;
     }
     if (done < steps) yield work.steps;
   }
-  return { max: peaks, ahead };
+  return { max: peaks };
 }
 
 const same = (a: readonly number[], b: readonly number[]) => a.length === b.length && a.every((v, i) => v === b[i]);
-const sameRoutes = (a: readonly HeatTransfer[], b: readonly HeatTransfer[]) =>
-  a.length === b.length && a.every((r, i) => r.from === b[i]!.from && r.to === b[i]!.to && r.fraction === b[i]!.fraction);
 
 /** Steps the guard forecast looks ahead: the decision interval, the coil response, and a frame of slack. */
 export function guardSteps(model: HeatModel, req: Pick<LoopRequest, 'horizonSteps' | 'responseSteps' | 'config'>): number {
@@ -168,20 +153,18 @@ export function guardSteps(model: HeatModel, req: Pick<LoopRequest, 'horizonStep
  */
 export function* decideSteps(model: HeatModel, req: LoopRequest, chunk = FORECAST_CHUNK): Generator<LoopProgress, LoopOutcome> {
   const { state, target, memory, config } = req;
-  const { dt, tileLimit: limit, Tcool } = model.params;
+  const { dt, tileLimit: limit } = model.params;
   const releaseC = limit - config.releaseMarginC;
   const secondsToSteps = (s: number) => Math.max(1, Math.round(s / dt));
   const horizonSteps = guardSteps(model, req);
   const step = Math.max(1, Math.round(chunk));
 
   const keep: Plan = req.ramp
-    ? { coils: target.coils, transfers: target.transfers, ramp: controlRamp(req.ramp.start, req.ramp.end, req.ramp.first, req.ramp.steps) }
-    : { coils: target.coils, transfers: target.transfers };
+    ? { coils: target.coils, ramp: controlRamp(req.ramp.start, req.ramp.end, req.ramp.first, req.ramp.steps) }
+    : { coils: target.coils };
   // "Command these now": cross-fade from what is applied now, as Simulation.setCoils would.
-  const command = (coils: readonly number[], transfers: readonly HeatTransfer[]): Plan =>
-    req.responseSteps > 0
-      ? { coils, transfers, ramp: controlRamp(req.applied, { coils, transfers }, state.n, req.responseSteps) }
-      : { coils, transfers };
+  const command = (coils: readonly number[]): Plan =>
+    req.responseSteps > 0 ? { coils, ramp: controlRamp(req.applied, { coils }, state.n, req.responseSteps) } : { coils };
 
   const work: Work = { steps: 0 };
   const allOn = target.coils.map(() => 1);
@@ -190,7 +173,7 @@ export function* decideSteps(model: HeatModel, req: LoopRequest, chunk = FORECAS
   const earlySwitch = (sampled: readonly number[]): LoopOutcome | undefined => {
     if (switchedEarly || !sampled.some((p) => p > limit)) return undefined;
     switchedEarly = true;
-    return { coils: [...allOn], transfers: [...target.transfers], peakTileC: [...sampled], nextProbe: memory.nextProbe, probed: false, provisional: true };
+    return { coils: [...allOn], peakTileC: [...sampled], nextProbe: memory.nextProbe, probed: false, provisional: true };
   };
 
   // 1. Forecast with the controls in force.
@@ -198,42 +181,28 @@ export function* decideSteps(model: HeatModel, req: LoopRequest, chunk = FORECAS
   const peaks = base.max;
   const anyHot = peaks.some((p) => p > limit);
   const coils = target.coils.map(Number);
-  let transfers: readonly HeatTransfer[] = target.transfers;
   let nextProbe = memory.nextProbe;
   let probed = false;
 
   if (anyHot) {
     // 2. Every coil on while any diverter is predicted hot (already yielded provisionally by earlySwitch).
     coils.fill(1);
-    // 4. A transfer only if it provably helps. Compare like with like: same coils, with and without the new routes.
-    if (req.balanceHeat) {
-      const candidate = balanceTargets(peaks, limit, Tcool, true);
-      if (candidate.length && !sameRoutes(candidate, transfers)) {
-        const without = same(coils, target.coils) ? base : yield* forecastMax(model, state, command(coils, transfers), horizonSteps, step, work);
-        const withRoutes = yield* forecastMax(model, state, command(coils, candidate), horizonSteps, step, work);
-        // Judged on the temperatures after the start: the start itself is the same either way.
-        if (Math.max(...withRoutes.ahead) < Math.max(...without.ahead) - config.transferMarginC) transfers = candidate;
-      }
-    }
   } else if (req.allowProbe !== false && state.n >= memory.nextProbe) {
     // 3. Which coils have been on long enough, and are cool, so that they may go off?
     const minOn = secondsToSteps(config.minOnS);
     const ready = coils.map((on, k) => on === 1 && memory.onSince[k]! >= 0 && state.n - memory.onSince[k]! >= minOn && peaks[k]! < releaseC);
     if (ready.some(Boolean)) {
       const candidate = coils.map((on, k) => (ready[k] ? 0 : on));
-      const result = yield* forecastMax(model, state, command(candidate, []), secondsToSteps(config.releaseHorizonS), step, work);
+      const result = yield* forecastMax(model, state, command(candidate), secondsToSteps(config.releaseHorizonS), step, work);
       probed = true;
       if (result.max.every((p) => p < releaseC)) {
         candidate.forEach((on, k) => { coils[k] = on; });
-        transfers = [];
       } else {
         nextProbe = state.n + secondsToSteps(config.probeRetryS);
       }
     }
   }
-  // Policy: no transfers while no coil is on (see 4. in the header).
-  if (!coils.some(Boolean)) transfers = [];
-  return { coils, transfers: [...transfers], peakTileC: peaks, nextProbe, probed };
+  return { coils, peakTileC: peaks, nextProbe, probed };
 }
 
 /** Run a decision to the end in one go (worker, synchronous fallback, headless runs). */
@@ -251,7 +220,6 @@ export class LoopController {
   constructor(
     readonly sim: Simulation,
     readonly horizonS: number,
-    readonly balanceHeat: boolean,
     readonly config: LoopConfig = DEFAULT_LOOP_CONFIG,
   ) {
     this.memory = this.fresh();
@@ -286,7 +254,6 @@ export class LoopController {
       responseSteps: sim.responseSteps,
       horizonSteps: this.horizonSteps,
       memory: this.memory,
-      balanceHeat: this.balanceHeat,
       config: this.config,
       allowProbe,
     };
@@ -307,7 +274,7 @@ export class LoopController {
       memory.onSince[k] = on ? (before[k] && memory.onSince[k]! >= 0 ? memory.onSince[k]! : sim.state.n) : -1;
     });
     memory.nextProbe = Math.max(memory.nextProbe, outcome.nextProbe);
-    if (this.balanceHeat || flips) sim.setCoils(outcome.coils, outcome.transfers);
+    if (flips) sim.setCoils(outcome.coils);
     return flips;
   }
 }

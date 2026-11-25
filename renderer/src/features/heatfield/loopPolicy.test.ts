@@ -2,7 +2,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fiveTargetScenario, startupSimulation } from '../geometry/heatedEdge';
-import { balanceTargets } from './loadBalance';
 import { DEFAULT_LOOP_CONFIG, decideLoop, decideSteps, guardSteps, LoopController } from './loopPolicy';
 import { createModel, modelFor, spunUpState } from './model';
 import { Simulation } from './sim';
@@ -12,31 +11,16 @@ const saved = (): HeatfieldArtifact => JSON.parse(readFileSync(resolve(__dirname
 const HORIZON_S = 0.25;
 const seconds = (sim: Simulation, s: number) => sim.advance(Math.round(s / sim.model.params.dt));
 
-test('one diverter predicted hot switches every coil on, and the transfer adopted lowers the maximum on an independent run', () => {
+test('one diverter predicted hot switches every coil on; nothing is switched while none is', () => {
   const sim = startupSimulation(fiveTargetScenario(saved()));
   const limit = sim.model.params.tileLimit;
-  const controller = new LoopController(sim, HORIZON_S, true);
+  const controller = new LoopController(sim, HORIZON_S);
   for (;;) {
     const outcome = controller.decide();
     if (outcome.peakTileC.some((t) => t > limit)) {
-      // Mixed: some diverters are predicted hot, others are not. Old behaviour: switch the hot ones on and start a
-      // transfer. Now: every coil on, and the route the balancer proposes is judged by its forecast.
+      // Mixed: some diverters are predicted hot, others are not, and every coil goes on.
       expect(outcome.peakTileC.some((t) => t <= limit)).toBe(true);
-      expect(balanceTargets(outcome.peakTileC, limit, sim.model.params.Tcool).length).toBeGreaterThan(0);
       expect(outcome.coils).toEqual([1, 1, 1, 1, 1]);
-      // The balancer's route is adopted only because its forecast beats no route; run both on copies to check.
-      expect(outcome.transfers).toEqual(balanceTargets(outcome.peakTileC, limit, sim.model.params.Tcool, true));
-      const hottestAfter = (routes: typeof outcome.transfers) => {
-        const copy = new Simulation(sim.model, sim.state, 0.35);
-        copy.setCoils(outcome.coils, routes);
-        let hottest = -Infinity;
-        for (let i = 0; i < 5; i++) {
-          copy.advance(50);
-          hottest = Math.max(hottest, ...[0, 1, 2, 3, 4].map((k) => copy.peakTileC(k)));
-        }
-        return hottest;
-      };
-      expect(hottestAfter(outcome.transfers)).toBeLessThan(hottestAfter([]));
       return;
     }
     expect(outcome.coils).toEqual([0, 0, 0, 0, 0]); // nothing predicted hot, nothing switched on
@@ -54,7 +38,7 @@ test('the forecast uses the coils as they are: a cool diverter with its coil on 
   seconds(sim, 4);
   expect(Math.max(...[0, 1, 2, 3].map((k) => sim.peakTileC(k)))).toBeLessThan(sim.model.params.tileLimit - DEFAULT_LOOP_CONFIG.releaseMarginC);
   sim.setCoils([1, 1, 1, 1]);
-  const controller = new LoopController(sim, HORIZON_S, true);
+  const controller = new LoopController(sim, HORIZON_S);
   const first = controller.decide();
   expect(first.coils).toEqual([1, 1, 1, 1]);
   expect(first.probed).toBe(false);
@@ -69,10 +53,10 @@ test('the forecast uses the coils as they are: a cool diverter with its coil on 
 }, 60_000);
 
 test('coils stay on, after the minimum on-time, while the heating that made them necessary persists', () => {
-  const model = modelFor(saved()); // unheated: the tiles idle at ~1150-1380 deg C with every coil off
+  const model = modelFor(saved()); // unheated: the tiles idle at ~1080-1290 deg C with every coil off
   const sim = new Simulation(model, spunUpState(model), 0);
   sim.setCoils([1, 1, 1, 1]);
-  const controller = new LoopController(sim, HORIZON_S, true);
+  const controller = new LoopController(sim, HORIZON_S);
   seconds(sim, DEFAULT_LOOP_CONFIG.minOnS + 1);
   const outcome = controller.decide();
   expect(outcome.probed).toBe(true); // it looked, and the look-ahead with the coils off said no
@@ -86,7 +70,7 @@ test('hysteresis: a coil that is on does not go off while the look-ahead without
   while (sim.peakTileC(0) < tileLimit - 30) sim.advance(10);
   sim.setCoils([1, 1, 1, 1, 1]);
   seconds(sim, 6); // on for longer than the minimum on-time
-  const controller = new LoopController(sim, HORIZON_S, true);
+  const controller = new LoopController(sim, HORIZON_S);
   controller.memory.onSince.fill(sim.state.n - Math.round(DEFAULT_LOOP_CONFIG.minOnS / dt) - 1);
   const request = controller.request();
   const outcome = decideLoop(sim.model, request);
@@ -102,7 +86,7 @@ test('hysteresis: a coil that is on does not go off while the look-ahead without
 test('a decision run in pieces equals the same decision run at once', () => {
   const sim = startupSimulation(fiveTargetScenario(saved()));
   seconds(sim, 6.5);
-  const controller = new LoopController(sim, HORIZON_S, true);
+  const controller = new LoopController(sim, HORIZON_S);
   const request = controller.request();
   const whole = decideLoop(sim.model, request);
   const run = decideSteps(sim.model, request);
@@ -127,7 +111,7 @@ test('a decision does not depend on how its work is chunked: a hot decision and 
   // Hot: the five-target scenario while D1 heats up, every coil off.
   const hot = startupSimulation(fiveTargetScenario(saved()));
   seconds(hot, 6.5);
-  const hotRequest = new LoopController(hot, HORIZON_S, true).request();
+  const hotRequest = new LoopController(hot, HORIZON_S).request();
   const hotWhole = decideLoop(hot.model, hotRequest);
   expect(hotWhole.coils).toEqual([1, 1, 1, 1, 1]);
   // Probe: coils on past the minimum on-time with the tiles cool, so the release look-ahead runs.
@@ -137,7 +121,7 @@ test('a decision does not depend on how its work is chunked: a hot decision and 
   const cool = new Simulation(model, model.initialState(), 0);
   seconds(cool, 4);
   cool.setCoils([1, 1, 1, 1]);
-  const controller = new LoopController(cool, HORIZON_S, true);
+  const controller = new LoopController(cool, HORIZON_S);
   seconds(cool, DEFAULT_LOOP_CONFIG.minOnS + 0.1);
   const probeRequest = controller.request();
   const probeWhole = decideLoop(cool.model, probeRequest);
@@ -151,7 +135,7 @@ test('a decision does not depend on how its work is chunked: a hot decision and 
 test('the switch-on is yielded at the first hot sample, before the guard forecast ends, and only once', () => {
   const sim = startupSimulation(fiveTargetScenario(saved()));
   seconds(sim, 6.5);
-  const request = new LoopController(sim, HORIZON_S, true).request();
+  const request = new LoopController(sim, HORIZON_S).request();
   const run = decideSteps(sim.model, request, 10);
   const provisional: { at: number; coils: number[] }[] = [];
   let progress = 0;

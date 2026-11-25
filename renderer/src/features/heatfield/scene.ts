@@ -914,7 +914,7 @@ export interface ColourRanges {
 }
 
 /** Rounding of the LCFS colour range's cold end (keV): a display choice, not a model number. */
-export const LCFS_T_STEP = 0.05;
+export const LCFS_T_STEP = 0.005;
 
 export function colourRanges(art: HeatfieldArtifact, model: HeatModel, startT: ArrayLike<number>): ColourRanges {
   const p = model.params;

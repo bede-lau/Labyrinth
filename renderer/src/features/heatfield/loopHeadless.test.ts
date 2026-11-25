@@ -33,45 +33,36 @@ export interface LoopRun {
   samples: number[];
   over: number;
   maxC: number;
-  /** Decisions that changed the transfers in force to a non-empty set (a transfer held in force counts once). */
-  adoptions: number;
-  /** Decisions that ended with a transfer in force. */
-  decisionsWithTransfer: number;
   probes: number;
   finalCoils: number[];
 }
-
-const routeKey = (sim: Simulation) => JSON.stringify(sim.commandedTransfers);
 
 /**
  * Run the loop `seconds` of model time. Samples are the hottest tile every SAMPLE_S, the first one SAMPLE_S after the start.
  * `decideEvery` is the decision interval in solver steps: by default exactly the horizon (250). The live app decides on
  * the first animation frame at or after the horizon, so at 1x (17 steps a frame at dt = 1 ms) every 255 steps.
  */
-export function runLoop(sim: Simulation, seconds: number, balanceHeat = true, decideEvery = Math.round(HORIZON_S / sim.model.params.dt)): LoopRun {
+export function runLoop(sim: Simulation, seconds: number, decideEvery = Math.round(HORIZON_S / sim.model.params.dt)): LoopRun {
   const { dt, tileLimit } = sim.model.params;
-  const controller = new LoopController(sim, HORIZON_S, balanceHeat);
+  const controller = new LoopController(sim, HORIZON_S);
   const sampleEvery = Math.round(SAMPLE_S / dt);
   const total = Math.round(seconds / dt);
   const start = sim.state.n;
-  let flips = 0, switchEvents = 0, adoptions = 0, decisionsWithTransfer = 0, probes = 0;
+  let flips = 0, switchEvents = 0, probes = 0;
   const samples: number[] = [];
   for (let s = 0; s < total; s++) {
     if (s % decideEvery === 0) {
-      const before = routeKey(sim);
       const outcome = controller.decide();
       const changed = controller.apply(outcome);
       flips += changed;
       switchEvents += changed ? 1 : 0;
-      if (outcome.transfers.length && routeKey(sim) !== before) adoptions++;
-      decisionsWithTransfer += outcome.transfers.length ? 1 : 0;
       probes += outcome.probed ? 1 : 0;
     }
     sim.advance(1);
     if ((sim.state.n - start) % sampleEvery === 0) samples.push(Math.max(...peaks(sim)));
   }
   const over = samples.filter((t) => t > tileLimit).length;
-  return { flips, switchEvents, samples, over, maxC: Math.max(...samples), adoptions, decisionsWithTransfer, probes, finalCoils: [...sim.commandedCoils] };
+  return { flips, switchEvents, samples, over, maxC: Math.max(...samples), probes, finalCoils: [...sim.commandedCoils] };
 }
 
 test('all five diverters overheating, then the loop on: only the settling sample is over the tile limit, and no coil flips back', () => {
@@ -102,10 +93,7 @@ test('loop on from the cold start of the five-target scenario: the tiles never p
   const run = runLoop(sim, 60);
   if (process.env.LOOP_REPORT) writeFileSync(process.env.LOOP_REPORT + '.cold', JSON.stringify({ ...run, samples: undefined }, null, 1));
   expect(run.over).toBe(0);
-  // A transfer is weighed only while a diverter is predicted above the limit. With every coil then on, that is one
-  // decision per run (here at 6.25 s), and the route adopted there stays in force: adoptions are 0 or 1, while
-  // decisionsWithTransfer counts every decision the route was held (215 of 240 in the 2026-11-23 report).
-  expect(run.adoptions).toBeLessThanOrEqual(1);
+  expect(run.switchEvents).toBe(1);
 }, 120_000);
 
 test.each([255, 272])('at a live decision cadence (every %i steps: 1x and 4x frames of 17 steps) the tiles never pass the limit', (every) => {
@@ -113,9 +101,8 @@ test.each([255, 272])('at a live decision cadence (every %i steps: 1x and 4x fra
   // Before the guard look-ahead covered the coil response (review 2026-11-24, finding 1), this run caught the
   // overheat one decision late and one sample read ~1207 deg C.
   const sim = scenario();
-  const run = runLoop(sim, 60, true, every);
+  const run = runLoop(sim, 60, every);
   if (process.env.LOOP_REPORT) writeFileSync(`${process.env.LOOP_REPORT}.live${every}`, JSON.stringify({ ...run, samples: undefined }, null, 1));
   expect(run.over).toBe(0);
   expect(run.switchEvents).toBe(1);
-  expect(run.adoptions).toBeLessThanOrEqual(1);
 }, 120_000);

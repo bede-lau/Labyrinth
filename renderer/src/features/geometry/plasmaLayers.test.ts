@@ -44,40 +44,15 @@ test('five numbered tracers follow the live readout and the sectional solenoid f
     expect([pos.getX(0),pos.getY(0),pos.getZ(0)]).toEqual(Array.from(Float32Array.from(row.position)));
     expect(row.field).toBeGreaterThan(0);
   }
-  const routes = content.group.getObjectByName('Heat transfer routes')!;
-  expect(routes.children.every(r => !r.visible)).toBe(true);
-  sim.setCoils([1,0,1,0,0],[{from:0,to:4,fraction:0.1},{from:2,to:3,fraction:0.05}]);
-  update(frame);
-  expect(routes.children.map(r => r.visible)).toEqual([true,false,true,false,false]);
-  const endAngle = (from: number) => {
-    // The dashes flow, so check the one closest to the receiver.
-    const dashes = routes.children[from]!.children[0] as THREE.InstancedMesh;
-    const matrix = new THREE.Matrix4();
-    return Array.from({length: dashes.count}, (_, i) => {
-      dashes.getMatrixAt(i, matrix);
-      const p = new THREE.Vector3().setFromMatrixPosition(matrix);
-      return Math.atan2(p.y, p.x);
-    });
-  };
-  for (const {from,to} of sim.commandedTransfers) {
-    const gaps = endAngle(from).map(a => Math.abs(Math.atan2(Math.sin(a - art.diverters.items[to]!.phi), Math.cos(a - art.diverters.items[to]!.phi))));
-    expect(Math.min(...gaps)).toBeLessThan(0.08);
-  }
+  // No heat-transfer routes are drawn: nothing moves heat between targets (D-031).
+  expect(content.group.getObjectByName('Heat transfer routes')).toBeUndefined();
   update({...frame,followed: 3});
-  expect(routes.children.map(r => r.visible)).toEqual([false,false,true,false,false]);
   for (const row of tracks.read()) {
     expect(particles.getObjectByName('P'+row.id)!.visible).toBe(row.id === 3);
   }
   update(frame);
   expect(particles.getObjectByName('P1')!.visible).toBe(true);
-  update({...frame,visiblePlates:[true,true,true,true,false]});
-  expect(routes.children[0]!.visible).toBe(false);
-  expect(routes.children[2]!.visible).toBe(true);
-  sim.setCoils([0,0,0,0,0]);
-  update(frame);
-  expect(routes.children.every(r => !r.visible)).toBe(true);
   layers.particles=false;layers.hardware=false;update(frame);
-  expect(routes.visible).toBe(false);
   expect(particles.visible).toBe(false);
   expect(solenoid.parent!.visible).toBe(false);
 });

@@ -62,9 +62,6 @@ export function particleMarks(T: Three, tracks: ParticleTracks) {
       const tail = trail.geometry.getAttribute('position');
       row.trail.forEach((point,k) => tail.setXYZ(k,...point));
       tail.needsUpdate = true;
-      const emphasis = Math.min(1, row.fraction / 0.12);
-      head.material.size = 19 + 6 * emphasis;
-      trail.material.size = 5 + 3 * emphasis;
     });
   }};
 }

@@ -62,7 +62,8 @@ test('H8 every input comes from the artifact: grid, |B|, ι, θ_d, φ_k and ever
   expect(model.phiK).toEqual(ART.diverters.items.map((d) => d.phi));
   expect(model.probes).toEqual(ART.model.probes);
   for (const name of PARAMETER_NAMES) expect(P[name]).toBe(ART.model.parameters[name].value);
-  expect(paramsOf(ART).tileGain).toBe(165);
+  expect(paramsOf(ART).tileGain).toBe(100);
+  expect(paramsOf(ART).nSep).toBe(6e19); // the tuned high-power case (D-031)
 
   // A changed parameter in the artifact changes the result: nothing is cached in the code.
   const hotter = structuredClone(ART);
