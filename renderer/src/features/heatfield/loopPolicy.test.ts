@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fiveTargetScenario, startupSimulation } from '../geometry/heatedEdge';
 import { balanceTargets } from './loadBalance';
-import { DEFAULT_LOOP_CONFIG, decideLoop, decideSteps, LoopController } from './loopPolicy';
+import { DEFAULT_LOOP_CONFIG, decideLoop, decideSteps, guardSteps, LoopController } from './loopPolicy';
 import { createModel, modelFor, spunUpState } from './model';
 import { Simulation } from './sim';
 import type { HeatfieldArtifact } from './types';
@@ -115,4 +115,51 @@ test('a decision run in pieces equals the same decision run at once', () => {
     pieces++;
   }
   expect(pieces).toBeGreaterThan(1);
+}, 60_000);
+
+/** Run a decision with a given work chunk to its end; the yields (progress, provisional outcomes) are skipped. */
+function finish(model: Parameters<typeof decideSteps>[0], request: Parameters<typeof decideSteps>[1], chunk: number) {
+  const run = decideSteps(model, request, chunk);
+  for (let r = run.next(); ; r = run.next()) if (r.done) return r.value;
+}
+
+test('a decision does not depend on how its work is chunked: a hot decision and a release probe, at chunks 7, 10 and 50', () => {
+  // Hot: the five-target scenario while D1 heats up, every coil off.
+  const hot = startupSimulation(fiveTargetScenario(saved()));
+  seconds(hot, 6.5);
+  const hotRequest = new LoopController(hot, HORIZON_S, true).request();
+  const hotWhole = decideLoop(hot.model, hotRequest);
+  expect(hotWhole.coils).toEqual([1, 1, 1, 1, 1]);
+  // Probe: coils on past the minimum on-time with the tiles cool, so the release look-ahead runs.
+  const art = saved();
+  const coolDrive = new Float64Array(art.grid.nTheta * art.grid.nPhi).fill(0.3 * art.model.parameters.Tped.value);
+  const model = createModel(art, () => coolDrive);
+  const cool = new Simulation(model, model.initialState(), 0);
+  seconds(cool, 4);
+  cool.setCoils([1, 1, 1, 1]);
+  const controller = new LoopController(cool, HORIZON_S, true);
+  seconds(cool, DEFAULT_LOOP_CONFIG.minOnS + 0.1);
+  const probeRequest = controller.request();
+  const probeWhole = decideLoop(cool.model, probeRequest);
+  expect(probeWhole.probed).toBe(true);
+  for (const chunk of [7, 10, 50]) {
+    expect(finish(hot.model, hotRequest, chunk)).toEqual(hotWhole);
+    expect(finish(cool.model, probeRequest, chunk)).toEqual(probeWhole);
+  }
+}, 120_000);
+
+test('the switch-on is yielded at the first hot sample, before the guard forecast ends, and only once', () => {
+  const sim = startupSimulation(fiveTargetScenario(saved()));
+  seconds(sim, 6.5);
+  const request = new LoopController(sim, HORIZON_S, true).request();
+  const run = decideSteps(sim.model, request, 10);
+  const provisional: { at: number; coils: number[] }[] = [];
+  let progress = 0;
+  for (let r = run.next(); !r.done; r = run.next()) {
+    if (typeof r.value === 'number') progress = r.value;
+    else provisional.push({ at: progress, coils: r.value.coils });
+  }
+  expect(provisional).toHaveLength(1);
+  expect(provisional[0]!.coils).toEqual([1, 1, 1, 1, 1]);
+  expect(provisional[0]!.at).toBeLessThan(guardSteps(sim.model, request));
 }, 60_000);
