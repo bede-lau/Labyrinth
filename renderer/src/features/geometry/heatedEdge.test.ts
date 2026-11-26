@@ -6,7 +6,7 @@ import { spunUpState } from '../heatfield/model';
 import { Simulation } from '../heatfield/sim';
 import type { HeatfieldArtifact } from '../heatfield/types';
 import { createParticleTracks } from './particleTracks';
-import { fiveTargetScenario, heatedEdge, heatedRanges, scenarioHeating, SCENARIO_POWER, startupSimulation } from './heatedEdge';
+import { fiveTargetScenario, heatedEdge, heatedRanges, scenarioCoreEnergy, scenarioHeating, SCENARIO_POWER, startupSimulation } from './heatedEdge';
 
 test('ongoing prescribed heating changes edge temperature and flux with feedback off, and forecast matches replay', () => {
   const art: HeatfieldArtifact = JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/heatfield.json'), 'utf8'));
@@ -136,7 +136,7 @@ test('each hundredth-speed slider setting advances exactly one second of wall ti
   }
 });
 
-test('cold startup heats the core before the edge, then feedback relieves a hot target', () => {
+test('cold startup heats the core before the edge (0-D energy balance), then feedback relieves a hot target', () => {
   const saved = JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/heatfield.json'), 'utf8'));
   const sim = startupSimulation(fiveTargetScenario(saved));
   const {Tcool, tileLimit, dt} = sim.model.params;
@@ -144,12 +144,21 @@ test('cold startup heats the core before the edge, then feedback relieves a hot 
   expect(sim.time).toBe(0);
   expect(core()).toBe(0);
   expect(sim.peakTileC(0)).toBe(Tcool);
-  sim.advance(Math.round(0.3 / dt));
-  // The core is warming; no heating has crossed the LCFS yet (it starts at 0.4 s), so there is no scrape-off-layer
-  // plasma and, by energy conservation, no load: the tiles are still at the coolant temperature.
-  expect(core()).toBeGreaterThan(0);
+  // Before the heaters switch on (0.2 s) nothing is stored and nothing crosses the LCFS.
+  sim.advance(Math.round(0.15 / dt));
+  expect(core()).toBe(0);
   expect(Math.max(...sim.state.T)).toBe(0);
   expect(sim.peakTileC(0)).toBe(Tcool);
+  // Heating on: the core fills first (dW/dt = P − W/τ_E): the power leaving it, W/τ_E, lags the heating, and the
+  // stored energy accounts for the difference (energy conserved).
+  const energy = scenarioCoreEnergy(fiveTargetScenario(saved));
+  for (const t of [0.3, 0.4, 0.5]) expect(energy.lossPower(t)).toBeLessThan(energy.heating(t));
+  sim.advance(Math.round(0.25 / dt));
+  expect(core()).toBeGreaterThan(0);
+  expect(sim.peakTileC(0)).toBeLessThan(Tcool + 100);
+  // Steady state: the loss power is the heating (within the modulation's lag), so the targets get the scenario power.
+  const late = [8, 9, 10].map((t) => energy.lossPower(t) / energy.heating(t));
+  late.forEach((r) => expect(Math.abs(r - 1)).toBeLessThan(0.05));
   let peaks = sim.coils.map((_, k) => sim.peakTileC(k));
   while (Math.max(...peaks) < tileLimit && sim.time < 12) {
     sim.advance(100);
@@ -168,7 +177,7 @@ test('the scenario heating is SCENARIO_POWER times the nominal power, and the mo
   const saved: HeatfieldArtifact = JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/heatfield.json'), 'utf8'));
   const art = fiveTargetScenario(saved);
   const { Pheat, fRad } = saved.model.parameters;
-  const h = scenarioHeating(Pheat.value);
+  const h = scenarioHeating(art);
   expect(h.factor).toBe(SCENARIO_POWER);
   expect(h.mean).toBeCloseTo(SCENARIO_POWER * Pheat.value, 12);
   expect(h.lo).toBeGreaterThan(0.85 * h.mean);

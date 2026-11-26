@@ -67,7 +67,7 @@ function SurfaceReading({hit, sim, plane}: {hit: HoverPoint; sim: Simulation; pl
 
 export function PlasmaExplorer({ onPowerOff, tracks, followed, feedback, onFeedback, art, model: tubes, theme, label, sim, slice, setSlice, response, onDecision, renderControls }: Props) {
   const model = sim.model;
-  const heating = scenarioHeating(model.params.Pheat);
+  const heating = scenarioHeating(art);
   const openPredictor = useCallback(() => {
     const worker = new Worker(new URL('./thermalForecast.worker.ts', import.meta.url), {type: 'module'});
     worker.postMessage({art});
@@ -151,9 +151,10 @@ export function PlasmaExplorer({ onPowerOff, tracks, followed, feedback, onFeedb
       }} sim={sim} horizonS={0.25} playing={playback.playing} play={() => playback.setPlaying(true)} />
     </div>
     <p className="plasma-scenario" data-testid="heating-scenario">
-      Heating scenario (model): {heating.mean.toFixed(1)} MW mean, {heating.lo.toFixed(1)}–{heating.hi.toFixed(1)} MW,
+      Heating scenario (model): {heating.mean.toFixed(1)} MW mean, {heating.lo.toFixed(1)}–{heating.hi.toFixed(1)} MW to the edge,
       {' '}{heating.factor}× the model's P<sub>heat</sub> of {model.params.Pheat} MW, over {art.diverters.items.length} schematic
-      divertors; chosen so the field coils are needed.
+      divertors; chosen so the field coils are needed. The edge receives what leaks from the core: dW/dt = P − W/τ<sub>E</sub>,
+      τ<sub>E</sub> = {heating.tauE.toFixed(2)} s (ISS04).
     </p>
     <div className="plasma-transport">
       <button type="button" className="hf-btn" disabled={!powered} onClick={() => playback.setPlaying(!playback.playing)}>

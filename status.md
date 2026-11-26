@@ -7,6 +7,11 @@
 
 ## Current state
 
+### 2026-11-26: W7-X view — 0-D core energy balance (D-037)
+- The explorer's heating timing is now physical: dW/dt = P_in − W/τ_E (ISS04, 0.13 s); the edge receives W/τ_E; the core
+  temperature follows from W. Hand-made lags, delays and the D1-first spread removed.
+- Checks (native): full renderer suite 1,739 passed before the review notes; the new ISS04 test and the geometry and model files pass after them; `tsc` clean. Review: APPROVED (minor notes applied).
+
 ### 2026-11-26: heat model version 7 — core temperature from ISS04; LCFS at the upstream temperature (D-036)
 - T_0 from ISS04 energy confinement (3.38 keV at 7.5 MW; checked at build). LCFS = plane's upstream temperature; the
   plates show the target temperature. sigmaPhi removed. Remaining illustrative: coil response, strip width, f_rad.

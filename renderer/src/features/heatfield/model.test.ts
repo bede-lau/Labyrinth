@@ -293,3 +293,14 @@ test('H8 each strip deposits exactly its divertor power: it narrows as 1/B (MODE
     }
   }
 });
+
+test('the TS confinement time and plasma volume are the reference ISS04 values (MODEL.md, version 7)', () => {
+  // The reference: τ_E 0.149 s at 7.5 MW, V 30.5 m³ (main/tests/test_heatfield.py).
+  expect(model.confinementTime(P.Pheat)).toBeCloseTo(0.1491, 3);
+  expect(model.plasmaVolume).toBeCloseTo(30.496, 2);
+  // Stored energy at P_heat reproduces the written axis temperature: T_0 = T_e + 3(<T> − T_e).
+  const mean = (model.confinementTime(P.Pheat) * P.Pheat * P.MW) / (3 * P.coreDensity * model.plasmaVolume * P.keV);
+  const up = model.upstream(0, OFF);
+  const te = up.reduce((a, b) => a + b, 0) / up.length;
+  expect(Math.abs((te + 3 * (mean - te)) / P.Tcore0 - 1)).toBeLessThan(1e-5);
+});

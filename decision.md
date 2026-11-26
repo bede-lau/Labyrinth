@@ -503,3 +503,15 @@ logical and physical (the edge drawn orange on the 3D surface but cool on the cr
    fraction, the profile shape and flat density, 1D tiles. They need field-line tracing with the coil fields or
    measured W7-X data, which this repo does not have.
 **Consequences.** Contract, both implementations, artifact regenerated; verify.sh not run (WSL skipped).
+
+## D-037 · W7-X view: 0-D core energy balance replaces the hand-made heating timing (maintainer, 2026-11-26)
+**Context.** The owner asked to keep making the model more physical. The plasma explorer's scenario used hand-made
+timing: a core lag of 0.7 s, heating "crossing the LCFS" from 0.4 s, a 2 s edge ramp and a 5 s spread from the D1 sector.
+**Decision.** The heaters switch on at 0.2 s (0.3 s ramp) at 1.25 × P_heat, modulated ±12 % at 0.2 Hz (display
+choices, stated in the view). The core obeys dW/dt = P_in − W/τ_E with τ_E the ISS04 time at the scenario's mean
+power (0.13 s; `confinementTime` added to model.ts, the same formula as the reference), integrated exactly per step.
+The power crossing the LCFS is W/τ_E (energy conserved: while the core fills, part of the heating is stored), spread
+toroidally uniformly (fast parallel transport); the axis temperature follows from W (flat density, T_e = T_i, the
+MODEL.md profile) and the edge temperature from the two-point law T_u ∝ P^(1/ν). The view's scenario line states τ_E.
+**Consequences.** The D1-first sector spread is gone (it had no physical basis). τ_E is held at its mean-power value
+(no P-dependence during the ramp), stated in the code.

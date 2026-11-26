@@ -106,6 +106,10 @@ export interface HeatModel {
   crossSection(state: ModelState, coils: Coils, j: number): { T: Float64Array; B: Float64Array; rho: Float64Array };
   /** The tile conduction's stability number (≤ 1 is monotone): the only explicit update (the edge is quasi-steady). */
   stabilityNumber(): number;
+  /** ISS04 energy confinement time (s) at a heating power P (MW), ι at ρ = 2/3 from the written surfaces. */
+  confinementTime(P: number): number;
+  /** Plasma volume 2π²Ra² (m³). */
+  readonly plasmaVolume: number;
   /** Number of tile cells through the thickness. */
   readonly tileCells: number;
   /** CFC conductivity k(T) (W m⁻¹ K⁻¹). */
@@ -497,6 +501,26 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     return { T: Txs, B: Bxs, rho };
   };
 
+  // ι at ρ = 2/3, linear between the written surfaces around it (as the reference's iota_at).
+  const rho23 = 2 / (2 + 1);
+  let iota23 = Number.NaN;
+  for (let m = 0; m + 1 < surfaces.length; m++) {
+    const a0 = surfaces[m]!;
+    const a1 = surfaces[m + 1]!;
+    if (a0.rho <= rho23 && rho23 <= a1.rho) {
+      const w = (rho23 - a0.rho) / (a1.rho - a0.rho);
+      iota23 = (1 - w) * a0.iota + w * a1.iota;
+      break;
+    }
+  }
+  /** ISS04: τ_E = C·a^α_a·R^α_R·P^α_P·(n̄/n_unit)^α_n·B_0^α_B·ι_2/3^α_ι (s). */
+  const confinementTime = (P: number) => {
+    if (!Number.isFinite(iota23)) throw new Error('no written surfaces bracket ρ = 2/3 (ISS04 needs ι there)');
+    return p.iss04C * p.minorRadius ** p.iss04A * p.majorRadius ** p.iss04R * P ** p.iss04P *
+    (p.coreDensity / p.densityUnit) ** p.iss04N * p.B0 ** p.iss04B * iota23 ** p.iss04Iota;
+  };
+  const plasmaVolume = 2 * Math.PI ** 2 * p.majorRadius * p.minorRadius ** 2;
+
   /** Δt·(largest outflow conductance: inner 2k/dz, back k/dz + 1/(dz/2k + R_sink))/(ρ·c·dz), k and c at T_ref. */
   const stabilityNumber = () => {
     const inner = (2 * p.kRef) / dz;
@@ -543,6 +567,8 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     crossSection,
     stabilityNumber,
     tileCells: nZ,
+    confinementTime,
+    plasmaVolume,
     conductivity,
     heatCapacity,
     steadySurface,

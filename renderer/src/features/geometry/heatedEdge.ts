@@ -13,38 +13,81 @@ export function fiveTargetScenario(art: HeatfieldArtifact): HeatfieldArtifact {
   return { ...art, diverters: { ...art.diverters, items } };
 }
 
-const modulation = 0.72;
-/** How much of the core's stored-energy swing reaches the heating power crossing the LCFS. */
-const SUPPLY_SWING = 0.23;
-const omega = 2 * Math.PI / 5;
-const lossTime = 0.7;
+// The scenario's heating (display choices, stated in the view): the heaters switch on at HEATING_ON and ramp in over
+// HEATING_RAMP, then the power is modulated by ±MODULATION at period 2π/OMEGA (a power-modulation experiment).
+const HEATING_ON = 0.2;
+const HEATING_RAMP = 0.3;
+const MODULATION = 0.12;
+const OMEGA = 2 * Math.PI / 5;
 
-// Periodic solution of dE/dt = P(t) - E/tau, with positive imposed power
-// P(t) = meanE/tau * (1 + modulation*sin(omega*t)).
-function coreResponse(time: number) {
-  const lag = omega * lossTime;
-  return 1 + modulation * (Math.sin(omega*time) - lag*Math.cos(omega*time)) / (1 + lag*lag);
-}
-
-export function heatedRanges(art: HeatfieldArtifact, sim: Simulation) {
-  const ranges = colourRanges(art, sim.model, sim.start.T);
-  const Tcore0 = scenarioCore(sim.model.params);
-  // One shared logarithmic scale for the edge and the core slice: T_FLOOR to the hottest core the scenario reaches.
-  const hot = Tcore0 * (1 + modulation / Math.hypot(1, omega * lossTime));
-  ranges.lcfsT = [T_FLOOR, hot];
-  ranges.sliceT = [T_FLOOR, hot];
-  return ranges;
-}
-
-// Illustrative periodic modulation of the heating power and its toroidal distribution. The same deterministic source
-// drives the power shares, the load diagnostics and the look-ahead. Amplitude and period are display scenarios.
 function ramp(time: number, duration: number) {
   const u = Math.max(0, Math.min(1, time / duration));
   return u * u * (3 - 2 * u);
 }
 
+/**
+ * 0-D core energy balance (physical): dW/dt = P_in(t) − W/τ_E, with τ_E the ISS04 confinement time at the scenario's
+ * mean power. The power that leaves the core, W/τ_E, is what crosses the LCFS and reaches the divertors (energy
+ * conserved: until the core has filled, part of the heating goes into stored energy). The core temperature follows from
+ * W (flat density, T_e = T_i, the MODEL.md profile) and the edge temperature from the two-point law T_u ∝ P^(1/ν).
+ */
+export function scenarioCoreEnergy(art: HeatfieldArtifact) {
+  const p = paramsOf(art);
+  const nominal = createModel(art);
+  const mean = SCENARIO_POWER * p.Pheat;
+  const tau = nominal.confinementTime(mean);
+  const heating = (t: number) => mean * ramp(t - HEATING_ON, HEATING_RAMP) * (1 + MODULATION * Math.sin(OMEGA * Math.max(0, t - HEATING_ON)));
+  // W on the model's time grid (exponential integrator, exact for P constant over a step), extended on demand.
+  const dt = p.dt;
+  const decay = Math.exp(-dt / tau);
+  const W = [0];
+  const energyAt = (t: number) => {
+    const n = Math.max(0, t / dt);
+    while (W.length <= Math.ceil(n)) {
+      const k = W.length - 1;
+      W.push(W[k]! * decay + heating(k * dt) * p.MW * tau * (1 - decay));
+    }
+    const k = Math.floor(n);
+    const f = n - k;
+    return (1 - f) * W[k]! + f * W[Math.min(k + 1, W.length - 1)]!;
+  };
+  const lossPower = (t: number) => energyAt(t) / tau / p.MW; // MW crossing the LCFS
+  const upstreamNominal = (() => {
+    const u = nominal.upstream(0, art.diverters.items.map(() => 0));
+    let s = 0;
+    for (const v of u) s += v;
+    return s / u.length;
+  })();
+  const edgeT = (P: number) => upstreamNominal * Math.max(0, P / p.Pheat) ** (1 / p.conductionExponent);
+  const coreT = (W: number, P: number) => {
+    const mean = W / (3 * p.coreDensity * nominal.plasmaVolume * p.keV);
+    const te = edgeT(P);
+    return Math.max(te, te + 3 * (mean - te));
+  };
+  return {
+    tau,
+    mean,
+    heating,
+    lossPower,
+    coreAt: (t: number) => coreT(energyAt(t), lossPower(t)),
+    /** Steady state at a constant power P (MW). */
+    steadyCore: (P: number) => coreT(P * p.MW * nominal.confinementTime(mean), P),
+  };
+}
+
+export function heatedRanges(art: HeatfieldArtifact, sim: Simulation) {
+  const ranges = colourRanges(art, sim.model, sim.start.T);
+  const core = scenarioCoreEnergy(art);
+  const h = scenarioHeating(art);
+  // One shared logarithmic scale for the edge and the core slice: T_FLOOR to the hottest core the scenario reaches.
+  const hot = core.steadyCore(h.hi);
+  ranges.lcfsT = [T_FLOOR, hot];
+  ranges.sliceT = [T_FLOOR, hot];
+  return ranges;
+}
+
 export function startupSimulation(art: HeatfieldArtifact) {
-  // Cold start: no heating before 0.4 s, so no power on the targets and no scrape-off-layer plasma.
+  // Cold start: no heating before HEATING_ON, so no stored energy, no power on the targets and no scrape-off layer.
   const model = heatedEdge(art);
   return new Simulation(model, model.initialState(), 0.35);
 }
@@ -58,39 +101,27 @@ export function startupSimulation(art: HeatfieldArtifact) {
 export const SCENARIO_POWER = 1.25;
 
 /**
- * The scenario's mean core temperature on axis: the model's T_0 (ISS04 at P_heat) scaled with the scenario's power as
- * ISS04 scales the mean temperature, <T> ∝ τ_E·P ∝ P^(1 + α_P) (≈ P^0.39; the edge term is neglected here).
+ * The scenario's heating once on (MW): its mean and the range of the power crossing the LCFS (the heating modulation
+ * as the core passes it on, amplitude reduced by 1/√(1 + (ωτ_E)²)).
  */
-export function scenarioCore(p: { Tcore0: number; iss04P: number }) {
-  return p.Tcore0 * SCENARIO_POWER ** (1 + p.iss04P);
-}
-
-/** The scenario's heating power once on (MW): its mean and the range the core modulation spans. */
-export function scenarioHeating(Pheat: number) {
-  const mean = SCENARIO_POWER * Pheat;
-  const swing = SUPPLY_SWING * modulation / Math.hypot(1, omega * lossTime);
-  return { mean, lo: mean * (1 - swing), hi: mean * (1 + swing), factor: SCENARIO_POWER };
+export function scenarioHeating(art: HeatfieldArtifact) {
+  const core = scenarioCoreEnergy(art);
+  const swing = MODULATION / Math.hypot(1, OMEGA * core.tau);
+  return { mean: core.mean, lo: core.mean * (1 - swing), hi: core.mean * (1 + swing), factor: SCENARIO_POWER, tauE: core.tau };
 }
 
 /**
- * The plasma explorer's scenario: the heating power density on every LCFS cell relative to the nominal P_heat. It
- * ramps in from 0.4 s, first in the sector centred on D1, then everywhere; once on, its total is SCENARIO_POWER times
- * the nominal, modulated (a core whose stored energy follows a periodic power, loss time 0.7 s). Only its toroidal
- * distribution matters: each divertor takes its sector's power (MODEL.md step 6).
+ * The plasma explorer's scenario: the power crossing the LCFS, relative to the nominal P_heat, on every LCFS cell
+ * (toroidally uniform: fast parallel transport spreads it round the torus), from the 0-D core energy balance; and the
+ * axis temperature from the core's stored energy. Each divertor takes its sector's power (MODEL.md step 6).
  */
 export function heatedEdge(art: HeatfieldArtifact) {
   const { nTheta, nPhi } = art.grid;
-  const sector = Float64Array.from({length: nPhi}, (_, j) =>
-    (1 + Math.cos(2 * Math.PI * j / nPhi - art.diverters.items[0]!.phi)) / 2);
+  const p = paramsOf(art);
+  const core = scenarioCoreEnergy(art);
   const weight = new Float64Array(nTheta * nPhi);
   return createModel(art, (time) => {
-    const supply = 1 + SUPPLY_SWING * (coreResponse(time) - 1);
-    const edge = ramp(time - 0.4, 2);
-    const spread = ramp(time - 2, 5);
-    for (let j = 0; j < nPhi; j++) {
-      const gain = SCENARIO_POWER * edge * (spread + (1 - spread) * sector[j]!);
-      weight.fill(gain * supply, j * nTheta, (j + 1) * nTheta);
-    }
+    weight.fill(core.lossPower(time) / p.Pheat);
     return weight;
-  }, time => ramp(time, 1.3) * scenarioCore(paramsOf(art)) * coreResponse(time));
+  }, (time) => core.coreAt(time));
 }
