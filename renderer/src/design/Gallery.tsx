@@ -407,7 +407,7 @@ function HeatFieldSpecimen({ theme }: { theme: ThemeName }) {
     <>
       <div className="gal-colorbar" data-ramp="heat">
         <span className="gal-colorbar__label gal-colorbar__label--pill">
-          Temperature (keV) <StatusPill status="model" />
+          Temperature (MK) <StatusPill status="model" />
         </span>
         <span className="gal-colorbar__bar" style={{ background: heatGradientCss(theme) }} />
         <span className="gal-colorbar__ticks">

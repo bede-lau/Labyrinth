@@ -31,7 +31,7 @@ import { FieldChart } from './FieldChart';
 import { HeatScene, type HoverPoint } from './HeatScene';
 import { modelFor, spunUpState, type Diagnostics } from './model';
 import { SPEEDS, usePlayback, usePrefersReducedMotion, type Speed } from './playback';
-import { buildSceneGeometry, colourRanges, type ColorBy } from './scene';
+import { buildSceneGeometry, colourRanges, toMK, type ColorBy } from './scene';
 import { Simulation } from './sim';
 import { checkHeatfield, type HeatfieldArtifact } from './types';
 import './heatfield.css';
@@ -242,8 +242,8 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
   const summary =
     `Last closed flux surface of the ${art.equilibrium.configuration} VMEC equilibrium (${art.equilibrium.nfp} field periods), ` +
     `${model.nTheta} θ × ${model.nPhi} φ cells, coloured by ${colorBy === 'temperature' ? 'model temperature' : '|B|'}. ` +
-    `At model time t = ${formatNumber(frame.time, 2)} s the model temperature runs from ${formatNumber(tEx.lo, 3)} keV (${tEx.loAt}) ` +
-    `to ${formatNumber(tEx.hi, 3)} keV (${tEx.hiAt}), mean ${formatNumber(frame.diag.meanT, 3)} keV; |B| (${fieldWords}) runs from ${formatNumber(bEx.lo, 3)} T ` +
+    `At model time t = ${formatNumber(frame.time, 2)} s the model temperature runs from ${formatNumber(tEx.lo, 3)} keV (${formatNumber(toMK(tEx.lo), 2)} MK, ${tEx.loAt}) ` +
+    `to ${formatNumber(tEx.hi, 3)} keV (${formatNumber(toMK(tEx.hi), 2)} MK, ${tEx.hiAt}), mean ${formatNumber(frame.diag.meanT, 3)} keV; |B| (${fieldWords}) runs from ${formatNumber(bEx.lo, 3)} T ` +
     `(${bEx.loAt}) to ${formatNumber(bEx.hi, 3)} T (${bEx.hiAt}). Diverter plates ${divIds.join(', ')} at φ ` +
     `${art.diverters.items.map((d) => fmtDeg(deg(d.phi))).join(', ')}, θ ${fmtDeg(deg(art.diverters.thetaCentre))} ± ` +
     `${fmtDeg(deg(art.diverters.halfWidthTheta))}. Field adjustments on: ${coilsOn.length ? coilsOn.join(', ') : 'none'}. ` +
@@ -256,7 +256,7 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
       x={sceneHover.x}
       y={sceneHover.y}
       rows={[
-        { k: 'Temperature', v: `${formatNumber(frame.T[sceneHover.cell]!, 3)} keV`, status: modelPill },
+        { k: 'Temperature', v: `${formatNumber(frame.T[sceneHover.cell]!, 3)} keV (${formatNumber(toMK(frame.T[sceneHover.cell]!), 2)} MK)`, status: modelPill },
         { k: '|B|', v: `${formatNumber(frame.B[sceneHover.cell]!, 3)} T`, status: fieldStatus },
         {
           k: 'Angles',
@@ -267,6 +267,7 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
   );
   const sliceValues = (h: { m: number; i: number }) => ({
     T: formatNumber(cellMean(xs.T, h.m, h.i, model.nTheta), 3),
+    TK: formatNumber(toMK(cellMean(xs.T, h.m, h.i, model.nTheta)), 2),
     B: formatNumber(cellMean(xs.B, h.m, h.i, model.nTheta), 3),
     where: `φ ${fmtDeg(sliceDeg)} · θ ${fmtDeg((360 * (h.i + 0.5)) / model.nTheta)} · ρ ${formatNumber(xs.rho[h.m]!, 3)}–${formatNumber(xs.rho[Math.min(nSurf - 1, h.m + 1)]!, 3)}`,
   });
@@ -277,7 +278,7 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
       x={sliceHover.x}
       y={sliceHover.y}
       rows={[
-        { k: 'Temperature', v: `${sliceNow.T} keV`, status: modelPill },
+        { k: 'Temperature', v: `${sliceNow.T} keV (${sliceNow.TK} MK)`, status: modelPill },
         { k: '|B|', v: `${sliceNow.B} T`, status: fieldStatus },
         { k: 'Where', v: sliceNow.where },
       ]}
@@ -291,7 +292,7 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
       return;
     }
     setSliceSay(
-      `Temperature ${sliceNow.T} keV (model), |B| ${sliceNow.B} T (${fieldWords}), at ${sliceNow.where.replace(/ · /g, ', ')}.`,
+      `Temperature ${sliceNow.T} keV (${sliceNow.TK} MK, model), |B| ${sliceNow.B} T (${fieldWords}), at ${sliceNow.where.replace(/ · /g, ', ')}.`,
     );
     // Only a cursor move (or a new plane) is announced; the values at that moment are read from this render.
   }, [sliceKey]);
@@ -302,7 +303,7 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
   // The key draws the arrow and the slice marks over the surface's own ramp, as they appear in 3D.
   const markGround = colorBy === 'temperature' ? heatGradientCss(theme) : fieldGradientCss(theme);
   const tempBar = (range: readonly [number, number], note: string) => (
-    <ColorBar kind="temperature" range={range} theme={theme} title="Temperature" unit="keV" decimals={3} status={modelPill} note={note} />
+    <ColorBar kind="temperature" range={range} theme={theme} title="Temperature" unit="MK" decimals={2} status={modelPill} note={note} />
   );
   const fieldBar = (
     <ColorBar
@@ -421,7 +422,7 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
           {colorBy === 'temperature'
             ? tempBar(
                 ranges.lcfsT,
-                `One logarithmic scale for every temperature map: ${formatNumber(ranges.lcfsT[0], 3)} keV (below the two-point target temperature) to the core temperature T_0, so the edge at the upstream temperature T_u has the same colour here and at the rim of the cross-section; anything colder takes the coldest colour.`,
+                `One logarithmic scale for every temperature map, in megakelvin (1 keV = 11.6 MK): ${formatNumber(toMK(ranges.lcfsT[0]), 2)} MK (below the two-point target temperature) to the core temperature T_0, so the edge at the upstream temperature T_u has the same colour here and at the rim of the cross-section; anything colder takes the coldest colour.`,
               )
             : fieldBar}
           <ul className="hf-key" aria-label="Scene key">
@@ -508,15 +509,15 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
             <>
               {tempBar(
                 ranges.sliceT,
-                `The same logarithmic scale as the 3D surface: ${formatNumber(ranges.sliceT[0], 3)} keV to the core temperature T_0 on the axis; anything colder takes the coldest colour.`,
+                `The same logarithmic scale as the 3D surface, in megakelvin: ${formatNumber(toMK(ranges.sliceT[0]), 2)} MK to the core temperature T_0 on the axis; anything colder takes the coldest colour.`,
               )}
               <ColorBar
                 kind="temperature"
                 range={ranges.lcfsT}
                 theme={theme}
                 title="Edge (LCFS), same scale as the 3D view"
-                unit="keV"
-                decimals={3}
+                unit="MK"
+                decimals={2}
                 status={modelPill}
                 note="The strip just outside the last closed flux surface: its model temperature at this φ on the 3D surface's scale, the plane's upstream temperature, uniform in θ. The cold plasma is at the targets, outside the LCFS: the diverter plates in the 3D view show the target temperature."
               />

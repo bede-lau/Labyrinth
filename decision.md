@@ -515,3 +515,20 @@ toroidally uniformly (fast parallel transport); the axis temperature follows fro
 MODEL.md profile) and the edge temperature from the two-point law T_u ∝ P^(1/ν). The view's scenario line states τ_E.
 **Consequences.** The D1-first sector spread is gone (it had no physical basis). τ_E is held at its mean-power value
 (no P-dependence during the ramp), stated in the code.
+
+## D-038 · Temperature maps: more hues, read in kelvin (maintainer, 2026-11-26)
+**Context.** The owner asked for the cross-section heat map to show more colours and to read in Celsius or kelvin. The
+W7-X explorer's ramp had 6 stops (navy → cyan → yellow → crimson) interpolated in sRGB; Heat & field's had 9 stops from
+yellow to red. Both scales were labelled in keV.
+**Decision.** (1) The explorer's temperature ramp (`plasmaMaterials.temperature`, used by the 3D edge, the core slice,
+the cross-section and the strike monitor) is 17 samples of the Turbo map (indigo → blue → cyan → green → yellow → orange →
+red). The divertor target's warm band keeps the old yellow as its own token (`targetWarm`). Turbo is not monotonic in
+lightness (its indigo and dark-red ends are about equally dark), so it is read by hue and through its colour bar; it has
+no colour-blind gate. (2) Heat & field's `scene.heat`
+widens D-027 to 11 stops, yellow → orange → red → crimson → magenta → plum, taken at equal CIEDE2000 arc length (step sizes vary by
+< 20 %, the ramps.test.ts gate) with lightness still falling. It still clears every ramps.test.ts gate: 14.3 / 15.8 ΔE00 from the |B| ramp, every step visible under
+protanopia and deuteranopia. (3) Every temperature colour bar reads in megakelvin (1 keV / k_B = 11.6045 MK, CODATA 2018)
+with 1-2-5 ticks placed on the logarithmic bar; hover read-outs give keV and MK. Kelvin, not Celsius: at 0.2–50 MK the
+273 K offset is invisible, and kelvin is the absolute scale. The tiles stay in °C, the engineering unit.
+**Consequences.** The model and the artifact are unchanged (keV inside). The temperature ramps no longer end in red;
+DESIGN.md §7 states the new rule and the measured separations.

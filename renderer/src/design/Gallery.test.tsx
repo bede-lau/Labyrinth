@@ -119,7 +119,7 @@ test('D6: the Heat & field panel shows both colour bars with their ends, the mod
   const panel = screen.getByRole('region', { name: 'Temperature and |B| colormaps, diverter plates' });
   const heat = panel.querySelector('.gal-colorbar[data-ramp="heat"]') as HTMLElement;
   const field = panel.querySelector('.gal-colorbar[data-ramp="field"]') as HTMLElement;
-  expect(heat).toHaveTextContent(/Temperature \(keV\).*coldest.*hottest/);
+  expect(heat).toHaveTextContent(/Temperature \(MK\).*coldest.*hottest/);
   expect(field).toHaveTextContent(/\|B\| \(T\).*weakest.*strongest/);
   // The temperature bar is labelled model; |B| (VMEC) is not.
   expect(heat.querySelector('[data-status="model"]')).toHaveTextContent('Model');

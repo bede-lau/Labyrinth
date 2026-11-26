@@ -71,13 +71,17 @@ describe('D6 the |B| ramp of Locate the tubes is unchanged', () => {
 });
 
 describe.each(THEMES)('D6 the owner’s colours — %s theme', (theme) => {
-  test('D6 temperature: yellow at the cold end, red at the hot end, through orange (hue falls stop by stop)', () => {
+  test('D6 temperature (D-038): yellow at the cold end, through orange and red, to magenta at the hot end (hue falls stop by stop)', () => {
     const s = stopsOf('heat', theme);
-    expect(hue(s[0] as string), 'coldest is yellow').toBeGreaterThanOrEqual(65);
-    expect(hue(s[0] as string), 'coldest is yellow').toBeLessThanOrEqual(105);
-    expect(hue(s.at(-1) as string), 'hottest is red').toBeGreaterThanOrEqual(15);
-    expect(hue(s.at(-1) as string), 'hottest is red').toBeLessThanOrEqual(45);
-    for (let i = 1; i < s.length; i++) expect(hue(s[i] as string), `stop ${i}`).toBeLessThan(hue(s[i - 1] as string));
+    // Unwrapped CIELAB hue: past red the hue goes on falling below 0° (magenta is ≈ 340°, read as −20°).
+    const h = s.map((c) => (hue(c) > 180 ? hue(c) - 360 : hue(c)));
+    expect(h[0], 'coldest is yellow').toBeGreaterThanOrEqual(65);
+    expect(h[0], 'coldest is yellow').toBeLessThanOrEqual(105);
+    expect(h.some((x) => x >= 45 && x <= 65), 'passes through orange').toBe(true);
+    expect(h.some((x) => x >= 20 && x <= 40), 'passes through red').toBe(true);
+    expect(h.at(-1), 'hottest is magenta').toBeGreaterThanOrEqual(-45);
+    expect(h.at(-1), 'hottest is magenta').toBeLessThanOrEqual(-5);
+    for (let i = 1; i < s.length; i++) expect(h[i], `stop ${i}`).toBeLessThan(h[i - 1] as number);
   });
   test('D6 |B|: green at the weak end, blue at the strong end (hue rises stop by stop)', () => {
     const s = stopsOf('field', theme);

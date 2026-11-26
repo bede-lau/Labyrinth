@@ -208,7 +208,8 @@
 .plasma-scales { flex: 2 1 auto; gap: var(--lab-space-2) var(--lab-space-4); }
 .plasma-scales:empty { display: none; }
 .plasma-scale { display: flex; flex: 1 1 auto; gap: .45rem; align-items: center; font-size: .78rem; white-space: nowrap; }
-.plasma-scale i { flex: 1 0 2.5rem; height: .5rem; border-radius: .25rem; }
+.plasma-scale i { display: block; height: .5rem; border-radius: .25rem; }
+.plasma-scale__bar { flex: 1 0 6rem; display: flex; flex-direction: column; }
 @media (max-width: 1100px) {
 
   .plasma-transport .auto-feedback { margin-inline-start: 0; }

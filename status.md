@@ -7,6 +7,10 @@
 
 ## Current state
 
+### 2026-11-26: temperature maps with more hues, in kelvin (D-038)
+- Explorer temperature ramp: 17-stop Turbo spectrum (was 6 stops). Heat & field: 11 stops, yellow → magenta (was 9,
+  yellow → red). Every temperature colour bar reads in MK with 1-2-5 log ticks (`LogTicks.tsx`); read-outs give keV and MK.
+
 ### 2026-11-26: README for external reviewers
 - `README.md` rewritten (was one line): what the tool does, one screenshot (`docs/screenshot-w7x-model.png`, headless
   Chrome at 1440×900 ×2), what is validated (|B| vs stella float64 2.94e-13; stella vs GENE window means with

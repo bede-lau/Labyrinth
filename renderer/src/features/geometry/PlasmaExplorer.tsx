@@ -3,7 +3,8 @@ import { Icon, type ThemeName } from '../../design';
 import { ControlLoop, type LoopDecision } from '../heatfield/ControlLoop';
 import { HeatScene, type HeatSceneProps, type HoverPoint } from '../heatfield/HeatScene';
 import { usePlayback, usePrefersReducedMotion } from '../heatfield/playback';
-import { ARROWS, buildSceneGeometry } from '../heatfield/scene';
+import { LogTicks } from '../heatfield/LogTicks';
+import { ARROWS, buildSceneGeometry, toMK } from '../heatfield/scene';
 import { Simulation } from '../heatfield/sim';
 import type { HeatfieldArtifact } from '../heatfield/types';
 import '../heatfield/heatfield.css';
@@ -41,9 +42,12 @@ const sceneLayers: { id: keyof Layers; label: string; icon: string }[] = [
 ];
 const initial: Layers = { heat: true, particles: true, lines: false, hardware: false };
 
-function Scale({ label, range, gradient, unit }: { label: string; range: readonly number[]; gradient: string; unit: string }) {
-  return <div className="plasma-scale"><span>{label}</span><i style={{ background: gradient }} />
-    <span>{range[0]!.toFixed(3)}–{range[1]!.toFixed(3)} {unit}, log scale</span></div>;
+/** A temperature scale: the model's range (keV) read in megakelvin, logarithmic, with 1-2-5 ticks under the bar. */
+function Scale({ label, range, gradient }: { label: string; range: readonly number[]; gradient: string }) {
+  const lo = toMK(range[0]!), hi = toMK(range[1]!);
+  return <div className="plasma-scale"><span>{label}</span>
+    <span className="plasma-scale__bar"><i style={{ background: gradient }} /><LogTicks lo={lo} hi={hi} /></span>
+    <span>{lo.toFixed(2)}–{hi.toFixed(1)} MK, log scale</span></div>;
 }
 
 function SurfaceReading({hit, sim, plane}: {hit: HoverPoint; sim: Simulation; plane: number}) {
@@ -56,7 +60,7 @@ function SurfaceReading({hit, sim, plane}: {hit: HoverPoint; sim: Simulation; pl
         : grid[hit.cell]!;
       const t = sample(section?.T ?? sim.state.T);
       const b = sample(section?.B ?? sim.field());
-      if (output.current) output.current.value = t.toFixed(3) + ' keV  ·  ' + b.toFixed(3) + ' T';
+      if (output.current) output.current.value = toMK(t).toFixed(2) + ' MK (' + t.toFixed(3) + ' keV)  ·  ' + b.toFixed(3) + ' T';
     };
     draw();
     return sim.subscribe(draw);
@@ -183,8 +187,8 @@ export function PlasmaExplorer({ onPowerOff, tracks, followed, feedback, onFeedb
             onClick={() => setPlates(v => v.map((on, i) => i === k ? !on : on))}><span>{id} <svg className="plate-warning" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 10 18H2Z"/><path d="M12 8v5m0 3v1"/></svg></span> <output hidden={!temperaturesVisible} ref={el => { temperatures.current[k] = el; }} aria-label={id + ' peak tile temperature'} aria-live="off" /></button>)}
         </div>
         <div className="plasma-scales">
-          {layers.heat && <Scale label="Edge heat" unit="keV" range={ranges.lcfsT} gradient={heatGradient} />}
-          {layers.heat && <Scale label="Core slice" unit="keV" range={ranges.sliceT} gradient={heatGradient} />}
+          {layers.heat && <Scale label="Edge heat" range={ranges.lcfsT} gradient={heatGradient} />}
+          {layers.heat && <Scale label="Core slice" range={ranges.sliceT} gradient={heatGradient} />}
         </div>
       </div>
     )}

@@ -365,7 +365,7 @@ treatment, the prefix "Danger:"), used only for the danger rows above.
 `sceneTheme(theme)` returns every colour below. Pass hex strings to `new THREE.Color(hex)`;
 `toThreeHex(hex)` is there for APIs that want an integer.
 
-* **Locate temperature and hardware**. `plasmaMaterials` defines the temperature, tracer, vessel and coil colours. `rampColor(stops, t)` interpolates the temperature stops for the edge and magnified core.
+* **Locate temperature and hardware**. `plasmaMaterials` defines the temperature, tracer, vessel and coil colours. `rampColor(stops, t)` interpolates the temperature stops for the edge and magnified core. The temperature stops are 17 samples of Turbo (D-038): many hues, but not monotonic in lightness (the indigo cold end and dark-red hot end are about equally dark) and not gated for colour-blind viewers, so always show the colour bar with its MK ticks.
 * **Surface**: a gray wireframe (`scene.surfaceLine`) on the panel surface, matching the reference
   figures. It is context only. Unsampled parts of the surface or line stay `scene.unsampled` gray.
 * **Field lines**: tube identity colours come from the series palette (bean teal, triangular rust).
@@ -387,14 +387,16 @@ treatment, the prefix "Danger:"), used only for the danger rows above.
 ### Heat & field (D-027)
 
 The owner specified both colormaps of this view, and the design system holds them to the owner's
-words: **temperature: red = hottest, yellow = coldest** (through orange), and **magnetic field |B|:
-dark blue = strongest, green = weakest**. Both run lighter to darker as the quantity grows, so in this
-view darker always means more.
+words: **temperature: yellow = coldest, through orange and red to magenta = hottest** (D-027, widened
+to more hues in D-038), and **magnetic field |B|: dark blue = strongest, green = weakest**. Both run
+lighter to darker as the quantity grows, so in this view darker always means more.
 
-* **Temperature**: `scene.heat`, 9 stops from coldest to hottest. Light `#fcdf00` (yellow) →
-  `#e68000` (orange) → `#bc0013` (red); dark `#fcdf00` → `#ff921a` → `#fa001d`. Both themes start
-  from the same yellow and follow the same hue path; the light theme's red end is darker (L\* 39 against
-  52) so the hot end holds its own edge on white. Look a value up
+* **Temperature**: `scene.heat`, 11 stops from coldest to hottest, spaced evenly in CIEDE2000 along an
+  OKLCH path through yellow, amber, orange, red, crimson and magenta to plum: more distinct colours than
+  the earlier 9-stop yellow → red ramp, so a two-decade logarithmic temperature scale has a hue per
+  half-decade. Light `#f8ea21` (yellow) → `#fa6900` (orange) → `#590042` (plum); dark `#fff44a` →
+  `#ff8b2d` → `#bf1e94`. The light theme's hot end is darker so it holds its own edge on white; the
+  dark theme's stays light enough to stand off the dark background. Look a value up
   with `heatColor(t, theme)`, `t` in 0–1 with 0 = coldest: bring a temperature into 0–1 with
   `normalizeRange(T, [lo, hi])` over the range the colour bar shows. Take that range from the data
   on screen (for example the coldest and hottest values of the starting state, rounded outward), not
@@ -421,16 +423,17 @@ view darker always means more.
   their own ramp and their own colour bar.
 * **Both**: `sceneTheme(theme)` also returns the stops as `heat` and `field` (and the outline as
   `outline`), and tokens.css as
-  `--lab-heat-0` … `--lab-heat-8` and `--lab-field-0` … `--lab-field-8`. Pass the sRGB triple to
+  `--lab-heat-0` … `--lab-heat-10` and `--lab-field-0` … `--lab-field-8`. Pass the sRGB triple to
   `color.setRGB(r, g, b, SRGBColorSpace)` and draw the coloured surface with an unlit material (or
   light it gently), so shading does not shift a colour into its neighbour's value. **Always show the
-  colour bar** with the quantity, its unit and the words at its ends: "Temperature (keV)", coldest …
+  colour bar** with the quantity, its unit and the words at its ends: "Temperature (MK)" (kelvin, D-038), coldest …
   hottest, labelled `model`; "|B| (T)", weakest … strongest, labelled VMEC. A |B|-coloured field line
   drawn over a surface coloured by |B| disappears into it: draw field lines over the temperature map,
   or give them the `markerOutline` casing.
 * **How they were built and checked** (`ramps.test.ts`; gates and measurement in `palette.ts`): in
-  OKLCH at equal CIEDE2000 steps. The temperature ramp runs from L 0.90 at hue 100° to hue 27° (L 0.50
-  light, 0.62 dark) at the edge of the sRGB gamut. Lightness falls stop by stop in normal
+  OKLCH at equal CIEDE2000 steps. The temperature ramp (D-038) runs from hue 105° (yellow) through 52°
+  (orange) and 32° (red) to −18° / −25° (magenta, plum), OKLCH L 0.92 → 0.32 (light) and 0.95 → 0.55
+  (dark), clipped to the sRGB gamut; its 11 stops sit at equal CIEDE2000 arc length along that path. Lightness falls stop by stop in normal
   vision and under protanopia and deuteranopia (Machado 2009 and Viénot 1999), every step is visible
   (at least 4.5 ΔE00 in normal vision, 2.5 under simulation), step sizes vary by less than 20% and the
   hue at each end is the owner's colour. The |B| ramp also colours field lines, so every one of its
@@ -439,14 +442,14 @@ view darker always means more.
 * **Kept apart** (closest approach: the smallest ΔE00 between any colour drawn on one ramp and any
   colour drawn on the other, in normal vision and under protanopia and deuteranopia, both models).
   The surface toggles between temperature and |B|, so they are held to the series gate. Field vs
-  temperature: at least 12; measured 14.9 (light) and 19.6 (dark). The |B| ramp of Locate the tubes
+  temperature: at least 12; measured 14.3 (light) and 15.8 (dark). The |B| ramp of Locate the tubes
   shows the same quantity in the opposite direction, so no colour of one may pass for a colour of the
   other; the obvious green → navy ramp came within 4 ΔE00 of it (a negative control in the test). Field vs
   Locate the tubes' |B|: at least 8; measured 9.4 (light) and 8.8 (dark). Temperature and Locate the
   tubes' |B| both have a yellow end (coldest in one, strongest in the other), so their yellows may not
   pass for each other. Temperature vs Locate the tubes' |B|, in normal vision: at least 8; measured
-  13.9 (light) and 10.5 (dark). Under protanopia and deuteranopia the closest approach is 1.4 (light)
-  and 8.8 (dark): on the light theme any yellow → orange → red ramp passes through the lightness of
+  16.1 (light) and 9.5 (dark). Under protanopia and deuteranopia the closest approach is 1.4 (light)
+  and 4.7 (dark): on both themes a yellow → orange → red ramp passes through the lightness of
   Locate the tubes' ochre strongest end (L\* 60), where both collapse onto the same yellow-brown, and
   `scene.bmag` may not change. The yellow ends themselves stay at least 8 apart for every viewer, the
   two ramps never share a view, and each view shows its own colour bar.
@@ -521,7 +524,7 @@ Import everything from `src/design` (`index.ts`).
 | Name a repository file as a source in text | Link a relative path: it resolves to the app itself |
 | Mark arithmetic on PRD-reported inputs with `basis="arithmetic"` | Show a green ✓ "Match" for a number no data in this repo backs |
 | Put the `model` pill on every number the Heat & field model produces (§5) | Show a model temperature or tile load as measured, derived or simulated |
-| Colour temperature with `heatColor` (red hottest, yellow coldest) and Heat & field's field strength with `fieldColor` (dark blue strongest, green weakest), each with its colour bar | Reuse `bmagColor` in Heat & field, or show a colormap without its colour bar and unit |
+| Colour temperature with `heatColor` (magenta hottest, yellow coldest) and Heat & field's field strength with `fieldColor` (dark blue strongest, green weakest), each with its colour bar | Reuse `bmagColor` in Heat & field, or show a colormap without its colour bar and unit |
 | Draw diverter plates in `diverter.fill` with their `diverter.edge` outline | Draw a black plate with no edge on the dark scene, where it vanishes |
 | Draw a mark over the coloured surface (the slice ring, an arrow) as a `color.text` core on a scene-background halo | Mark it in the accent or a ramp colour, where it passes for a field line or vanishes into the ramp |
 | Draw the forecast chart's two lines with `forecastStyle(line, theme)` | Colour Predicted like a series it is not (GENE, triangular) |
@@ -725,15 +728,17 @@ rewrites the tables between the two markers, and `designDoc.test.ts` fails if th
 | `--lab-bmag-8` | `#b28a29` | `#ffe891` |
 | `--lab-scene-diverter-fill` | `#14181a` | `#030506` |
 | `--lab-scene-diverter-edge` | `#ffffff` | `#d5dee2` |
-| `--lab-heat-0` | `#fcdf00` | `#fcdf00` |
-| `--lab-heat-1` | `#fdc300` | `#ffce39` |
-| `--lab-heat-2` | `#f8ab00` | `#ffb938` |
-| `--lab-heat-3` | `#f09500` | `#ffa52b` |
-| `--lab-heat-4` | `#e68000` | `#ff921a` |
-| `--lab-heat-5` | `#dc6800` | `#ff7c02` |
-| `--lab-heat-6` | `#d24f00` | `#fd5f00` |
-| `--lab-heat-7` | `#c82d00` | `#fe3400` |
-| `--lab-heat-8` | `#bc0013` | `#fa001d` |
+| `--lab-heat-0` | `#f8ea21` | `#fff44a` |
+| `--lab-heat-1` | `#ffcc00` | `#ffd800` |
+| `--lab-heat-2` | `#ffac00` | `#ffbb00` |
+| `--lab-heat-3` | `#ff8c00` | `#ffa00d` |
+| `--lab-heat-4` | `#fa6900` | `#ff8b2d` |
+| `--lab-heat-5` | `#ec4812` | `#ff773f` |
+| `--lab-heat-6` | `#dc302c` | `#ff6351` |
+| `--lab-heat-7` | `#c7183c` | `#ff4e64` |
+| `--lab-heat-8` | `#a80046` | `#f8367a` |
+| `--lab-heat-9` | `#7f0049` | `#e0278a` |
+| `--lab-heat-10` | `#590042` | `#bf1e94` |
 | `--lab-field-0` | `#00a676` | `#76ffd0` |
 | `--lab-field-1` | `#059b87` | `#40f5de` |
 | `--lab-field-2` | `#0c9091` | `#29e6ea` |

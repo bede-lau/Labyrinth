@@ -240,7 +240,7 @@ const light: ThemeTokens = {
     bmag: ['#182b58', '#003d63', '#004f67', '#006064', '#006f5a', '#2f7b4a', '#608338', '#888528', '#b28a29'],
     diverterFill: '#14181a',
     diverterEdge: '#ffffff',
-    heat: ['#fcdf00', '#fdc300', '#f8ab00', '#f09500', '#e68000', '#dc6800', '#d24f00', '#c82d00', '#bc0013'],
+    heat: ['#f8ea21', '#ffcc00', '#ffac00', '#ff8c00', '#fa6900', '#ec4812', '#dc302c', '#c7183c', '#a80046', '#7f0049', '#590042'],
     field: ['#00a676', '#059b87', '#0c9091', '#0a8497', '#06779a', '#0066a2', '#0351a9', '#0037ab', '#1811a2'],
   },
 };
@@ -323,7 +323,7 @@ const dark: ThemeTokens = {
     bmag: ['#546b9d', '#4980ab', '#4095b1', '#42aab0', '#58bcaa', '#7ccba0', '#a7d895', '#d3e18e', '#ffe891'],
     diverterFill: '#030506',
     diverterEdge: '#d5dee2',
-    heat: ['#fcdf00', '#ffce39', '#ffb938', '#ffa52b', '#ff921a', '#ff7c02', '#fd5f00', '#fe3400', '#fa001d'],
+    heat: ['#fff44a', '#ffd800', '#ffbb00', '#ffa00d', '#ff8b2d', '#ff773f', '#ff6351', '#ff4e64', '#f8367a', '#e0278a', '#bf1e94'],
     field: ['#76ffd0', '#40f5de', '#29e6ea', '#33d5f1', '#1dc3f8', '#27affe', '#3f99fe', '#3e7fff', '#4766fe'],
   },
 };
@@ -563,7 +563,13 @@ export function renderTokensCss(): string {
 
 /** Co-registered Locate scene: edge temperature spectrum, flux tracer and hardware materials. */
 export const plasmaMaterials = {
-  temperature: ['#232761', '#4256b4', '#1cabbe', '#f4c75c', '#f47a44', '#b82d52'],
+  /**
+   * Temperature, coldest -> hottest (D-038): 17 samples of the Turbo map (Mikhailov 2019) between 0.06 and 0.94, indigo ->
+   * blue -> cyan -> green -> yellow -> orange -> red, so the two-decade log scale shows a distinct hue per third of a decade.
+   */
+  temperature: ['#493dab', '#4763e9', '#3789f9', '#29aeec', '#25cdd0', '#2fe6ac', '#48f789', '#6cfd69', '#96fa50', '#c1ed3d', '#e5d730', '#feb927', '#ff9520', '#fe6e1a', '#e54813', '#c2270a', '#a01101'],
+  /** The warm band of a divertor target (the old ramp's yellow, kept when the ramp widened). */
+  targetWarm: '#f4c75c',
   tracer: '#fff4ca',
   particleColours: ['#fe4e93', '#31c8ff', '#ffbc32', '#a987ff', '#70e65a'],
   solenoid: { steel: '#a9b6c6', jacket: '#b790c2', copper: '#dc9362', collar: '#56658b', fastener: '#d7d9e1' },

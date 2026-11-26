@@ -6,6 +6,8 @@ import { Icon, Panel, formatNumber, useResolvedTheme } from '../../design';
 import { useArtifact } from '../../lib/artifacts';
 import { ArtifactGate } from '../../shell/ArtifactGate';
 import { checkHeatfield, type HeatfieldArtifact } from '../heatfield/types';
+import { LogTicks } from '../heatfield/LogTicks';
+import { toMK } from '../heatfield/scene';
 import { diverterPlanes } from '../heatfield/slice';
 import { plasmaMaterials } from '../../design/tokens';
 import { fiveTargetScenario, startupSimulation, heatedRanges } from './heatedEdge';
@@ -213,11 +215,12 @@ export function GeometryContent({ g, assignmentsAnchor }: { g: GeometryArtifact;
                 </div>
                 {ranges && (
                   <div className="plasma-scale">
-                    <span>{ranges.sliceT[0].toFixed(3)}</span>
-                    <i
-                      style={{ background: 'linear-gradient(to right,' + plasmaMaterials.temperature.join(',') + ')' }}
-                    />
-                    <span>{ranges.sliceT[1].toFixed(3)} keV, log scale</span>
+                    <span>{toMK(ranges.sliceT[0]).toFixed(2)}</span>
+                    <span className="plasma-scale__bar">
+                      <i style={{ background: 'linear-gradient(to right,' + plasmaMaterials.temperature.join(',') + ')' }} />
+                      <LogTicks lo={toMK(ranges.sliceT[0])} hi={toMK(ranges.sliceT[1])} />
+                    </span>
+                    <span>{toMK(ranges.sliceT[1]).toFixed(1)} MK, log scale</span>
                   </div>
                 )}
               </div>

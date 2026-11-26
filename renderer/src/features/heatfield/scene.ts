@@ -897,6 +897,32 @@ export function heatFraction(v: number, range: readonly number[]): number {
   return t <= 0 ? 0 : t >= 1 ? 1 : t;
 }
 
+/** Kelvin per keV: 1 keV / k_B = 1.160 451 812 × 10^7 K (CODATA 2018). The model works in keV; the colour bars read in kelvin. */
+export const KELVIN_PER_KEV = 1.160451812e7;
+
+/** A model temperature (keV) in megakelvin. */
+export const toMK = (keV: number) => (keV * KELVIN_PER_KEV) / 1e6;
+
+/**
+ * Ticks for a logarithmic colour bar over [lo, hi] (lo > 0, any unit): the 1-2-5 values of each decade strictly inside
+ * the range, each with its position `at` (0–1) along the bar, so the eye can read a colour off the bar between its ends.
+ * Values closer than 6 % of the bar to an end, or to the previous tick, are dropped so the labels never overlap.
+ */
+export function logTicks(lo: number, hi: number): { value: number; at: number }[] {
+  if (!(hi > lo && lo > 0)) return [];
+  const span = Math.log(hi / lo);
+  const out: { value: number; at: number }[] = [];
+  for (let e = Math.floor(Math.log10(lo)); e <= Math.ceil(Math.log10(hi)); e++)
+    for (const m of [1, 2, 5]) {
+      const value = m * 10 ** e;
+      const at = Math.log(value / lo) / span;
+      if (at < 0.06 || at > 0.94) continue;
+      if (out.length && at - out[out.length - 1]!.at < 0.06) continue;
+      out.push({ value, at });
+    }
+  return out;
+}
+
 export function writeColors(values: ArrayLike<number>, range: readonly [number, number], lut: Float32Array, out: Float32Array, logScale = false): Float32Array {
   const [lo, hi] = range;
   const span = hi > lo ? hi - lo : 1;

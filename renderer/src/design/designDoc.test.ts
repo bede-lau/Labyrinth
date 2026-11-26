@@ -444,7 +444,7 @@ describe('D6 §5 / §6 / §7 document the owner requirement of 2026-11-21', () =
   const flat = (t: string) => t.replace(/\s+/g, ' ');
   test('D6 §7 states the owner’s rules for both colormaps', () => {
     const s = flat(section(/^## 7\. 3D scene conventions/));
-    expect(s).toContain('temperature: red = hottest, yellow = coldest');
+    expect(s).toContain('temperature: yellow = coldest, through orange and red to magenta = hottest');
     expect(s).toContain('magnetic field |B|: dark blue = strongest, green = weakest');
     expect(s).toMatch(/Never use `bmagColor` here/);
   });

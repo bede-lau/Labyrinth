@@ -1,0 +1,4 @@
+/* 1-2-5 ticks under a logarithmic colour bar (LogTicks.tsx): a short mark and its value at the value's place on the bar. */
+.lab-logticks { position: relative; display: block; height: 1.1em; font-size: .72rem; color: var(--lab-color-text-subtle); }
+.lab-logticks > span { position: absolute; top: 0; transform: translateX(-50%); padding-top: 3px; white-space: nowrap; }
+.lab-logticks > span::before { content: ''; position: absolute; top: 0; left: 50%; width: 1px; height: 3px; background: currentColor; }

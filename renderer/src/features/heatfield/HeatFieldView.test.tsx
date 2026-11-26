@@ -49,11 +49,16 @@ const start = spunUpState(model);
 const P = model.params;
 // The cross-section's edge reference: the upstream temperature of the φ plane (MODEL.md v3, two-point model).
 const UP = model.upstream(start.n, [0, 0, 0, 0]);
-/** A colour bar's accessible-name start for a range, as the view formats it (3 decimals). */
+/** Megakelvin per keV, written out here (1 keV / k_B, CODATA 2018) so the view's conversion is checked independently. */
+const MK = 11.60451812;
+/** A temperature colour bar's accessible-name start for a range in keV, as the view formats it (MK, 2 decimals, D-038). */
 const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const barName = (title: string, lo: number, hi: number) =>
   new RegExp(
-    '^' + escapeRe(`Colour bar: ${title} in keV from ${formatNumber(lo, 3)} (coldest end in yellow) to ${formatNumber(hi, 3)}`),
+    '^' +
+      escapeRe(
+        `Colour bar: ${title} in MK from ${formatNumber(lo * MK, 2)} (coldest end in yellow) to ${formatNumber(hi * MK, 2)} (hottest end in magenta), logarithmic.`,
+      ),
   );
 const OFF = [0, 0, 0, 0];
 const IDS = ['D1', 'D2', 'D3', 'D4'];
@@ -169,7 +174,15 @@ test('H9 the scene starts from the spun-up state, colours by temperature or |B| 
   const tempBar = within(scene).getByRole('img', { name: barName('Temperature', ...s.ranges.lcfsT) });
   expect(tempBar).toHaveAccessibleName(/anything colder takes the coldest colour/);
   const tempHead = tempBar.closest('.hf-colorbar')!;
-  expect(tempHead).toHaveTextContent('Temperature (keV)');
+  expect(tempHead).toHaveTextContent('Temperature (MK)');
+  // 1-2-5 ticks in MK where each value sits on the logarithmic bar (0.23 MK to 39 MK: 0.5, 1, 2, 5, 10, 20).
+  const ticks = [...tempHead.querySelectorAll('[data-testid="log-ticks"] > span')] as HTMLElement[];
+  expect(ticks.map((t) => t.textContent)).toEqual(['0.5', '1', '2', '5', '10', '20']);
+  const [tlo, thi] = s.ranges.lcfsT.map((v) => v * MK) as [number, number];
+  for (const t of ticks) {
+    const at = Math.log(Number(t.textContent) / tlo) / Math.log(thi / tlo);
+    expect(Math.abs(parseFloat(t.style.left) - 100 * at)).toBeLessThan(0.01);
+  }
   expect(tempHead.querySelector('[data-status="model"]')).not.toBeNull();
 
   await user.click(within(scene).getByRole('radio', { name: '|B| (VMEC)' }));
@@ -327,7 +340,7 @@ test('H10 without a mouse: the slice is one focusable group whose arrow keys mov
     expect(readOutRow(box, 'Temperature').querySelector('[data-status="model"]')).not.toBeNull();
     expect(screen.getByTestId('slice-cursor')).toHaveAttribute('data-cell', `${m}:${i}`);
     expect(announcer).toHaveTextContent(
-      `Temperature ${formatNumber(cellT(m, i), 3)} keV (model), |B| ${formatNumber(cellB(m, i), 3)} T (VMEC), at φ 0°, θ ${thetaDeg}, ρ ${rho(m)}–${rho(m + 1)}.`,
+      `Temperature ${formatNumber(cellT(m, i), 3)} keV (${formatNumber(cellT(m, i) * MK, 2)} MK, model), |B| ${formatNumber(cellB(m, i), 3)} T (VMEC), at φ 0°, θ ${thetaDeg}, ρ ${rho(m)}–${rho(m + 1)}.`,
     );
   };
   expectCell(7, 12, '94°'); // the same cell and numbers as the pointer read-out above
@@ -469,7 +482,7 @@ test('H11 the slice and the 3D surface share one temperature scale; the edge str
   const xsPanel = panel('Cross-section at φ = 0° (D1)');
   const bar = within(xsPanel).getByRole('img', { name: barName('Temperature', ...ranges.sliceT) });
   expect(bar).toHaveAccessibleName(/anything colder takes the coldest colour/);
-  expect(bar).toHaveTextContent(`${formatNumber(ranges.sliceT[0], 3)} · coldest`);
+  expect(bar).toHaveTextContent(`${formatNumber(ranges.sliceT[0] * MK, 2)} · coldest`);
 
   // Outer-ring cells (ρ 0.875–1) at plane j from MODEL.md's cross-section formula, independently, and their ramp position.
   const [lo, hi] = ranges.sliceT;

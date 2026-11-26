@@ -22,7 +22,7 @@ export function buildTargets(T: Three, art: HeatfieldArtifact) {
   const segment = new T.BoxGeometry(1, 1, 1);
   const dark = new T.Color(plasmaMaterials.targetCold),
     hot = new T.Color(plasmaMaterials.targetHot);
-  const warm = new T.Color(plasmaMaterials.temperature[3]);
+  const warm = new T.Color(plasmaMaterials.targetWarm);
   const steel = new T.Color(plasmaMaterials.vessel);
   const halfSpan = art.diverters.halfWidthTheta + 0.35;
   const count = 15;
