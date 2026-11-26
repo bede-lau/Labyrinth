@@ -32,7 +32,7 @@ export interface SliceLayout {
   /**
    * The LCFS edge strip (DZ3-3): one band cell per θ cell i (between LCFS nodes i and i + 1), EDGE_STRIP.gap to
    * EDGE_STRIP.gap + EDGE_STRIP.width viewBox units outside the LCFS outline. It is coloured by the LCFS temperature on
-   * the 3D surface's range, where the cold footprint under a plate stands out.
+   * the 3D surface's scale: the plane's upstream temperature (version 7; the cold targets are the plates).
    */
   edge: { i: number; d: string }[];
   /** The strip's inner and outer boundary (two closed sub-paths), drawn in the outline colour round the fill. */

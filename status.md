@@ -1,10 +1,228 @@
 # Labyrinth · status
 
 > **Read "Current state" first, then `interface.md`, `architecture.md` and `decision.md`.**
-> Last updated 2026-11-22 on local branch `handover-verification`. The sections after "Current state" record earlier sessions.
+> Last updated 2026-11-26 on branch `control-loop-hysteresis` (`origin/control-loop-hysteresis` is behind the local branch; not merged into `main`).
+> The sections after "Current state" record earlier sessions.
 > Run checks through `scripts/dev.sh`, inside WSL on Windows (D-020).
 
 ## Current state
+
+### 2026-11-26: W7-X view — 0-D core energy balance (D-037)
+- The explorer's heating timing is now physical: dW/dt = P_in − W/τ_E (ISS04, 0.13 s); the edge receives W/τ_E; the core
+  temperature follows from W. Hand-made lags, delays and the D1-first spread removed.
+- Checks (native): full renderer suite 1,739 passed before the review notes; the new ISS04 test and the geometry and model files pass after them; `tsc` clean. Review: APPROVED (minor notes applied).
+
+### 2026-11-26: heat model version 7 — core temperature from ISS04; LCFS at the upstream temperature (D-036)
+- T_0 from ISS04 energy confinement (3.38 keV at 7.5 MW; checked at build). LCFS = plane's upstream temperature; the
+  plates show the target temperature. sigmaPhi removed. Remaining illustrative: coil response, strip width, f_rad.
+- Checks (native): renderer 1,739 tests, `tsc` clean; backend 26/27 (Windows path). Review: APPROVED on the second pass.
+
+### 2026-11-26: heat model version 6 — coils move power between divertors; one temperature colour scale (D-035)
+- Step 6: a coil that is on lowers its divertor's weight by 1 − η (η 0.3), renormalised (D1 alone sheds ~24 %; total
+  conserved; all-off and all-on unchanged). D1+D3 on now heats D2/D4 (~1319 °C). η illustrative.
+- Display: one logarithmic temperature scale per view (20 eV – that view's hottest core) for the 3D edge, the
+  cross-sections and the explorer's surface and slice.
+
+### 2026-11-26: heat model version 5 — the strip deposits exactly its power (D-034)
+- Step 9: the strip narrows as 1/B (σ_θ/b_k), so each divertor's strip deposits exactly its power; all coils on now
+  499/443/425/497 °C, coils off unchanged. Checks (native): renderer 1,739 tests, `tsc` clean; backend 25/26 (Windows path).
+  Review: APPROVED on the second pass (first: stale target-load equation, grid-sampled peak caveat, doc labels).
+
+### 2026-11-26: heat model version 4 — conducting CFC tiles (D-033)
+The owner asked for the physical tile next and for most of the model to become physical, deciding without asking.
+- **Tile v4** (MODEL.md step 11, `model.py`, `model.ts`, contract, artifact): 6 finite-volume cells through 6 mm of
+  NB31 CFC with k(T), c(T) fits, a heat-sink + water-film resistance R_sink 4.5e-5 m² K/W to 30 °C water. Replaces
+  tileGain and tauTile. Energy conserved cell by cell (tested every step), closed-form steady state reproduced.
+- **Operating point:** P_heat 6 → 7.5 MW. Coils off at 3 s: D1 1346, D2 1089, D3 1074, D4 1337 °C; all on:
+  549/451/427/545 °C. W7-X view scenario 1.25× → 9.4 MW mean.
+- **Checks (native):** renderer 49 files / 1,738 tests, `tsc` clean; backend `test_heatfield` 25/26 (Windows path).
+- **Review 2026-11-26: APPROVED** on the second pass (first pass: back-cell stability bound, R_sink overclaim, stale text, integer tileCells, thin TS tests, restored MODEL.md caveats).
+
+### 2026-11-26: heat model version 3 — two-point scrape-off layer, energy conserved (D-032)
+The owner asked for maximum physical accuracy and chose energy conservation. Version 2 could not conserve energy as
+built (its edge relaxed to a fixed T_ped, and a physical edge drains in microseconds, far below the 1 ms step). The
+owner chose the textbook two-point model and the operating point 6 MW heating, 30 % radiated, 0.10 m² per divertor;
+after that the owner asked the maintainer to decide without asking (memory: work autonomously).
+- **Model v3** (MODEL.md, `model.py`, `model.ts`, contract, artifact): fixed heating power → each divertor's toroidal
+  sector share less the radiated part → peak load = power × |B| compression at the strike line ÷ wetted area (energy
+  conserved by construction); two-point model per divertor (Spitzer conduction over 200 m, sheath γ 7, pressure
+  balance, 20 fixed-point iterations) → T_u ≈ 0.20–0.21 keV, T_t ≈ 0.025–0.033 keV. Edge quasi-steady; only the tiles
+  evolve. The LCFS map draws the two-point drop into each footprint (illustration, stated). Coils off at 3 s: D1 1260,
+  D2 1058, D3 1046, D4 1253 °C (12.9/10.8/10.7/12.9 MW/m²); all on: 527/443/429/525 °C.
+- **W7-X view scenario** (`heatedEdge.ts`): heating is now a relative power density; its power is 1.25× nominal
+  (7.5 MW mean, 6.6–8.4 MW modulated). At the nominal 6 MW the five targets peak at ~1110–1160 °C and the loop would
+  never act. Stated in the code as a display scenario.
+- **Performance:** the LCFS map is computed lazily (forecasts read only the tiles); the app now runs at about real time
+  (v2: ~0.27×) and the component loop tests take 20 s instead of ~2 min.
+- **Display:** colour range = start state's coldest–hottest (≈0.02–0.21 keV); cross-section edge reference = the
+  plane's upstream temperature; the stability notice is Δt/τ_tile.
+- **Checks (native):** renderer 49 files / 1,735 tests, `tsc` clean; backend `test_heatfield` 24/25 (the 25th is the
+  Windows path separator) and 109/112 overall (2 geometry tests fail natively with or without this work; 2 files need
+  POSIX); hand-switch staleness test still fails when the staleness checks are removed. Browser 2026-11-26: coils off
+  the W7-X view's tiles reach ~1200–1250 °C at ~12 MW/m², the loop switches all five coils on and they settle at
+  ~570–610 °C; no console errors besides the absent backend's 502s.
+- **Review 2026-11-26: APPROVED** on the second pass. First pass: two majors (the W7-X view's 1.25× heating was not
+  shown to users, now a computed "Heating scenario (model)" line + D-032 item 3; TASK.md H4 still listed v2 tests, now
+  rewritten) and ten minors (dead rotating heating pattern removed; TS sheath-balance check; strip-profile integral
+  stated; a convergence guard on the two-point solve — the sheath residual to 1e-6 at the operating loads, since past
+  ~50 MW/m² the iteration oscillates; ECRH wording; "chosen so two divertors pass the limit"; Python cache; comments).
+  Final native checks: renderer 49 files / 1,737 tests, `tsc` clean; backend `test_heatfield` 24/25 (Windows path).
+  Reviewer's optional note: the guard checks the artifact's 6 MW loads, not the view's 1.25× scenario (~15 MW/m²,
+  converged to machine precision up to ~30 MW/m²).
+
+### 2026-11-25 (later): heat model version 2 — physics retune, heat transfers removed (D-031, NOT committed)
+The owner asked whether the model obeys physics, then chose: remove the heat transfers, and a physical retune.
+- **Model v2** (`tasks/10-heat-field/MODEL.md`, `main/…/heatfield/model.py`, `renderer/…/heatfield/model.ts`, contract):
+  the heat flux is the sheath law with two-point pressure balance, q = (γ/2)·n_u·e·T·c_s(T_t)·sin α·(B/B₀)·g; LCFS
+  0.1 keV, target 20 eV; unit conversions are artifact parameters (H8 holds). At realistic values (4e19 m⁻³, 2°) the tiles
+  stay ~450 °C and the loop has nothing to do; only the top of the tuning ranges (6e19 m⁻³, 4°) overheats D1/D4
+  (~1290 °C at ~13 MW/m², above the 10 MW/m² design load). **The owner did not answer which operating point to use; the
+  maintainer took this high-power case** (stated in the artifact text). Changing it is two parameter values + rebuild.
+- **Artifact** regenerated natively (scratch venv with `main/requirements.txt`): the unchanged model rebuilt
+  byte-identically first (only `\` vs `/` in three source paths, normalised); geometry bytes unchanged; manifest digest
+  updated. Backend: `test_heatfield.py` 23/24 natively — the 24th compares `build()`'s source path, which has `\` on
+  Windows only; 2 geometry tests fail natively with or without this change; `test_live_gx`/`test_server` need POSIX.
+- **Heat transfers removed** from the renderer: `loadBalance.ts`, `transferGuides.ts`, tracer routes (each tracer now
+  circles its own diverter), label endpoints/route pins, the loop's transfer weighing and `balanceHeat`, the "Demo
+  transfer" button. `AppliedControls` is coils only.
+- **Display:** temperatures now shown to 3 decimals in keV, LCFS colour range rounded to 0.005 keV. On the cross-section's
+  0.07–3 keV slice scale the ~0.1 keV edge is under 1 % of the ramp, so the cold footprint is no longer visible *in the
+  slice* (DZ-4 weakened; the edge strip still shows it at ≥ 12 ΔE00). Possible follow-up: a log or split scale.
+- **Known, stated, not fixed:** deposition is not energy-coupled to the plasma sink (also true of v1); with a cold edge
+  (startup) the sheath law still deposits from n_u·T_t, so tiles warm a little before the edge heats.
+- **Gates (native):** renderer 49 files / 1,734 tests pass, `tsc` clean; `check_boundaries.py` OK; `check_docs.py` reports
+  the same six stale VERIFY.md as before (needs the verifier). `verify.sh` not run (needs WSL). Tasks 08, 09, 10 reopen
+  until re-verified.
+- **Review 2026-11-25: APPROVED** on the second pass. First pass requested changes: one major (the text claimed *all*
+  parameters were physical; now only T_ped, T_t, γ, n_u, α, m_i are, the rest is stated as illustrative) and seven minors
+  (tuning-band wording, the cold-edge deposition limitation, H11 title and vacuous bounds, 3-decimal labels in the
+  W7-X and Geometry views, dead CSS and the `hf-route-pin` → `hf-plate-pin` rename, two comments). All fixed.
+- **Committed** on the branch as `879b1ce` (not pushed). **Before `main`:** `verify.sh` in WSL and the verifier for tasks
+  08, 09, 10 (and 01, 03, 05).
+- **WSL setup, 2026-11-25:** the WSL package is installed and the Virtual Machine Platform component enabled (both
+  elevated, exit 0); firmware virtualization is on (Ryzen 7 5800H). A Windows restart is pending before WSL2 can
+  start. **The owner chose to skip WSL for now** and push the branch (not `main`) without `verify.sh`. When resumed: install Ubuntu (`wsl --install -d Ubuntu`, which asks the owner for a Linux user name and password),
+  then `wsl.exe -e bash scripts/setup-dev.sh`, then `wsl.exe -e bash scripts/dev.sh bash scripts/verify.sh all`, then the
+  verifier on tasks 01, 03, 05, 08, 09, 10.
+
+### What is on `control-loop-hysteresis` (2026-11-23/24, not in `main`)
+Two commits on top of `main` (`0e38a91`):
+- `63c6353` **Control-loop fix and transfer animation.** `renderer/src/features/heatfield/loopPolicy.ts` is one decision
+  function shared by `ControlLoop.tsx`, the forecast worker and the headless test. It forecasts with the coils as they
+  are, keeps every coil on while any diverter is predicted above the 1200 °C limit, releases a coil only after 5 s on
+  and when a 3 s look-ahead stays under ~1000 °C, and adopts a heat transfer only if its forecast lowers the peak by
+  ≥ 2 °C. The headless overheat run went from 156 coil flips to 5. Transfer routes in `transferGuides.ts` are dashes
+  that flow from sender to receiver on model time and brighten with the applied fraction.
+- `899359b` **Field-change graph and forecast accuracy panel.** `FieldChangeCard.tsx` plots ΔB/B₀ around the torus
+  with the latest peaks; `renderer/src/features/forecast/accuracy.ts` + `AccuracyPanel.tsx` add forecast accuracy statistics.
+
+### Findings on 2026-11-24
+- **Why the live loop "never adopted a transfer" while the headless run "adopted 215".** Transfers are weighed only
+  while a diverter is forecast above the limit. Once every coil is on, nothing is forecast hot again, so that happens
+  in about one decision per run. The headless cold-start run adopted exactly **one** transfer (at 6.25 s); "215" counted
+  the decisions that route stayed in force. Whether that single decision clears the 2 °C margin depends on the exact
+  step it falls on. The live app decides on the first animation frame at or after each 250-step horizon, i.e. every
+  ~255 steps at 1× (17 steps/frame, dt = 1 ms): at that cadence the run adopts **no** transfer and its overheat is
+  caught one decision late, so one 0.5 s sample reads ~1207 °C. At exactly 250 steps the tiles never pass the limit.
+  Reproduced by rendering the real `ControlLoop` with a fake worker: 1 step/frame matches headless, 17 steps/frame
+  adopts nothing, with or without the worker. In the browser on 2026-11-24 (app running at ~0.27× real time) the
+  loop *did* adopt D1 → D4 · 9.3 % at 6.6 s — again a matter of which step the decision fell on.
+  - `loopHeadless.test.ts` now counts **adoptions** (route changes) separately from decisions with a route in force,
+    and has a 255-step "live cadence" test that records the above (≤ 1 sample over the limit, ≤ 1 adoption).
+  - Tried and reverted: also weighing transfers in the 1000–1200 °C band with a coil on. No effect — with every coil
+    on, the tiles fall below 1000 °C within ~1 s (955 → 778 → 662 °C), and a transfer needs a coil on.
+  - **Open, owner's decision:** transfers are rare by design under this policy. Making them routine needs a policy
+    change (e.g. a pre-emptive single-coil transfer when one diverter is forecast above ~1000 °C with coils off), and
+    the live overshoot at 255-step cadence could be removed by deciding on an exact step grid.
+- **"Demo transfer" button** (`PlasmaExplorer.tsx`, marked TEMPORARY) is **kept** by the owner's choice: it is the only
+  reliable way to see the transfer animation until the loop adopts transfers routinely. Remove it before a release.
+- **Transfer dashes, checked in the browser:** the D1 → D4 route is drawn along the short arc via D5 as pink dashes,
+  and the dash pattern moves between captures ~2 s apart. At ~0.27× the motion is slow (~0.4 dash spacings per real
+  second); direction was not confirmable from stills.
+- **Magnetic field change graph with coils on, checked in the browser:** no longer flat — ΔB/B₀ ≈ ±0.002 just after
+  the coils ramp in, ±0.012 at 9.8 s, five-fold with peaks at D1–D5; the time/peak/ΔB table updates.
+- **App speed:** in the desktop browser pane the W7-X view ran at ~0.27× real time (3.3 s of model time in ~12 s).
+  Not investigated.
+
+### Gates and verification
+- `docs:handoff` (`scripts/check_docs.py`) **still fails**: tasks 01, 03, 05, 08, 09 and 10 are DONE but files they own
+  changed after their verified commits (`628d997`, `9e017b6`, `41a506b`, `ca1871b`). This is what keeps the Stop hook
+  re-running the suite. Next step: re-verify those six tasks with the verifier agent at the branch head, **after** WSL
+  is set up on this machine (owner installing it 2026-11-24: `wsl --install`, then `wsl.exe -e bash scripts/setup-dev.sh`).
+  Until then they should not be counted as verified at the current code.
+- Reviewer pass on the branch (required before merge to `main`), 2026-11-24: **CHANGES REQUESTED.** The branch must
+  not be merged until these are fixed and re-reviewed.
+  - `accuracy.ts` / `AccuracyPanel.tsx`: maths reproduced independently (persistence MAPE 1.95 %, frozen 1.85 %, paired
+    t = 0.22, df = 7, p ≈ 0.83; t_crit(7) = 2.365) and provenance is honest. Minor only: the t-test assumes
+    independent windows (persistence errors are serially correlated, n = 8); the "natural wiggle" sentence hides a
+    1.2× allowance; `ForecastView.test.tsx:52` matches "not statistically significant" too; the tile prints
+    `p = 0.00` instead of "p < 0.001"; no jitter despite the comment; frozen bias computed but not shown.
+  - **Blocking (major):**
+    1. `loopPolicy.ts:131-141`: the overheat guard is structurally late. Coils switch on when the 250-step forecast
+       crosses 1200 °C, but they ramp over 350 steps and the tiles respond with τ = 1 s, so a forecast crossing
+       cannot be prevented. That is the 1207 °C sample at live cadence. Fix: forecast the switch-on check over
+       horizon + response + one frame, or switch on at limit − margin; then assert `over === 0` at 255 and 17-step/frame cadence.
+    2. `ControlLoop.tsx:88-89`: Heat & field passes no worker, so the 3,250-step release probe runs synchronously
+       (~0.65 s freeze every 5 s of model time on the unheated model). Fix: use the incremental path or a worker.
+    3. `ControlLoop.tsx:64-80`: the incremental fallback applies "all coils on" only after every forecast in the
+       decision (~15 frames for a hot decision, ~65 for a probe) and ignores its frame budget. Fix: apply the
+       switch-on early, size chunks to the budget, abort a probe if the base forecast turns hot.
+  - **Fixes for 1–3, 2026-11-25 (uncommitted, awaiting re-review):**
+    1. `loopPolicy.ts`: the guard forecast now looks `horizon + coil response + guardSlackS` ahead (250 + 350 + 50
+       steps). Hottest sample over 60 s, cold start: 1086 °C at 250-step cadence, 1141 °C at 255, 1150 °C at 272
+       (was 1207 °C at 255). `loopHeadless.test.ts` asserts `over === 0` at all three.
+    2./3. `ControlLoop.tsx`: without a worker the loop always uses the frame-paced path. A decision yields "all coils
+       on" as soon as the guard forecast is hot, before weighing transfers. Work runs in 10-step chunks at ≤ 3× the
+       frame's model steps (+ up to 2 chunks). While a long release probe runs, a guard-only decision
+       (`allowProbe: false`) starts whenever one falls due and drops the probe if it switches coils. Peaks are
+       sampled every 50 steps however the work is chunked.
+    - New `ControlLoop.test.tsx`: the real component without a worker at 17 steps/frame for 60 s keeps every tile
+      ≤ 1200 °C (hottest 1172 °C) and within the frame budget. Reverting fix 1 makes it fail at 1221 °C.
+    - Full renderer suite natively on Windows: 49 files, 1,726 tests pass; `tsc` clean.
+  - **Re-review 2026-11-25: CHANGES REQUESTED again.** It confirmed: re-entrancy, the provisional switch-on, the
+    worker path and chunk independence are sound, and finding 2 is fixed. New findings, and what was done:
+    1. Guard look-ahead ignored the time to compute a decision. **Done:** "all coils on" is now yielded at the
+       first forecast sample over the limit, not after the whole forecast. Component test at 17 and 68 steps a frame:
+       hottest tile 1171 / 1173 °C.
+    2. A full decision was applied without checking it was still current. **Done:** each decision remembers the
+       controls it was asked about and is dropped once those are no longer in force (a guard, the user, or a reset
+       changed them). The worker path does the same and re-requests instead of applying. Test: a coil switched off by
+       hand mid-probe is not switched back on (it fails without the check).
+    3. On the worker path (W7-X view) no guard ran while the worker was busy with a release decision. **Done
+       (owner chose a second worker):** the W7-X view opens two forecast workers. A decision that falls due while
+       the full worker is still working goes to the guard worker without a probe (`allowProbe: false`); an answer
+       whose controls are no longer in force is re-requested, a reset drops it; if a second worker cannot be opened
+       the first still decides. Tests (fake workers, full decision held for 20 s): with the guard the tiles stay
+       below the limit and every guard request is probe-free; with one worker only, a tile passes the limit.
+       Checked in the browser on 2026-11-25: both workers load, the loop runs and logs decisions, no new errors.
+    - Also open: a release decided late may be applied after part of its 3 s look-ahead has passed (2a); the
+      budget now counts real forecast steps (≤ rate + 2 chunks per frame, tested); provisional switch-ons are no
+      longer logged as decisions; chunk sizes 7/10/50 give identical decisions (tested). The worker path has no
+      early provisional switch-on (the worker answers once, at the end of its forecast).
+  - **Third review 2026-11-25 (b): APPROVED**, no blockers or majors. Seven minors, and what was done:
+    1. With a 0.35 s coil response (the W7-X view's fallback path) guards took the whole frame budget, so a release
+       landed at the very end of its 3 s look-ahead (step 8,143 against a bound of 8,000; item 2a was worse than
+       recorded). **Done:** a guard may take at most `GUARD_SHARE` = 2/3 of a frame's budget while a full decision
+       runs; the release test now runs at 0 s and 0.35 s response (fails at 8,143 without the cap).
+    2. The worker path's stale check, `onerror` and lag fallbacks had no test. **Done:** fake-worker tests for a
+       stale full answer (dropped, asked again once, about the controls now in force), a worker error and an answer
+       past the 1 s tolerance (both switch to the frame-paced path, which then decides). Each fails when its check is
+       removed (mutation-checked).
+    3. A due decision was skipped while `next` still advanced when both jobs ran. **Done:** it stays due.
+    4. A stale guard kept first claim on the budget. **Done:** dropped like a stale full decision.
+    5. **Open (negligible):** a reset within ~1,000 steps of a worker request has no epoch counter; an answer
+       for the pre-reset state could be applied once playback passes the request step again with the same controls.
+    6. The hand-switch test passed trivially with no later decision. **Done:** it asserts one follows.
+    7. **Open:** two workers each build the `heatedEdge` model; a slow first answer past the tolerance switches both
+       to the frame-paced path (same risk as with one worker, twice as likely).
+    - Full renderer suite natively: 49 files, 1,737 tests pass; `tsc` clean. Nothing committed. `verify.sh` not run
+      (needs WSL, D-020), so the branch cannot go to `main` yet.
+  - Minor: worker answers up to 1,000 steps stale are applied (a reset while pending no longer drops the worker,
+    third review); the loopPolicy comments misstate the model ("nothing to carry" is a policy choice; peaks are sampled every
+    50 steps); a hand-forced "Demo transfer" is logged as a loop decision; release is all-or-nothing; the headless
+    `adoptions <= 1` also passes with 0.
+
+## Earlier state (2026-11-22, historical)
 
 The follow-up to merge `628d997` is on local branch `handover-verification`. The independent reviewer found
 that the merge dropped Advance plasma, Check transport, Budget, the global replay/live indicator and the decision

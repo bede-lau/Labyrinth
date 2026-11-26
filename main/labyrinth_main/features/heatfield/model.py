@@ -1,7 +1,11 @@
-"""Illustrative edge heat model, version 1: the Python reference of tasks/10-heat-field/MODEL.md (D-027 §3, §5).
+"""Edge heat model, version 3: the Python reference of tasks/10-heat-field/MODEL.md (D-027 §3, §5; D-031; D-032).
 
-This is NOT a simulation of W7-X. Its parameters are chosen for illustration and not fitted to measurements, its four
-diverters are schematic and its control coils are not a validated coil response. Every output is provenance `model`.
+This is NOT a simulation of W7-X. The scrape-off layer at each divertor is the textbook two-point model (Spitzer
+parallel conduction, sheath, pressure balance), fed by a fixed heating power, so the power that reaches the targets
+is exactly the heating power less the radiated fraction (energy is conserved by construction). The physics inputs are
+W7-X orders of magnitude; the strip width and coil-sweep parameters are illustrative; nothing is fitted to
+measurements; the four diverters are schematic and the control coils are not a validated coil response. Every output
+is provenance `model`.
 
 The renderer's TypeScript port reads every input from `artifacts/heatfield.json` and must reproduce the golden
 checkpoints written here to `relativeTolerance`. So this module consumes its inputs exactly as they are written to the
@@ -9,9 +13,10 @@ artifact (`inputs_from_artifact` on the 7-significant-figure dict, see `artifact
 
 * grid: theta_i = 2*pi*i/nTheta, phi_j = 2*pi*j/nPhi, dtheta = 2*pi/nTheta, dphi = 2*pi/nPhi; arrays have shape
   (nPhi, nTheta), so element [j, i] is cell c = j*nTheta + i; every index is periodic;
-* inputs: B_s = surfaces[-1].B (LCFS |B|, T), iota = surfaces[-1].iota, phi_k = diverters.items[k].phi,
-  theta_d = diverters.thetaCentre, every parameter = model.parameters[name].value;
-* one step n -> n+1 (t_n = n*dt) evaluates steps 1-12 with every right-hand side at the state of t_n;
+* inputs: B_s = surfaces[-1].B (LCFS |B|, T), phi_k = diverters.items[k].phi, theta_d = diverters.thetaCentre, every
+  parameter = model.parameters[name].value;
+* one step n -> n+1 (t_n = n*dt) updates the tiles from the loads at t_n; the LCFS temperature of a state is the
+  quasi-steady two-point solution at its own time with the coils that drove the step into it (coils off at step 0);
 * the coils of step n are those of the coil-schedule entry with the largest fromStep <= n (they drive step n -> n+1
   and the diagnostics of the state after n steps).
 """
@@ -26,37 +31,71 @@ import numpy as np
 TWO_PI = 2 * math.pi
 N_DIVERTERS = 4
 
-# name: (value, unit, symbol, description). MODEL.md's table, except the tuned tileGain (MODEL.md "Tuning": only
-# heatFluxScale and tileGain may change; MODEL_MD_START holds the starting values). Tile temperatures depend only on the
-# product K*W_q; heatFluxScale keeps 0.2 (peak heat flux ~7-8 MW/m^2) and K = 165 puts the 1200 degC limit between the
-# coils-off diverters at 3 s (D1, D4 ~1320 degC above it; D2, D3 ~1110 degC below it), all coils on stay below (~575 degC).
+# name: (value, unit, symbol, description). MODEL.md's table (version 3, D-032). The operating point (Pheat 6 MW,
+# fRad 0.3, wettedArea 0.1 m^2) was chosen so that, with every coil off, the two diverters whose strike lines sit at
+# the higher |B| (D1, D4: field compression ~1.23) pass the tile limit and the other two (D2, D3: ~1.02) do not. The
+# four schematic diverters carry the power W7-X's ten units share. Spitzer's exponent and the fixed iteration count of
+# the two-point solve are data, so that neither implementation holds a numeric constant of the model.
 PARAMETERS: dict[str, tuple[float, str, str, str]] = {
-    "Tped": (1.0, "keV", "T_ped", "edge temperature the core supplies (no sinks)"),
-    "Tcore0": (3.0, "keV", "T_0", "core temperature on axis (cross-sections only)"),
+    "Tcore0": (3.381445, "keV", "T_0", "core temperature on axis (cross-sections only), from energy confinement: the "
+               "ISS04 stellarator scaling at P_heat gives the stored energy, hence the mean and axis temperature"),
+    "majorRadius": (5.5, "m", "R", "W7-X major radius"),
+    "minorRadius": (0.53, "m", "a", "W7-X effective minor radius"),
+    "coreDensity": (6.0e19, "m⁻³", "n̄", "line-averaged density (flat profile assumed; W7-X high-performance range)"),
+    "densityUnit": (1.0e19, "m⁻³", "n_unit", "density unit of the ISS04 scaling (unit conversion)"),
+    "iss04C": (0.134, "s", "C", "ISS04 coefficient: τ_E = C a^α_a R^α_R P^α_P (n̄/n_unit)^α_n B^α_B ι_2/3^α_ι"),
+    "iss04A": (2.28, "–", "α_a", "ISS04 exponent of the minor radius (m)"),
+    "iss04R": (0.64, "–", "α_R", "ISS04 exponent of the major radius (m)"),
+    "iss04P": (-0.61, "–", "α_P", "ISS04 exponent of the heating power (MW)"),
+    "iss04N": (0.54, "–", "α_n", "ISS04 exponent of the line-averaged density (10¹⁹ m⁻³)"),
+    "iss04B": (0.84, "–", "α_B", "ISS04 exponent of the field (T)"),
+    "iss04Iota": (0.41, "–", "α_ι", "ISS04 exponent of the rotational transform at two-thirds of the minor radius"),
     "rhoBlend": (0.7, "–", "ρ_b", "inside ρ_b the cross-section shows the core profile only"),
-    "tauE": (0.5, "s", "τ_E", "relaxation time towards T_ped"),
-    "Dpar": (2.5, "rad²/s", "D_∥", "diffusivity along the field line (per radian of φ)"),
-    "Dperp0": (0.2, "rad²/s", "D_⊥0", "cross-field (θ) diffusivity at B = B_0"),
     "B0": (2.5, "T", "B_0", "reference field"),
-    "tauDiv": (0.02, "s", "τ_div", "exhaust time at the centre of a diverter footprint"),
-    "Ttarget": (0.01, "keV", "T_t", "plasma temperature at the target"),
-    "sigmaPhi": (0.06, "rad", "σ_φ", "footprint width in φ"),
-    "sigmaTheta": (0.12, "rad", "σ_θ", "footprint width in θ"),
-    "sweepAmplitude": (0.30, "rad", "A_s", "strike-line excursion when a coil is on"),
-    "sweepFrequency": (2.0, "Hz", "f", "coil (sweep) frequency"),
-    "epsilon": (0.03, "–", "ε", "relative |B| perturbation of one coil at its centre"),
-    "sigmaCoilPhi": (0.20, "rad", "σ_cφ", "coil envelope width in φ"),
-    "sigmaCoilTheta": (0.60, "rad", "σ_cθ", "coil envelope width in θ"),
-    "heatFluxScale": (0.2, "MW m⁻² per keV s⁻¹", "W_q", "converts exhaust rate into target heat flux"),
-    "tileGain": (165.0, "°C per MW m⁻²", "K", "steady tile temperature rise per unit heat flux"),
-    "Tcool": (30.0, "°C", "T_cool", "coolant / cold tile temperature"),
-    "tauTile": (1.0, "s", "τ_tile", "tile thermal time constant"),
-    "tileLimit": (1200.0, "°C", "T_lim", "illustrative tile surface limit"),
+    "sigmaTheta": (0.12, "rad", "σ_θ", "width in θ of the target strip at B_0 (illustrative)"),
+    "sweepAmplitude": (0.30, "rad", "A_s", "strike-line excursion when a coil is on (illustrative)"),
+    "sweepFrequency": (2.0, "Hz", "f", "coil (sweep) frequency (illustrative)"),
+    "epsilon": (0.03, "–", "ε", "relative |B| perturbation of one coil at its centre (illustrative)"),
+    "sigmaCoilPhi": (0.20, "rad", "σ_cφ", "coil envelope width in φ (illustrative)"),
+    "sigmaCoilTheta": (0.60, "rad", "σ_cθ", "coil envelope width in θ (illustrative)"),
+    "shareShift": (0.3, "–", "η", "a coil fully on lowers its divertor's power weight by 1 − η (its static field moves "
+                  "the island); the shares are renormalised so the total is unchanged: D1 alone sheds ~24 % to the "
+                  "others, every coil on moves nothing (illustrative, no validated coil response)"),
+    "Pheat": (7.5, "MW", "P_heat", "heating power crossing the LCFS (W7-X: ECRH up to ~8 MW, more with NBI)"),
+    "fRad": (0.3, "–", "f_rad", "fraction of the heating power radiated before it reaches the targets"),
+    "wettedArea": (0.1, "m²", "A_wet", "effective wetted target area per divertor at B_0"),
+    "connectionLength": (200.0, "m", "L_c", "parallel connection length, upstream to target (island divertor)"),
+    "kappa0": (6.324555e13, "W m⁻¹ keV⁻⁷ᐟ²", "κ_0", "Spitzer parallel conductivity coefficient (2000 W m⁻¹ eV⁻⁷ᐟ²)"),
+    "conductionExponent": (3.5, "–", "ν", "Spitzer exponent: q_∥ L_c = (κ_0/ν)(T_u^ν − T_t^ν), ν = 7/2"),
+    "twoPointIterations": (20.0, "–", "N_2pt", "fixed iteration count of the two-point solve"),
+    "sheathGamma": (7.0, "–", "γ", "sheath heat-transmission coefficient"),
+    "nSep": (4.0e19, "m⁻³", "n_u", "upstream (separatrix) density"),
+    "ionMass": (1.0, "u", "m_i", "ion mass (hydrogen plasma)"),
+    "incidence": (0.03490659, "rad", "α", "field-line incidence angle on the target (2°)"),
+    "keV": (1.602176634e-16, "J", "keV", "one keV in joules (unit conversion)"),
+    "amu": (1.66053906660e-27, "kg", "u", "atomic mass unit (unit conversion)"),
+    "MW": (1.0e6, "W", "MW", "one megawatt in watts (unit conversion)"),
+    "tileThickness": (0.006, "m", "d", "CFC armour thickness (W7-X target elements: NB31 tiles, ~6 mm machined)"),
+    "tileCells": (6.0, "–", "N_z", "conduction cells through the tile thickness"),
+    "tileDensity": (1900.0, "kg m⁻³", "ρ", "CFC NB31 density"),
+    "kRef": (350.0, "W m⁻¹ K⁻¹", "k_ref", "CFC conductivity through the thickness at T_ref (approximate NB31 fit)"),
+    "kScale": (700.0, "°C", "T_k", "k(T) = k_ref/(1 + (T − T_ref)/T_k): ~170 W m⁻¹ K⁻¹ at 800 °C (approximate fit)"),
+    "cpRef": (710.0, "J kg⁻¹ K⁻¹", "c_ref", "graphite specific heat at T_ref"),
+    "cpHigh": (2000.0, "J kg⁻¹ K⁻¹", "c_∞", "high-temperature limit of the graphite specific heat"),
+    "cpScale": (670.0, "°C", "T_c", "c(T) = c_∞ − (c_∞ − c_ref)·exp(−(T − T_ref)/T_c): ~1600 at 800 °C (approximate fit)"),
+    "Tref": (20.0, "°C", "T_ref", "reference temperature of the material fits"),
+    "sinkResistance": (4.5e-5, "m² K W⁻¹", "R_sink",
+                       "effective lumped resistance of the Cu interlayer, CuCrZr heat sink and water film per unit area (not "
+                       "calibrated; it puts the CFC/Cu interface at ~1000 °C at 22 MW m⁻², consistent with element tests "
+                       "in which the interlayer approached its ~1100 °C melting point above 22 MW m⁻²)"),
+    "Tcool": (30.0, "°C", "T_cool", "cooling-water temperature (W7-X design inlet 30 °C)"),
+    "tileLimit": (1200.0, "°C", "T_lim", "tile surface temperature limit (operational, illustrative)"),
     "dt": (0.001, "s", "Δt", "time step"),
     "spinup": (3.0, "s", "t_spin", "the view starts from the state after this time with every coil off"),
 }
-MODEL_MD_START = {"heatFluxScale": 0.2, "tileGain": 100.0}  # MODEL.md's starting values of the two tunable parameters
-TUNED = ("heatFluxScale", "tileGain")
+MODEL_MD_START = {"Pheat": 7.5, "wettedArea": 0.1}  # MODEL.md's values of the two operating-point parameters
+TUNED = ("Pheat", "wettedArea")
+TUNING_RANGES = {"Pheat": (2.0, 8.0), "wettedArea": (0.1, 0.2)}
 
 PROBES: tuple[tuple[int, int], ...] = ((12, 0), (12, 18), (12, 36), (12, 54), (0, 0), (24, 9), (36, 27), (6, 45))
 RELATIVE_TOLERANCE = 2e-6
@@ -101,6 +140,7 @@ class Inputs:
     theta_d: float
     phi_k: tuple[float, ...]
     probes: tuple[tuple[int, int], ...] = PROBES
+    iota23: float = float("nan")  # rotational transform at rho = 2/3 (linear between the written surfaces)
 
     def with_params(self, **changes: float) -> Inputs:
         return replace(self, params={**self.params, **changes})
@@ -130,20 +170,31 @@ def inputs_from_artifact(art: Mapping) -> Inputs:
         theta_d=float(div["thetaCentre"]),
         phi_k=tuple(float(d["phi"]) for d in div["items"]),
         probes=tuple((int(i), int(j)) for i, j in art["model"]["probes"]),
+        iota23=iota_at(art["surfaces"], 2 / 3),
     )
+
+
+def iota_at(surfaces: Sequence[Mapping], rho: float) -> float:
+    """Rotational transform at rho, linear between the two written surfaces around it."""
+    for lo, hi in zip(surfaces, surfaces[1:], strict=False):
+        if lo["rho"] <= rho <= hi["rho"]:
+            w = (rho - lo["rho"]) / (hi["rho"] - lo["rho"])
+            return float((1 - w) * lo["iota"] + w * hi["iota"])
+    raise ValueError(f"no surfaces around rho {rho}")
 
 
 @dataclass(frozen=True)
 class State:
     n: int  # steps taken from the initial condition; t_n = n*dt
     T: np.ndarray  # (nPhi, nTheta), keV
-    tiles: np.ndarray  # (4, nTheta), degC: target strip of diverter k along theta, at phi_k
+    tiles: np.ndarray  # (4, nTheta), degC: surface temperature of the target strip of diverter k along theta, at phi_k
+    slab: np.ndarray  # (4, nTheta, N_z), degC: cell temperatures through the tile thickness (index 0 at the surface)
 
 
 @dataclass
 class Model:
     inp: Inputs
-    _periodic: dict = field(init=False, repr=False)
+    _cache: dict = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         inp, p = self.inp, self.inp.params
@@ -158,26 +209,14 @@ class Model:
         # Step 2 (time independent): coil envelope h_k[c] = g(wrap(phi_j - phi_k), s_cphi) * g(wrap(theta_i - theta_d), s_ctheta)
         g_theta_d = gauss(wrap(self.theta - inp.theta_d), p["sigmaCoilTheta"])
         self.h = np.stack([gauss(wrap(self.phi - pk), p["sigmaCoilPhi"])[:, None] * g_theta_d[None, :] for pk in inp.phi_k])
-        # Step 5, phi factor (time independent): g(wrap(phi_j - phi_k), sigma_phi)
-        self.g_phi = np.stack([gauss(wrap(self.phi - pk), p["sigmaPhi"]) for pk in inp.phi_k])
-        # Step 7: field-line pitch in cells, sigma = iota*dphi/dtheta, p = floor(sigma), w = sigma - p
-        sigma = inp.iota * self.dphi / self.dtheta
-        self.shift = math.floor(sigma)
-        self.w = sigma - self.shift
-        # Step 10: strip-load normalisation dphi/(sqrt(2 pi) sigma_phi)
-        self.strip_factor = self.dphi / (math.sqrt(TWO_PI) * p["sigmaPhi"])
+        # Step 6: toroidal sectors s_k(phi_j) = G_k / sum_m G_m, G_k = g(wrap(phi_j - phi_k), pi/nDiv)
+        big = np.stack([gauss(wrap(self.phi - pk), math.pi / N_DIVERTERS) for pk in inp.phi_k])
+        self.sector = big / big.sum(axis=0)[None, :]
+        # Step 7: the divertor planes j_k = round(phi_k/dphi) mod nPhi
+        self.j_k = tuple(int(round(pk / self.dphi)) % n_p for pk in inp.phi_k)
+        self._cache = {}
 
-        def take(dj: int, di: int) -> np.ndarray:
-            """Flat indices of T[(j + dj) mod nPhi, (i + di) mod nTheta] for every cell [j, i]."""
-            j = (np.arange(n_p)[:, None] + dj) % n_p
-            i = (np.arange(n_t)[None, :] + di) % n_t
-            return j * n_t + i
-
-        s = self.shift
-        self._periodic = {"plus0": take(1, s), "plus1": take(1, s + 1), "minus0": take(-1, -s), "minus1": take(-1, -s - 1),
-                          "east": take(0, 1), "west": take(0, -1)}
-
-    # ---- steps 1-5, 10: coils, field, strike lines, footprints, heat flux ------------------------------------------
+    # ---- steps 1-4: coils, field, strike lines --------------------------------------------------------------------
     def coil_drive(self, coils: Sequence[int], t: float) -> np.ndarray:
         """Step 1: a_k = c_k * cos(2 pi f t)."""
         c = math.cos(TWO_PI * self.inp.params["sweepFrequency"] * t)
@@ -194,60 +233,166 @@ class Model:
         """Step 4: theta_s,k = theta_d + A_s * a_k."""
         return self.inp.theta_d + self.inp.params["sweepAmplitude"] * a
 
-    def footprints(self, a: np.ndarray) -> np.ndarray:
-        """Step 5: g_k[c] = g(wrap(phi_j - phi_k), sigma_phi) * g(wrap(theta_i - theta_s,k), sigma_theta); (4, nPhi, nTheta)."""
-        ts = self.strike_lines(a)
-        g_theta = np.stack([gauss(wrap(self.theta - tk), self.inp.params["sigmaTheta"]) for tk in ts])
-        return self.g_phi[:, :, None] * g_theta[:, None, :]
-
-    def strip_loads(self, T: np.ndarray, B: np.ndarray, g: np.ndarray) -> np.ndarray:
-        """Step 10: q_k = W_q (B/B_0) g_k (T - T_t)/tau_div (MW/m^2); Q_k[i] = sum_j q_k[i, j] dphi/(sqrt(2 pi) sigma_phi)."""
+    # ---- steps 6-10: power, compression, target load, two-point model --------------------------------------------
+    def power_shares(self, coils: Sequence[float] = (0,) * N_DIVERTERS) -> np.ndarray:
+        """Step 6: u_k = mean_c(s_k[c]); a coil on lowers its divertor's weight by 1 - eta (renormalised below),
+        f_k = 1 - eta c_k, P_k = P_heat (1 - f_rad) u_k f_k (sum_m u_m) / (sum_m u_m f_m) (MW), uniform heating.
+        The sum over k is P_heat (1 - f_rad) whatever the coils."""
         p = self.inp.params
-        q = p["heatFluxScale"] * (B / p["B0"])[None, :, :] * g * ((T - p["Ttarget"]) / p["tauDiv"])[None, :, :]
-        return q.sum(axis=1) * self.strip_factor
+        u = [float(self.sector[k].mean()) for k in range(N_DIVERTERS)]
+        f = [1 - p["shareShift"] * float(coils[k]) for k in range(N_DIVERTERS)]
+        total = u[0]
+        weighted = u[0] * f[0]
+        for k in range(1, N_DIVERTERS):
+            total = total + u[k]
+            weighted = weighted + u[k] * f[k]
+        if not weighted > 0:  # no heating reaches the edge: nothing to share
+            return np.zeros(N_DIVERTERS)
+        return np.array([p["Pheat"] * (1 - p["fRad"]) * u[k] * f[k] * total / weighted for k in range(N_DIVERTERS)])
+
+    def compression(self, B: np.ndarray, a: np.ndarray) -> np.ndarray:
+        """Step 7: b_k = |B| at the strike line on plane j_k (linear in theta between grid nodes) / B_0."""
+        ts = self.strike_lines(a)
+        out = []
+        for k in range(N_DIVERTERS):
+            x = ts[k] / self.dtheta
+            i0 = math.floor(x)
+            fr = x - i0
+            row = B[self.j_k[k]]
+            out.append(((1 - fr) * row[i0 % self.inp.n_theta] + fr * row[(i0 + 1) % self.inp.n_theta]) / self.inp.params["B0"])
+        return np.array(out)
+
+    def target_loads(self, shares: np.ndarray, b: np.ndarray) -> np.ndarray:
+        """Step 8: peak target heat flux q_t,k = P_k b_k / A_wet (MW/m^2)."""
+        return shares * b / self.inp.params["wettedArea"]
+
+    def strip_loads(self, q_t: np.ndarray, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+        """Step 9: Q_k[i] = q_t,k * g(wrap(theta_i - theta_s,k), sigma_theta / b_k) (MW/m^2); (4, nTheta). The flux tube
+        narrows as 1/B, so the strip deposits exactly P_k: sum_i Q_k[i] dtheta * A_wet / (sqrt(2 pi) sigma_theta)."""
+        ts = self.strike_lines(a)
+        s = self.inp.params["sigmaTheta"]
+        return np.stack([q_t[k] * gauss(wrap(self.theta - ts[k]), s / b[k]) for k in range(N_DIVERTERS)])
+
+    def two_point(self, q_t: float) -> tuple[float, float]:
+        """Step 10: (T_u, T_t) in keV from the peak target load q_t (MW/m^2): q_par = q_t MW / sin(alpha),
+        X = nu q_par L_c / kappa_0, T_u = X^(1/nu), then N_2pt times: c = 2 q_par / (gamma n_u keV T_u),
+        T_t = m_i amu c^2 / (2 keV), T_u = (T_t^nu + X)^(1/nu). No power, no plasma: (0, 0)."""
+        p = self.inp.params
+        q_par = q_t * p["MW"] / math.sin(p["incidence"])
+        if not q_par > 0:
+            return 0.0, 0.0
+        nu = p["conductionExponent"]
+        x = nu * q_par * p["connectionLength"] / p["kappa0"]
+        t_u = x ** (1 / nu)
+        t_t = 0.0
+        for _ in range(int(p["twoPointIterations"])):
+            c = 2 * q_par / (p["sheathGamma"] * p["nSep"] * p["keV"] * t_u)
+            t_t = p["ionMass"] * p["amu"] * c * c / (2 * p["keV"])
+            t_u = (t_t ** nu + x) ** (1 / nu)
+        return t_u, t_t
+
+    def solve(self, n: int, coils: Sequence[int]) -> dict:
+        """Steps 1-10 at t_n for these coils (cached per (n, coils))."""
+        key = (n, tuple(float(c) for c in coils))
+        hit = self._cache.get(key)
+        if hit is not None:
+            return hit
+        a = self.coil_drive(coils, self.time(n))
+        B = self.field(a)
+        b = self.compression(B, a)
+        q_t = self.target_loads(self.power_shares(coils), b)
+        tp = [self.two_point(float(q)) for q in q_t]
+        out = {"a": a, "B": B, "b": b, "q_t": q_t, "Tu": np.array([u for u, _ in tp]), "Tt": np.array([t for _, t in tp])}
+        if len(self._cache) > 64:
+            self._cache.clear()
+        self._cache[key] = out
+        return out
+
+    def lcfs_temperature(self, n: int, coils: Sequence[int]) -> np.ndarray:
+        """Step 12 (version 7): the LCFS sits at its plane's upstream temperature, T[c] = T_u(phi_j) =
+        sum_k s_k(phi_j) T_u,k. The island divertor's targets lie outside the LCFS: the two-point drop to T_t is in the
+        scrape-off layer, at the targets, not on this surface."""
+        sol = self.solve(n, coils)
+        return (self.sector * sol["Tu"][:, None]).sum(axis=0)[:, None] * np.ones((1, self.inp.n_theta))
+
+    # ---- core temperature from energy confinement (cross-sections) ----------------------------------------------------
+    def confinement(self) -> dict:
+        """ISS04: tau_E = C a^aa R^aR P^aP (n/n_unit)^an B^aB iota_2/3^ai (s); stored energy W = tau_E P_heat MW (J);
+        with a flat density and T_e = T_i, W = 3 n <T> keV V, V = 2 pi^2 R a^2, so <T> (keV); with the profile
+        T = T_e + (T_0 - T_e)(1 - rho^2)^2 (volume mean T_e + (T_0 - T_e)/3) and T_e the mean upstream temperature,
+        T_0 = T_e + 3 (<T> - T_e)."""
+        p = self.inp.params
+        tau = (p["iss04C"] * p["minorRadius"] ** p["iss04A"] * p["majorRadius"] ** p["iss04R"] * p["Pheat"] ** p["iss04P"]
+               * (p["coreDensity"] / p["densityUnit"]) ** p["iss04N"] * p["B0"] ** p["iss04B"] * self.inp.iota23 ** p["iss04Iota"])
+        volume = 2 * math.pi ** 2 * p["majorRadius"] * p["minorRadius"] ** 2
+        energy = tau * p["Pheat"] * p["MW"]
+        mean_t = energy / (3 * p["coreDensity"] * volume * p["keV"])
+        sol = self.solve(0, (0,) * N_DIVERTERS)
+        t_e = float((self.sector * sol["Tu"][:, None]).sum(axis=0).mean())
+        return {"tauE": tau, "volume": volume, "energy": energy, "meanT": mean_t, "edgeT": t_e,
+                "axisT": t_e + 3 * (mean_t - t_e)}
 
     # ---- the step ---------------------------------------------------------------------------------------------------
     def initial_state(self) -> State:
         p = self.inp.params
-        return State(0, np.full((self.inp.n_phi, self.inp.n_theta), p["Tped"]),
-                     np.full((N_DIVERTERS, self.inp.n_theta), p["Tcool"]))
+        off = (0,) * N_DIVERTERS
+        n_z = int(p["tileCells"])
+        return State(0, self.lcfs_temperature(0, off), np.full((N_DIVERTERS, self.inp.n_theta), p["Tcool"]),
+                     np.full((N_DIVERTERS, self.inp.n_theta, n_z), p["Tcool"]))
 
     def time(self, n: int) -> float:
         return n * self.inp.params["dt"]
 
     def step(self, st: State, coils: Sequence[int]) -> State:
-        """One explicit step n -> n+1; every right-hand side uses the state at t_n."""
+        """One step n -> n+1: tiles from the loads at t_n (step 11); T of the new state at t_(n+1) (step 12)."""
+        sol = self.solve(st.n, coils)
+        loads = self.strip_loads(sol["q_t"], sol["a"], sol["b"])
+        slab, tiles = self.conduct(st.slab, loads)  # 11
+        return State(st.n + 1, self.lcfs_temperature(st.n + 1, coils), tiles, slab)
+
+    # ---- step 11: the tiles ---------------------------------------------------------------------------------------
+    def conductivity(self, T):
+        """k(T) = k_ref / (1 + (T - T_ref)/T_k) (W m^-1 K^-1)."""
         p = self.inp.params
-        T = st.T
-        flat = T.ravel()
-        t = self.time(st.n)
-        a = self.coil_drive(coils, t)  # 1
-        B = self.field(a)  # 2, 3
-        g = self.footprints(a)  # 4, 5
-        d_perp = p["Dperp0"] * (p["B0"] / B) ** 2  # 6
-        w, ix = self.w, self._periodic
-        t_plus = (1 - w) * flat[ix["plus0"]] + w * flat[ix["plus1"]]  # 7
-        t_minus = (1 - w) * flat[ix["minus0"]] + w * flat[ix["minus1"]]
-        par = p["Dpar"] * (t_plus - 2 * T + t_minus) / self.dphi**2
-        dflat = d_perp.ravel()
-        d_plus = (d_perp + dflat[ix["east"]]) / 2  # 8
-        d_minus = (d_perp + dflat[ix["west"]]) / 2
-        cross = (d_plus * (flat[ix["east"]] - T) - d_minus * (T - flat[ix["west"]])) / self.dtheta**2
-        src = (p["Tped"] - T) / p["tauE"]  # 9
-        excess = (T - p["Ttarget"]) / p["tauDiv"]
-        sink = g[0] * excess
-        for k in range(1, N_DIVERTERS):
-            sink = sink + g[k] * excess
-        loads = self.strip_loads(T, B, g)  # 10
-        tiles = st.tiles + p["dt"] * (p["Tcool"] + p["tileGain"] * loads - st.tiles) / p["tauTile"]  # 11
-        T_new = T + p["dt"] * (par + cross + src - sink)  # 12
-        return State(st.n + 1, T_new, tiles)
+        return p["kRef"] / (1 + (T - p["Tref"]) / p["kScale"])
+
+    def heat_capacity(self, T):
+        """c(T) = c_inf - (c_inf - c_ref) exp(-(T - T_ref)/T_c) (J kg^-1 K^-1)."""
+        p = self.inp.params
+        return p["cpHigh"] - (p["cpHigh"] - p["cpRef"]) * np.exp(-(T - p["Tref"]) / p["cpScale"])
+
+    def conduct(self, slab: np.ndarray, loads: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Step 11: one explicit conduction step through the tile thickness, cell-centred, dz = d/N_z. The load
+        q = Q MW (W/m^2) enters cell 0; neighbours exchange G (T_j - T_j+1), G = 2 k_j k_j+1 / (dz (k_j + k_j+1));
+        the last cell loses (T - T_cool) / (dz/(2k) + R_sink) to the water; each cell rho c(T) dz dT/dt = net.
+        Returns the new slab and the surface temperature T_0 + q dz / (2 k(T_0)) of the new slab."""
+        p = self.inp.params
+        dz = p["tileThickness"] / p["tileCells"]
+        q = loads * p["MW"]
+        k = self.conductivity(slab)
+        g = 2 * k[..., :-1] * k[..., 1:] / (dz * (k[..., :-1] + k[..., 1:]))
+        flux = g * (slab[..., :-1] - slab[..., 1:])
+        sink = (slab[..., -1] - p["Tcool"]) / (dz / (2 * k[..., -1]) + p["sinkResistance"])
+        net = np.zeros_like(slab)
+        net[..., 0] = q
+        net[..., :-1] = net[..., :-1] - flux
+        net[..., 1:] = net[..., 1:] + flux
+        net[..., -1] = net[..., -1] - sink
+        new = slab + p["dt"] * net / (p["tileDensity"] * self.heat_capacity(slab) * dz)
+        surface = new[..., 0] + q * dz / (2 * self.conductivity(new[..., 0]))
+        return new, surface
+
+    def sink_flux(self, slab: np.ndarray) -> np.ndarray:
+        """Heat flux into the water (W/m^2) per strip cell."""
+        p = self.inp.params
+        dz = p["tileThickness"] / p["tileCells"]
+        return (slab[..., -1] - p["Tcool"]) / (dz / (2 * self.conductivity(slab[..., -1])) + p["sinkResistance"])
 
     # ---- diagnostics ------------------------------------------------------------------------------------------------
     def heat_flux_loads(self, st: State, coils: Sequence[int]) -> np.ndarray:
-        """Q_k[i] from the state and the coils at its time t_n (steps 1-5, 10); (4, nTheta)."""
-        a = self.coil_drive(coils, self.time(st.n))
-        return self.strip_loads(st.T, self.field(a), self.footprints(a))
+        """Q_k[i] from the coils at the state's time t_n (steps 1-9); (4, nTheta)."""
+        sol = self.solve(st.n, coils)
+        return self.strip_loads(sol["q_t"], sol["a"], sol["b"])
 
     def diagnostics(self, st: State, coils: Sequence[int]) -> dict:
         return {
@@ -261,25 +406,46 @@ class Model:
 
     # ---- stability ---------------------------------------------------------------------------------------------------
     def stability_number(self) -> float:
-        """dt*(2 D_par/dphi^2 + 2 max D_perp/dtheta^2 + 1/tau_E + max sum_k g_k/tau_div), the maximum over every coil state:
-        |B| is lowest where every a_k = -1, i.e. B_s*(1 - eps*sum_k h_k), and the theta factor of g_k is at most 1."""
+        """The explicit conduction step's number: dt * (largest total outflow conductance of a cell) / (rho c dz),
+        with k and c at T_ref (k falls and c rises with temperature, so above T_ref this bounds every cell). An inner
+        cell has 2k/dz, the back cell k/dz + 1/(dz/(2k) + R_sink); the update is monotone while the number is <= 1."""
+        p = self.inp.params
+        dz = p["tileThickness"] / p["tileCells"]
+        inner = 2 * p["kRef"] / dz
+        back = p["kRef"] / dz + 1 / (dz / (2 * p["kRef"]) + p["sinkResistance"])
+        return p["dt"] * max(inner, back) / (p["tileDensity"] * p["cpRef"] * dz)
+
+    def check_stability(self) -> float:
+        """The tile update is monotone when its number is <= 1; the coil perturbation must keep |B| positive."""
         p = self.inp.params
         b_min = self.b_s * (1.0 - p["epsilon"] * self.h.sum(axis=0))
         if not np.all(b_min > 0):
             raise ValueError("the coil perturbation drives |B| to zero")
-        d_perp_max = float((p["Dperp0"] * (p["B0"] / b_min) ** 2).max())
-        g_max = float(self.g_phi.sum(axis=0).max())
-        return p["dt"] * (2 * p["Dpar"] / self.dphi**2 + 2 * d_perp_max / self.dtheta**2 + 1 / p["tauE"] + g_max / p["tauDiv"])
-
-    def check_stability(self) -> float:
-        """MODEL.md: every update weight is non-negative (monotone step). Raises if the parameters break it."""
         number = self.stability_number()
-        if not number <= 1:
-            raise ValueError(f"unstable parameters: stability number {number:.4g} > 1 (MODEL.md)")
-        if not 0 < self.inp.params["dt"] <= self.inp.params["tauTile"]:
-            raise ValueError("the tile update needs 0 < dt <= tauTile")
-        if not 0 <= self.w < 1:
-            raise ValueError("interpolation weight outside [0, 1)")
+        if not 0 < number <= 1:
+            raise ValueError(f"unstable parameters: conduction number {number:.4g} not in (0, 1] (MODEL.md)")
+        if not (p["Tcool"] >= p["Tref"] and p["tileCells"] >= 2 and float(p["tileCells"]).is_integer()):
+            raise ValueError("the tiles need T_cool >= T_ref (the stability bound) and a whole number (>= 2) of cells")
+        if not 0 <= p["shareShift"] < 1:
+            raise ValueError("shareShift must lie in [0, 1): a coil cannot shed all of its divertor's power")
+        if not p["sinkResistance"] >= 0:
+            raise ValueError("the heat-sink resistance must not be negative")
+        # The fixed N_2pt iterations converge while the layer is conduction-limited (the map's slope -2(T_t/T_u)^nu
+        # stays small); far beyond, they oscillate. Check the result at the operating loads, every coil off and every
+        # coil on: the sheath with pressure balance must hold, q_par = gamma n_t keV T_t c_s(T_t), to 1e-6.
+        for coils in ((0,) * N_DIVERTERS, (1,) * N_DIVERTERS):
+            sol = self.solve(0, coils)
+            for q_t, t_u, t_t in zip(sol["q_t"], sol["Tu"], sol["Tt"], strict=True):
+                if not t_u > 0:
+                    continue
+                q_par = q_t * p["MW"] / math.sin(p["incidence"])
+                c_s = math.sqrt(2 * t_t * p["keV"] / (p["ionMass"] * p["amu"]))
+                sheath = p["sheathGamma"] * (p["nSep"] * t_u / (2 * t_t)) * p["keV"] * t_t * c_s
+                if not abs(sheath / q_par - 1) < 1e-6:
+                    raise ValueError("two-point iteration not converged at the operating loads (sheath residual)")
+        axis = self.confinement()["axisT"]
+        if not abs(axis / p["Tcore0"] - 1) < 1e-6:
+            raise ValueError(f"Tcore0 {p['Tcore0']:.7g} keV is not the ISS04 axis temperature {axis:.7g} keV (MODEL.md)")
         return number
 
 

@@ -46,7 +46,8 @@ export function ColorBar({ kind, range, theme, title, unit, decimals, status, no
           <span>
             {f(lo)} · {weak}
           </span>
-          <span>{f((lo + hi) / 2)}</span>
+          {/* Temperature is on a logarithmic scale: its middle is the geometric mean. */}
+          <span>{f(kind === 'temperature' && lo > 0 ? Math.sqrt(lo * hi) : (lo + hi) / 2)}</span>
           <span>
             {strong} · {f(hi)}
           </span>

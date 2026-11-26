@@ -6,10 +6,9 @@ import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { formatNumber, heatColor, themes, trimNumber } from '../../design';
-import { deltaE2000, hexToLab } from '../../design/color';
 import { declared, parseCss, rulesFor } from '../../design/cssRules';
 import { CHART_INTERVAL_MS, FrameTicker, UI_INTERVAL_MS } from './playback';
-import { rgbToHex } from './scene';
+import { heatFraction, rgbToHex, T_FLOOR } from './scene';
 import { App } from '../../shell/App';
 import { EquationPanel } from './EquationPanel';
 import { FieldChart } from './FieldChart';
@@ -48,6 +47,14 @@ const ART = JSON.parse(RAW) as HeatfieldArtifact;
 const model = modelFor(ART);
 const start = spunUpState(model);
 const P = model.params;
+// The cross-section's edge reference: the upstream temperature of the φ plane (MODEL.md v3, two-point model).
+const UP = model.upstream(start.n, [0, 0, 0, 0]);
+/** A colour bar's accessible-name start for a range, as the view formats it (3 decimals). */
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const barName = (title: string, lo: number, hi: number) =>
+  new RegExp(
+    '^' + escapeRe(`Colour bar: ${title} in keV from ${formatNumber(lo, 3)} (coldest end in yellow) to ${formatNumber(hi, 3)}`),
+  );
 const OFF = [0, 0, 0, 0];
 const IDS = ['D1', 'D2', 'D3', 'D4'];
 const coldOff = ART.model.golden.scenarios[0]!.checkpoints.find((c) => c.step === 3000)!;
@@ -153,12 +160,13 @@ test('H9 the scene starts from the spun-up state, colours by temperature or |B| 
   expect(Array.from(s.sim.state.T)).toEqual(Array.from(start.T));
   expect(s.sim.coils).toEqual(OFF);
   expect([s.colorBy, s.showLines, s.showArrows]).toEqual(['temperature', true, false]);
-  // Fixed temperature range: the coldest start value rounded down to 0.05 keV, to T_ped.
-  expect(s.ranges.lcfsT[1]).toBe(P.Tped);
-  expect(formatNumber(s.ranges.lcfsT[0], 2)).toBe('0.65');
+  // One shared logarithmic temperature scale for the edge and the cross-section: T_FLOOR (20 eV) to the core T_0.
+  expect(s.ranges.lcfsT).toEqual([T_FLOOR, P.Tcore0]);
+  expect(s.ranges.sliceT).toEqual(s.ranges.lcfsT);
+  expect(s.ranges.lcfsT[0]).toBeLessThan(Math.min(...start.T));
 
   const scene = panel('W7-X last closed flux surface: model temperature and |B|');
-  const tempBar = within(scene).getByRole('img', { name: /^Colour bar: Temperature in keV from 0\.65 \(coldest end in yellow\) to 1\.00 \(hottest end in red\)/ });
+  const tempBar = within(scene).getByRole('img', { name: barName('Temperature', ...s.ranges.lcfsT) });
   expect(tempBar).toHaveAccessibleName(/anything colder takes the coldest colour/);
   const tempHead = tempBar.closest('.hf-colorbar')!;
   expect(tempHead).toHaveTextContent('Temperature (keV)');
@@ -215,9 +223,9 @@ test('H10 hovering the 3D surface or a cross-section cell shows temperature (keV
   const sbox = screen.getByTestId('slice-readout');
   const Txs = (m: number, i: number) => {
     const rho = ART.surfaces[m]!.rho;
-    const core = P.Tped + (P.Tcore0 - P.Tped) * (1 - rho * rho) ** 2;
+    const core = UP[0]! + (P.Tcore0 - UP[0]!) * (1 - rho * rho) ** 2;
     const w = Math.max(0, (rho - P.rhoBlend) / (1 - P.rhoBlend)) ** 2;
-    return core + w * (start.T[i]! - P.Tped);
+    return core + w * (start.T[i]! - UP[0]!);
   };
   const meanT = (Txs(7, 12) + Txs(7, 13) + Txs(8, 12) + Txs(8, 13)) / 4;
   const B = (m: number, i: number) => ART.surfaces[m]!.B[i]!;
@@ -303,9 +311,9 @@ test('H10 without a mouse: the slice is one focusable group whose arrow keys mov
   expect(group).toHaveFocus();
   const Txs = (m: number, i: number) => {
     const rho = ART.surfaces[m]!.rho;
-    const core = P.Tped + (P.Tcore0 - P.Tped) * (1 - rho * rho) ** 2;
+    const core = UP[0]! + (P.Tcore0 - UP[0]!) * (1 - rho * rho) ** 2;
     const w = Math.max(0, (rho - P.rhoBlend) / (1 - P.rhoBlend)) ** 2;
-    return core + w * (start.T[i]! - P.Tped);
+    return core + w * (start.T[i]! - UP[0]!);
   };
   const cellT = (m: number, i: number) => (Txs(m, i) + Txs(m, (i + 1) % 48) + Txs(m + 1, i) + Txs(m + 1, (i + 1) % 48)) / 4;
   const B = (m: number, i: number) => ART.surfaces[m]!.B[i % 48]!;
@@ -431,10 +439,10 @@ test('H11 the toroidal-angle slider (5° steps) and Go to D1–D4 choose the sli
   const rgb = (h: string) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16));
   const dist = (a: number[], b: number[]) => Math.max(...a.map((v, k) => Math.abs(v - b[k]!)));
   const heat = themes.light.scene.heat;
-  const core = (rho: number) => P.Tped + (P.Tcore0 - P.Tped) * (1 - rho * rho) ** 2;
+  const core = (rho: number) => UP[0]! + (P.Tcore0 - UP[0]!) * (1 - rho * rho) ** 2;
   const [sLo, sHi] = lastScene().ranges.sliceT;
   expect(sHi).toBe(P.Tcore0);
-  const tAxis = ((core(0) + core(ART.surfaces[1]!.rho)) / 2 - sLo) / (sHi - sLo);
+  const tAxis = heatFraction((core(0) + core(ART.surfaces[1]!.rho)) / 2, [sLo, sHi]);
   expect(tAxis).toBeGreaterThan(1 - 1 / (heat.length - 1) / 2);
   const expected = rgb(rgbToHex(heatColor(tAxis, 'light')));
   const nearAxis = fills.slice(0, 48);
@@ -447,35 +455,35 @@ test('H11 the toroidal-angle slider (5° steps) and Go to D1–D4 choose the sli
   expect(fills.filter((f) => grays.includes(f!))).toEqual([]);
 });
 
-test('H11 the slice temperature bar starts at the data floor, so the cold footprint under a coil-off plate shows in the slice and follows the coils (DZ-4)', async () => {
+test('H11 the slice and the 3D surface share one temperature scale; the edge strip and outer ring sit at the plane\'s upstream temperature and follow the coils (DZ-4, version 7)', async () => {
   const user = userEvent.setup();
   renderContent();
   const ranges = lastScene().ranges;
-  // The bar runs from the same rounded start-state LCFS minimum as the 3D surface's bar (not T_t) to T_0 on the axis.
+  // The bar is the 3D surface's: one logarithmic scale from T_FLOOR, below every target temperature, to T_0 on the axis.
   let tMin = Infinity;
   for (const v of start.T) tMin = Math.min(tMin, v);
-  expect(ranges.sliceT[0]).toBe(ranges.lcfsT[0]);
-  expect(ranges.sliceT[0]).toBeLessThanOrEqual(tMin);
-  expect(ranges.sliceT[0]).toBeGreaterThan(tMin - 0.05);
-  expect(ranges.sliceT[0]).toBeGreaterThan(P.Ttarget);
+  expect(ranges.sliceT).toEqual(ranges.lcfsT);
+  expect(ranges.sliceT[0]).toBe(T_FLOOR);
+  expect(ranges.sliceT[0]).toBeLessThan(tMin);
   expect(ranges.sliceT[1]).toBe(P.Tcore0);
   const xsPanel = panel('Cross-section at φ = 0° (D1)');
-  const bar = within(xsPanel).getByRole('img', {
-    name: /^Colour bar: Temperature in keV from 0\.65 \(coldest end in yellow\) to 3\.00 \(hottest end in red\)/,
-  });
+  const bar = within(xsPanel).getByRole('img', { name: barName('Temperature', ...ranges.sliceT) });
   expect(bar).toHaveAccessibleName(/anything colder takes the coldest colour/);
-  expect(bar).toHaveTextContent('0.65 · coldest');
+  expect(bar).toHaveTextContent(`${formatNumber(ranges.sliceT[0], 3)} · coldest`);
 
   // Outer-ring cells (ρ 0.875–1) at plane j from MODEL.md's cross-section formula, independently, and their ramp position.
   const [lo, hi] = ranges.sliceT;
+  // Each state's upstream temperature per φ plane (the cross-section's edge reference).
+  const upstreamOf = new Map<Float64Array, Float64Array>([[start.T, UP]]);
   const node = (T: Float64Array, j: number, m: number, i: number) => {
     const rho = ART.surfaces[m]!.rho;
-    const core = P.Tped + (P.Tcore0 - P.Tped) * (1 - rho * rho) ** 2;
+    const up = upstreamOf.get(T)![j]!;
+    const core = up + (P.Tcore0 - up) * (1 - rho * rho) ** 2;
     const w = Math.max(0, (rho - P.rhoBlend) / (1 - P.rhoBlend)) ** 2;
-    return core + w * (T[j * 48 + (i % 48)]! - P.Tped);
+    return core + w * (T[j * 48 + (i % 48)]! - up);
   };
   const cellT = (T: Float64Array, j: number, i: number) => (node(T, j, 7, i) + node(T, j, 7, i + 1) + node(T, j, 8, i) + node(T, j, 8, i + 1)) / 4;
-  const ramp = (v: number) => (v - lo) / (hi - lo);
+  const ramp = (v: number) => heatFraction(v, [lo, hi]);
   const rgb = (h: string) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16));
   const fillOf = (i: number) => rgb(document.querySelector(`[data-cell="7:${i}"]`)!.getAttribute('fill')!);
   const expectFill = (i: number, t: number) => {
@@ -483,68 +491,45 @@ test('H11 the slice temperature bar starts at the data floor, so the cold footpr
     fillOf(i).forEach((v, k) => expect(Math.abs(v - want[k]!), `cell 7:${i}`).toBeLessThanOrEqual(1));
   };
 
-  // At the start (every coil off after the spin-up) the D1 footprint sits under the plate, θ 82.5°–97.5° round the
-  // strike line at 90°: low on the ramp, clearly below every outer cell 45° or more away from it.
-  const under = [11, 12];
-  const away = Array.from({ length: 48 }, (_, i) => i).filter((i) => i <= 5 || i >= 18);
-  under.forEach((i) => expect(ramp(cellT(start.T, 0, i)), `cell 7:${i}`).toBeLessThan(0.1));
-  away.forEach((i) => expect(ramp(cellT(start.T, 0, i)), `cell 7:${i}`).toBeGreaterThan(0.13));
-  // On the old T_t…T_0 bar the footprint sat a quarter of the way up the ramp, beside the rest of the ring.
-  expect((cellT(start.T, 0, 12) - P.Ttarget) / (P.Tcore0 - P.Ttarget)).toBeGreaterThan(0.25);
-  // The slice draws exactly those positions.
-  for (const i of [...under, 0, 30]) expectFill(i, ramp(cellT(start.T, 0, i)));
-  const footprintFill = fillOf(12);
+  // Version 7: the LCFS sits at its plane's upstream temperature (the cold plasma is at the targets, outside the LCFS).
+  // So the slice's outer ring and the edge strip are uniform round each plane, the slice gets hotter inward to T_0, and
+  // the slice draws exactly MODEL.md's cross-section values.
+  const ringStart = Array.from({ length: 48 }, (_, i) => cellT(start.T, 0, i));
+  ringStart.forEach((t) => expect(t).toBeCloseTo(ringStart[0]!, 12));
+  for (const i of [0, 12, 30]) expectFill(i, ramp(cellT(start.T, 0, i)));
+  const innerCell = (m: number) => (node(start.T, 0, m, 0) + node(start.T, 0, m, 1) + node(start.T, 0, m + 1, 0) + node(start.T, 0, m + 1, 1)) / 4;
+  expect(innerCell(3)).toBeGreaterThan(innerCell(6));
 
-  // The edge strip (DZ3-3): the LCFS temperature at this φ on the 3D surface's range (ranges.lcfsT), drawn just
-  // outside the LCFS. There the footprint under D1 stands at least 12 ΔE00 (the series gate) off every strip cell
-  // 45° or more away from it. In the slice's own outer ring it does not: on the single linear scale from the data
-  // floor to T_0 it is less than one ramp step from part of the ring (2.6 ΔE00 inboard, DZ3-3).
+  // The edge strip (DZ3-3): the LCFS temperature at this φ on the shared scale, drawn just outside the LCFS.
   const hexOf = (el: Element | null) => el!.getAttribute('fill')!;
   const strip = () => screen.getByTestId('edge-strip');
   const edgeHex = (i: number) => hexOf(strip().querySelector(`[data-edge="${i}"]`));
-  const cellHex = (i: number) => hexOf(document.querySelector(`[data-cell="7:${i}"]`));
-  const dE = (a: string, b: string) => deltaE2000(hexToLab(a), hexToLab(b));
   const [eLo, eHi] = ranges.lcfsT;
   const edgeT = (T: Float64Array, j: number, i: number) => (T[j * 48 + i]! + T[j * 48 + ((i + 1) % 48)]!) / 2;
   const expectEdge = (T: Float64Array, j: number, i: number) => {
-    const want = rgb(rgbToHex(heatColor((edgeT(T, j, i) - eLo) / (eHi - eLo), 'light')));
+    const want = rgb(rgbToHex(heatColor(heatFraction(edgeT(T, j, i), [eLo, eHi]), 'light')));
     rgb(edgeHex(i)).forEach((v, k) => expect(Math.abs(v - want[k]!), `strip ${i}`).toBeLessThanOrEqual(1));
   };
-  for (const i of [...under, 0, 30]) expectEdge(start.T, 0, i);
-  for (const i of under) expect(Math.min(...away.map((k) => dE(edgeHex(i), edgeHex(k)))), `strip ${i}`).toBeGreaterThanOrEqual(12);
-  expect(Math.min(...away.map((k) => dE(cellHex(12), cellHex(k))))).toBeLessThan(12);
+  for (const i of [0, 12, 30]) expectEdge(start.T, 0, i);
   // Its colour bar says what it shows.
-  expect(within(xsPanel).getByRole('img', { name: /^Colour bar: Edge \(LCFS\), same scale as the 3D view in keV from 0\.65 \(coldest end in yellow\) to 1\.00/ })).toBeInTheDocument();
-  const footprintEdge = edgeHex(12);
+  expect(within(xsPanel).getByRole('img', { name: barName('Edge (LCFS), same scale as the 3D view', ...ranges.lcfsT) })).toBeInTheDocument();
 
-  // Moving the slider off the diverter (φ 45°) the cold patch is gone: the same cell is warmer and drawn warmer, and
-  // on the strip the change is at least 12 ΔE00.
+  // Another plane (φ 45°, between D1 and D2) has its own upstream temperature, drawn as such.
   fireEvent.change(screen.getByRole('slider', { name: /^Toroidal angle φ/ }), { target: { value: '45' } });
-  expect(ramp(cellT(start.T, 9, 12))).toBeGreaterThan(ramp(cellT(start.T, 0, 12)) + 0.05);
   expectFill(12, ramp(cellT(start.T, 9, 12)));
-  expect(fillOf(12)).not.toEqual(footprintFill);
   expectEdge(start.T, 9, 12);
-  expect(dE(edgeHex(12), footprintEdge)).toBeGreaterThanOrEqual(12);
 
-  // The D1 field adjustment on for 0.5 s: the strike line is at θ_d + A_s (107°) and the coldest outer cell has
-  // moved with it, from θ 82.5°–97.5° to 105°–112.5°, in the drawn colours too.
+  // The D1 field adjustment on for 0.5 s: D1 sheds power to the others (D-035), so its upstream temperature falls; the
+  // drawn ring follows the model.
   await user.click(screen.getByRole('button', { name: 'Go to D1' }));
   await user.click(screen.getByRole('button', { name: 'Field adjustment D1' }));
   for (let k = 0; k < 5; k++) await user.click(screen.getByRole('button', { name: 'Advance 0.1 s' }));
-  const swept = model.advance(start, [1, 0, 0, 0], 500).T;
-  const ring = Array.from({ length: 48 }, (_, i) => cellT(swept, 0, i));
-  const coldest = ring.indexOf(Math.min(...ring));
-  expect(coldest).toBe(14);
-  expect(ramp(ring[coldest]!)).toBeLessThan(0.1);
-  // The cell the footprint left is now clearly warmer than the one it moved to.
-  expect(ramp(ring[11]!)).toBeGreaterThan(ramp(ring[14]!) + 0.03);
-  for (const i of [11, 12, 14]) expectFill(i, ramp(ring[i]!));
-  // On the strip the move is plain to see: the cell it left and the cell it moved to are 12 ΔE00 or more apart, and the
-  // cell it moved to has changed by as much since the start.
+  const sweptState = model.advance(start, [1, 0, 0, 0], 500);
+  const swept = sweptState.T;
+  upstreamOf.set(swept, model.upstream(sweptState.n, [1, 0, 0, 0]));
+  expect(swept[0]!).toBeLessThan(start.T[0]!);
+  for (const i of [11, 12, 14]) expectFill(i, ramp(cellT(swept, 0, i)));
   for (const i of [11, 12, 14]) expectEdge(swept, 0, i);
-  const stripStart14 = rgbToHex(heatColor((edgeT(start.T, 0, 14) - eLo) / (eHi - eLo), 'light'));
-  expect(dE(edgeHex(11), edgeHex(14))).toBeGreaterThanOrEqual(12);
-  expect(dE(edgeHex(14), stripStart14)).toBeGreaterThanOrEqual(12);
 
   // Coloured by |B| the slice is |B| everywhere: no temperature strip, no edge bar.
   await user.click(screen.getByRole('radio', { name: '|B| (VMEC)' }));
@@ -779,8 +764,12 @@ test('H15 one switch predicts and adjusts the field; switching off releases the 
   const control = screen.getByRole('switch', { name: 'Control loop' });
   expect(control).not.toBeChecked();
   await user.click(control);
-  const expected = model.diagnostics(model.advance(start, OFF, Math.round(HORIZON_S / P.dt)), OFF)
-    .peakTileC.map(t => String(t > P.tileLimit));
+  // Every coil is off when the loop is switched on, so the forecast with the coils as they are is the all-off one.
+  // While any diverter is predicted hot, every coil goes on (not just the hot diverters' own).
+  const predicted = model.diagnostics(model.advance(start, OFF, Math.round(HORIZON_S / P.dt)), OFF).peakTileC;
+  expect(predicted.some(t => t > P.tileLimit)).toBe(true);
+  expect(predicted.some(t => t <= P.tileLimit)).toBe(true); // a mixed case: the old rule switched on only some coils
+  const expected = IDS.map(() => 'true');
   const coils = () => IDS.map(id => screen.getByRole('button', { name: 'Field adjustment ' + id }).getAttribute('aria-pressed'));
   await waitFor(() => expect(coils()).toEqual(expected));
   await user.click(control);
@@ -808,16 +797,16 @@ test('H16 the equation, the parameter table and the honesty notes are shown; eve
     expect(dt, e.id).toBeDefined();
     expect(dt.textContent).toBe(e.text.replace(/_/g, ''));
   }
-  // Parameter table: symbol, value, unit and meaning of all 23 parameters, from the artifact.
+  // Parameter table: symbol, value, unit and meaning of all 30 parameters, from the artifact.
   const params = screen.getByRole('table', { name: /Parameters as written in artifacts\/heatfield.json/ });
   const rows = within(params).getAllByRole('row').slice(1);
-  expect(rows).toHaveLength(23);
+  expect(rows).toHaveLength(49);
   for (const [name, p] of Object.entries(ART.model.parameters)) {
     const row = params.querySelector<HTMLElement>(`tr[data-parameter="${name}"]`)!;
     expect(row.querySelector('th')!.textContent).toBe(p.symbol.replace('_', ''));
     expect(cells(row)).toEqual([trimNumber(p.value), p.unit, p.description]);
   }
-  expect(params.querySelector('tr[data-parameter="tileGain"] td')).toHaveTextContent('165');
+  expect(params.querySelector('tr[data-parameter="kRef"] td')).toHaveTextContent('350');
   expect(screen.getByText(norm(ART.model.limitations))).toBeInTheDocument();
 
   // Model status on every panel that shows model numbers; geometry and |B| say Derived (VMEC).
@@ -853,20 +842,20 @@ test('H16 the equations and notes typeset every X_abc as a subscript, and the go
   for (const el of document.querySelectorAll('.hf-eq__math, .hf-eq__meaning, .hf-eq__list dd, .hf-colorbar__note')) {
     expect(el.textContent, el.className).not.toContain('_');
   }
-  expect([...math.querySelectorAll('sub')].map((s) => s.textContent)).toEqual(['∥', '⊥', 'ped', 'E', 'k', 'k', 't', 'div']);
+  expect([...math.querySelectorAll('sub')].map((s) => s.textContent)).toEqual(['k', 'heat', 'rad', 'k', 'k', 'm', 'm', 'm', 'm', 'm', 'k', 'k', 'k', 'k', 'k', 'k', 'm', 'm', 'k', 'k', 'div']);
   const field = [...document.querySelectorAll('dt.hf-eq__math')].find((d) => d.getAttribute('aria-label')?.startsWith('B = '))!;
   expect([...field.querySelectorAll('sub')].map((s) => s.textContent)).toEqual(['VMEC', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'cφ', 'd', 'cθ']);
   const strike = [...document.querySelectorAll('dt.hf-eq__math')].find((d) => d.getAttribute('aria-label')?.startsWith('θ_s,k'))!;
   expect(strike.querySelector('sub')).toHaveTextContent(/^s,k$/);
-  // The colour-bar notes: T_ped and T_0.
+  // The colour-bar notes: T_u and T_0.
   const notes = [...document.querySelectorAll('.hf-colorbar__note')];
-  expect(notes.some((n) => [...n.querySelectorAll('sub')].some((s) => s.textContent === 'ped'))).toBe(true);
+  expect(notes.some((n) => [...n.querySelectorAll('sub')].some((s) => s.textContent === 'u'))).toBe(true);
   expect(notes.some((n) => [...n.querySelectorAll('sub')].some((s) => s.textContent === '0'))).toBe(true);
   // The label is said once: the meaning under the equation starts with its own words.
   const label = 'Governing equation (used to predict how the heat moves)';
   expect(ART.model.equations[0]!.meaning.startsWith(label)).toBe(true);
   expect(governing.textContent!.split(label)).toHaveLength(2);
-  expect(governing.querySelector('.hf-eq__meaning')).toHaveTextContent(/^The LCFS temperature T diffuses along the field line/);
+  expect(governing.querySelector('.hf-eq__meaning')).toHaveTextContent(/^Energy conservation\. The heating power that is not radiated/);
 });
 
 test('H16 the stability line says ≤ 1 only when the computed number is at most 1; above 1 it says so and warns (HF3-5)', () => {
@@ -877,24 +866,25 @@ test('H16 the stability line says ≤ 1 only when the computed number is at most
 
   render(<EquationPanel art={ART} stability={1.2} />);
   const line = screen.getByTestId('stability');
-  expect(line).toHaveTextContent('= 1.2000 > 1, computed here from the artifact: the explicit step is unstable.');
+  expect(line).toHaveTextContent('= 1.2000 > 1, computed here from the artifact: the tile update is unstable.');
   expect(line).not.toHaveTextContent('≤ 1');
-  const warn = screen.getByRole('note', { name: /Explicit step unstable: T may leave \[Tt, Tped\]/ });
+  const warn = screen.getByRole('note', { name: /Tile update unstable: Δt exceeds the conduction limit/ });
   expect(warn).toHaveAttribute('data-tone', 'warn');
   expect(warn).toHaveTextContent('1.2000');
   // Outside the collapsed disclosure, so it is seen without opening it.
   expect(warn.closest('details')).toBeNull();
 });
 
-test('H16 an artifact whose explicit step is unstable is flagged at the top of the view (HF3-5)', () => {
-  // A doubled step (and no spin-up, so the unstable step has no time to blow the state up before the view draws it).
+test('H16 an artifact whose tile update is unstable is flagged at the top of the view (HF3-5)', () => {
+  // A tile time constant below the step (and no spin-up, so the unstable update has no time to blow the tiles up
+  // before the view draws them).
   const fast = structuredClone(ART);
-  fast.model.parameters.dt.value = ART.model.parameters.dt.value * 2;
+  fast.model.parameters.dt.value = 4 * ART.model.parameters.dt.value;
   fast.model.parameters.spinup.value = 0;
   const k = modelFor(fast).stabilityNumber();
   expect(k).toBeGreaterThan(1);
   render(<HeatFieldContent art={fast} autoPlay={false} />);
-  const notes = screen.getAllByRole('note', { name: /Explicit step unstable/ });
+  const notes = screen.getAllByRole('note', { name: /Tile update unstable/ });
   expect(notes.length).toBeGreaterThanOrEqual(1);
   expect(notes[0]).toHaveTextContent(formatNumber(k, 4));
   expect(screen.getByTestId('stability')).toHaveTextContent(`= ${formatNumber(k, 4)} > 1`);

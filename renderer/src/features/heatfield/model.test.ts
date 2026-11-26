@@ -62,15 +62,16 @@ test('H8 every input comes from the artifact: grid, |B|, ι, θ_d, φ_k and ever
   expect(model.phiK).toEqual(ART.diverters.items.map((d) => d.phi));
   expect(model.probes).toEqual(ART.model.probes);
   for (const name of PARAMETER_NAMES) expect(P[name]).toBe(ART.model.parameters[name].value);
-  expect(paramsOf(ART).tileGain).toBe(165);
+  expect(paramsOf(ART).kRef).toBe(350);
+  expect(paramsOf(ART).Pheat).toBe(7.5); // the high-power operating point (D-033)
 
   // A changed parameter in the artifact changes the result: nothing is cached in the code.
   const hotter = structuredClone(ART);
-  hotter.model.parameters.tileGain.value = 2 * ART.model.parameters.tileGain.value;
+  hotter.model.parameters.sinkResistance.value = 2 * ART.model.parameters.sinkResistance.value;
   const a = createModel(ART).advance(createModel(ART).initialState(), OFF, 200);
   const b = createModel(hotter).advance(createModel(hotter).initialState(), OFF, 200);
   const rise = (x: Float64Array) => Math.max(...x) - ART.model.parameters.Tcool.value;
-  expect(rise(b.tiles) / rise(a.tiles)).toBeCloseTo(2, 10);
+  expect(rise(b.tiles)).toBeGreaterThan(rise(a.tiles));
   const shifted = structuredClone(ART);
   shifted.diverters.thetaCentre = ART.diverters.thetaCentre + 0.2;
   expect(createModel(shifted).strikeLines(OFF, 0)[0]).toBeCloseTo(ART.diverters.thetaCentre + 0.2, 12);
@@ -88,13 +89,13 @@ test('H8 model.ts holds no duplicated model constant: its only numeric literals 
   for (const v of [165, 1200, 0.03, 0.3, 0.06, 0.12, 2.5, 0.02, 0.001, 3000, 48, 72]) expect(literals).not.toContain(v);
 });
 
-test('H8 with no sink and no coils a uniform T_ped stays exactly uniform; the step is deterministic', () => {
-  const noSink = structuredClone(ART);
-  noSink.model.parameters.tauDiv.value = Number.POSITIVE_INFINITY;
-  const m = createModel(noSink);
+test('H8 with no heating there is no plasma and no load; the step is deterministic', () => {
+  const unheated = structuredClone(ART);
+  unheated.model.parameters.Pheat.value = 0;
+  const m = createModel(unheated);
   const st = m.advance(m.initialState(), OFF, 50);
-  expect(new Set(st.T).size).toBe(1); // exactly uniform
-  expect(st.T[0]).toBeCloseTo(P.Tped, 12);
+  expect(st.T.every((v) => v === 0)).toBe(true);
+  expect(st.tiles.every((v) => v === P.Tcool)).toBe(true);
   // Same inputs, same bits.
   const x = model.advance(model.initialState(), [1, 0, 1, 0], 300);
   const y = model.advance(model.initialState(), [1, 0, 1, 0], 300);
@@ -102,25 +103,51 @@ test('H8 with no sink and no coils a uniform T_ped stays exactly uniform; the st
   expect(Buffer.from(x.tiles.buffer).equals(Buffer.from(y.tiles.buffer))).toBe(true);
   // step() and advance() agree, and neither changes its input.
   const s0 = model.initialState();
+  const copy = Float64Array.from(s0.T);
   const one = model.step(s0, OFF);
   expect(one.n).toBe(1);
   expect(Array.from(model.advance(s0, OFF, 1).T)).toEqual(Array.from(one.T));
-  expect(s0.T.every((v) => v === P.Tped)).toBe(true);
+  expect(Array.from(model.advance(s0, OFF, 1).tiles)).toEqual(Array.from(one.tiles));
+  expect(Array.from(s0.T)).toEqual(Array.from(copy));
 });
 
-test('H8 T stays within [T_t, T_ped] and the stability condition holds (≤ 1, maximum over every coil state)', () => {
+test('H8 energy is conserved: the power on the wetted areas is the heating power less the radiated part', () => {
+  for (const coils of [OFF, ALL_ON]) {
+    for (const n of [0, 77, 250]) {
+      const e = model.edge(n, coils);
+      expect(e.shares.reduce((a, b) => a + b, 0)).toBeCloseTo(P.Pheat * (1 - P.fRad), 9);
+      // The two-point solution: Spitzer conduction T_u^ν − T_t^ν = ν q_∥ L/κ_0, and T_t < T_u.
+      for (let k = 0; k < 4; k++) {
+        const qPar = (e.qT[k]! * P.MW) / Math.sin(P.incidence);
+        const nu = P.conductionExponent;
+        expect(relErr(e.Tu[k]! ** nu - e.Tt[k]! ** nu, (nu * qPar * P.connectionLength) / P.kappa0)).toBeLessThan(1e-9);
+        // The sheath with pressure balance (the iteration's other half; the line above holds whatever T_t is):
+        // q_∥ = γ·n_t·e·T_t·c_s(T_t), n_t = n_u·T_u/(2·T_t), c_s = √(2·T_t·keV/(m_i·amu)).
+        const nT = (P.nSep * e.Tu[k]!) / (2 * e.Tt[k]!);
+        const cS = Math.sqrt((2 * e.Tt[k]! * P.keV) / (P.ionMass * P.amu));
+        expect(relErr(P.sheathGamma * nT * e.Tt[k]! * P.keV * cS, qPar)).toBeLessThan(1e-6);
+        expect(e.Tt[k]).toBeLessThan(e.Tu[k]!);
+      }
+    }
+  }
+});
+
+test('H8 T stays between the target and upstream temperatures; the only explicit update (the tiles) is stable', () => {
   const k = model.stabilityNumber();
-  expect(k).toBeGreaterThan(0.5);
+  const dz = P.tileThickness / P.tileCells;
+  const back = P.kRef / dz + 1 / (dz / (2 * P.kRef) + P.sinkResistance);
+  expect(k).toBe((P.dt * Math.max((2 * P.kRef) / dz, back)) / (P.tileDensity * P.cpRef * dz));
   expect(k).toBeLessThanOrEqual(1);
-  expect(k).toBeCloseTo(0.7355, 3); // the value model.discretization states
-  expect(ART.model.discretization).toContain('0.7355');
+  expect(ART.model.discretization).toContain(`here ${k.toFixed(4)}`);
   const sched = ART.model.golden.scenarios.find((s) => s.id === 'switch-at-1s')!.coilSchedule;
   let st = model.initialState();
   for (let n = 0; n < 1600; n += 100) {
-    st = model.advance(st, coilsAt(sched, n), 100);
+    const coils = coilsAt(sched, n);
+    st = model.advance(st, coils, 100);
+    const e = model.edge(st.n, coils);
     for (const v of st.T) {
-      expect(v).toBeGreaterThanOrEqual(P.Ttarget);
-      expect(v).toBeLessThanOrEqual(P.Tped);
+      expect(v).toBeGreaterThanOrEqual(Math.min(...e.Tt) * (1 - 1e-12));
+      expect(v).toBeLessThanOrEqual(Math.max(...e.Tu) * (1 + 1e-12));
     }
   }
 });
@@ -178,7 +205,7 @@ test('H8 diagnostics: probes, mean, tile peaks and heat-flux peaks of a state; s
   const off = sim.predict(1000, OFF);
   const on = sim.predict(1000, [1, 0, 0, 0]);
   expect(on.peakTileC[0]).toBeLessThan(off.peakTileC[0]! - 100);
-  expect(on.peakTileC[1]).toBeCloseTo(off.peakTileC[1]!, 0);
+  expect(on.peakTileC[1]).toBeGreaterThan(off.peakTileC[1]! + 20); // D1 sheds part of its power to the others (version 6)
   expect(sim.state.n).toBe(start.n); // predict never moves the running state
 });
 
@@ -186,13 +213,13 @@ test('H8 heat-flow vector and cross-section fields follow MODEL.md', () => {
   const st = spunUpState(model);
   const { fPhi, fTheta } = model.heatFlow(st, OFF);
   // Uniform temperature carries no heat flow.
-  const flat = model.heatFlow(model.initialState(), OFF);
+  const flat = model.heatFlow({ n: 0, T: new Float64Array(model.nCells).fill(0.1), tiles: st.tiles, slab: st.slab }, OFF);
   expect(flat.fPhi.every((v) => v === 0) && flat.fTheta.every((v) => v === 0)).toBe(true);
-  expect(fPhi.some((v) => Math.abs(v) > 1e-3)).toBe(true);
-  // Heat flows towards the cold D1 footprint (φ = 0, θ = θ_d): just before it in φ, F_φ > 0; just after, F_φ < 0.
-  const iD = Math.round(model.thetaD / model.dTheta);
-  expect(fPhi[(model.nPhi - 1) * model.nTheta + iD]).toBeGreaterThan(0);
-  expect(fPhi[1 * model.nTheta + iD]).toBeLessThan(0);
+  // The LCFS sits at the sectors' upstream temperatures (version 7): nearly isothermal, so the flow along it is weak
+  // and runs from the hotter D1 sector (T_u ≈ 0.222 keV) towards the cooler D2 sector (≈ 0.211 keV) at φ = 45°.
+  expect(fPhi.every((v) => Math.abs(v) < 1e-2)).toBe(true);
+  expect(fPhi[(model.nPhi / 8) * model.nTheta]).toBeGreaterThan(0);
+  expect(st.T.every((t, c) => Math.abs(t - st.T[Math.floor(c / model.nTheta) * model.nTheta]!) < 1e-15)).toBe(true);
   expect(Number.isFinite(fTheta[0]!)).toBe(true);
 
   const xs = model.crossSection(st, ALL_ON, 0);
@@ -206,7 +233,74 @@ test('H8 heat-flow vector and cross-section fields follow MODEL.md', () => {
     expect(xs.T[i]).toBeCloseTo(P.Tcore0, 12);
     expect(xs.B[i]).toBe(ART.surfaces[0]!.B[i]); // ρ² = 0: no perturbation on the axis
   }
-  // Inside ρ_b the core profile alone.
+  // Inside ρ_b the core profile alone, from the plane's upstream temperature (a blend of the divertors' T_u) to T_0.
   const m = ART.surfaces.findIndex((s) => s.rho === 0.5);
-  expect(xs.T[m * nT]).toBeCloseTo(P.Tped + (P.Tcore0 - P.Tped) * (1 - 0.25) ** 2, 12);
+  const c = (1 - 0.25) ** 2;
+  const edgeT = (xs.T[m * nT]! - P.Tcore0 * c) / (1 - c);
+  const e = model.edge(st.n, ALL_ON);
+  expect(edgeT).toBeGreaterThanOrEqual(Math.min(...e.Tu) * (1 - 1e-9));
+  expect(edgeT).toBeLessThanOrEqual(Math.max(...e.Tu) * (1 + 1e-9));
+});
+test('H8 the CFC tile conducts heat into the water and conserves energy every step (MODEL.md step 11)', () => {
+  // Material fits: k falls and c rises with temperature (NB31: ~170 W/m/K and ~1600 J/kg/K at 800 °C).
+  expect(model.conductivity(P.Tref)).toBe(P.kRef);
+  expect(model.conductivity(800)).toBeCloseTo(170, -1);
+  expect(model.heatCapacity(P.Tref)).toBe(P.cpRef);
+  expect(Math.abs(model.heatCapacity(800) / 1600 - 1)).toBeLessThan(0.05);
+
+  // Energy: what enters the surface either stays in the tile cells or goes to the water.
+  const nZ = model.tileCells;
+  const dz = P.tileThickness / nZ;
+  let st = model.advance(model.initialState(), OFF, 300);
+  for (let s = 0; s < 50; s++) {
+    const q = model.stripLoads(st, OFF);
+    const next = model.step(st, OFF);
+    for (let x = 0; x < q.length; x += 7) {
+      let stored = 0;
+      for (let z = 0; z < nZ; z++) {
+        const t = st.slab[x * nZ + z]!;
+        stored += (P.tileDensity * model.heatCapacity(t) * dz * (next.slab[x * nZ + z]! - t)) / P.dt;
+      }
+      const back = st.slab[x * nZ + nZ - 1]!;
+      const sink = (back - P.Tcool) / (dz / (2 * model.conductivity(back)) + P.sinkResistance);
+      expect(Math.abs(stored + sink - q[x]! * P.MW)).toBeLessThan(1e-6 * P.MW);
+    }
+    st = next;
+  }
+
+  // Steady state under a uniform load: the closed form with k(T) and the sink resistance, reached by the scheme.
+  const flat = structuredClone(ART);
+  const one = createModel(flat);
+  const Q = 10;
+  const back = P.Tcool + Q * P.MW * P.sinkResistance;
+  const want = P.Tref + P.kScale * ((1 + (back - P.Tref) / P.kScale) * Math.exp((Q * P.MW * P.tileThickness) / (P.kRef * P.kScale)) - 1);
+  expect(one.steadySurface(Q)).toBeCloseTo(want, 9);
+  expect(one.steadySurface(0)).toBeCloseTo(P.Tcool, 9);
+  // the steady surface rises with the load, and a hotter limit needs more load
+  expect(one.steadySurface(12)).toBeGreaterThan(one.steadySurface(10));
+});
+
+test('H8 each strip deposits exactly its divertor power: it narrows as 1/B (MODEL.md step 9, version 5)', () => {
+  const areaPerRadian = P.wettedArea / (Math.sqrt(2 * Math.PI) * P.sigmaTheta);
+  for (const coils of [OFF, [1, 1, 1, 1]]) {
+    const st = model.advance(model.initialState(), coils, 137);
+    const q = model.stripLoads(st, coils);
+    const { shares } = model.edge(st.n, coils);
+    for (let k = 0; k < model.nDiverters; k++) {
+      let sum = 0;
+      for (let i = 0; i < model.nTheta; i++) sum += q[k * model.nTheta + i]!;
+      expect(Math.abs((sum * model.dTheta * areaPerRadian) / shares[k]! - 1)).toBeLessThan(1e-4);
+    }
+  }
+});
+
+test('the TS confinement time and plasma volume are the reference ISS04 values (MODEL.md, version 7)', () => {
+  // The reference: τ_E 0.149 s at 7.5 MW, V 30.5 m³ (main/tests/test_heatfield.py).
+  expect(model.confinementTime(P.Pheat)).toBeCloseTo(0.1491, 3);
+  expect(model.plasmaVolume).toBeCloseTo(30.496, 2);
+  // Stored energy at P_heat reproduces the written axis temperature: T_0 = T_e + 3(<T> − T_e).
+  const mean = (model.confinementTime(P.Pheat) * P.Pheat * P.MW) / (3 * P.coreDensity * model.plasmaVolume * P.keV);
+  const up = model.upstream(0, OFF);
+  const te = up.reduce((a, b) => a + b, 0) / up.length;
+  expect(Math.abs((te + 3 * (mean - te)) / P.Tcore0 - 1)).toBeLessThan(1e-5);
 });

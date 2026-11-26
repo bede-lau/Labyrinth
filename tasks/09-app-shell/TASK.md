@@ -17,7 +17,9 @@ frontend-engineer (`renderer/src/shell/`, `renderer/src/lib/`)
 | A1–A6 | `renderer/src/shell/*.test.tsx`, `renderer/src/lib/*.test.ts` |
 
 ## Status
-DONE
+VERIFYING
+
+The files listed in the verification record have changed since its last recorded run.
 
 Independent verification passed at `9e017b6` on 2026-11-22. See the final run in [VERIFY.md](VERIFY.md).
 

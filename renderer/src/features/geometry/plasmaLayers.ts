@@ -6,7 +6,6 @@ import { rampColor } from '../../design/sceneTheme';
 import { plasmaMaterials } from '../../design/tokens';
 import type { Group, MeshBasicMaterial } from 'three';
 import { buildContent as buildTubes } from './FluxScene';
-import { buildTransferGuides } from './transferGuides';
 import { buildTargets } from './divertorTargets';
 import { buildReactorHardware } from './reactorHardware';
 import type { SceneModel } from './model';
@@ -78,7 +77,7 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
     shader.fragmentShader = 'varying float vEdgeT; uniform bool showEdgeHeat; uniform vec2 edgeRange; uniform vec3 edgePalette[6];\n' +
       shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
       if (showEdgeHeat) {
-        float t = 5.0 * clamp((vEdgeT-edgeRange.x)/(edgeRange.y-edgeRange.x),0.0,1.0);
+        float t = 5.0 * clamp(log(max(vEdgeT,edgeRange.x)/edgeRange.x)/log(edgeRange.y/edgeRange.x),0.0,1.0);
         int i = min(4,int(floor(t)));
         diffuseColor.rgb = mix(edgePalette[i],edgePalette[i+1],t-float(i));
       }`);
@@ -127,8 +126,7 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
   });
   content.group.add(core);
   const particles = particleMarks(three, tracks);
-  const guides = buildTransferGuides(three, art);
-  content.group.add(particles.group, guides.group);
+  content.group.add(particles.group);
 
   let lastPlane = -1;
   let hardware: Group | undefined;
@@ -181,8 +179,7 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
       heatRange.value.set(...frame.ranges.lcfsT);
       const xs = frame.model.crossSection(frame.sim.state, frame.sim.coils, j);
       if (core.visible) {
-        const energy = three.MathUtils.clamp((xs.T[0]! - frame.model.params.Ttarget) /
-          (frame.model.params.Tcore0 - frame.model.params.Ttarget), 0, 1);
+        const energy = three.MathUtils.clamp(xs.T[0]! / frame.ranges.sliceT[1], 0, 1);
         const gain = energy * (1 - fill);
         glow[0]!.opacity = gain;
         glow[1]!.opacity = 0.45 * gain;
@@ -190,15 +187,10 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
         glow[1]!.color.set(HEAT_STOPS[3]);
         glow[2]!.color.set(HEAT_STOPS[4]);
       }
-      writeColors(xs.T, frame.ranges.sliceT, heat, color.array as Float32Array);
+      writeColors(xs.T, frame.ranges.sliceT, heat, color.array as Float32Array, true);
       color.needsUpdate = true;
     }
     particles.group.visible = layers.particles && time > 0;
-    guides.group.visible = layers.particles;
-    if (layers.particles) {
-      const routes = frame.sim.commandedTransfers;
-      guides.update(frame.followed == null ? routes : routes.filter(r => r.from + 1 === frame.followed), frame.visiblePlates);
-      particles.update(frame.followed);
-    }
+    if (layers.particles) particles.update(frame.followed);
   };
 }

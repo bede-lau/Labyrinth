@@ -194,6 +194,7 @@
 .plasma-explorer .hf-scene__canvas { height: clamp(290px, 45vh, 480px); }
 .plasma-transport output, .plasma-slice b { font-variant-numeric: tabular-nums; }
 .plasma-transport .auto-feedback { margin-inline-start: auto; }
+.plasma-scenario { margin: .25rem 0 0; font-size: .8rem; color: var(--lab-color-text-muted); max-width: 70ch; }
 .plasma-toolbar {
   display: flex; align-items: center; flex-wrap: wrap;
   gap: var(--lab-space-2) var(--lab-space-5);
@@ -325,7 +326,6 @@
 .particle-readout thead th { color: var(--lab-color-text-muted); font: inherit; }
 .particle-readout tr + tr, .particle-readout tbody { border-top: 1px solid var(--lab-color-border); }
 .particle-readout i { display: inline-block; width: .55rem; height: .55rem; margin-right: .3rem; border-radius: 50%; }
-.particle-readout tr[data-steered=true] { background: var(--lab-color-accent-subtle); }
 
 .geo-probe { position: absolute; transform: translateX(-50%); z-index: 3; pointer-events: none;
   padding: .32rem .5rem; border-radius: .3rem; background: var(--lab-color-text); color: var(--lab-color-surface);
@@ -360,25 +360,6 @@
   border: 2px solid var(--lab-series-triangular);
   color: var(--lab-color-text);
 }
-.plasma-explorer .hf-scene__label[data-endpoint=source],
-.plasma-explorer .hf-scene__label[data-endpoint=destination] {
-  border-inline-start: 4px solid var(--route-color);
-  box-shadow: 0 1px 4px var(--lab-color-shadow);
-}
-.plasma-explorer .hf-scene__label[data-endpoint=source] { background: var(--lab-status-failed-bg); }
-.plasma-explorer .hf-scene__label[data-endpoint=destination]:not([data-hot=true]) { background: var(--lab-color-accent-subtle); }
-.hf-scene__label[data-endpoint=source]::before,
-.hf-scene__label[data-endpoint=destination]::before {
-  content: ''; display: inline-block; box-sizing: border-box; width: 8px; height: 8px;
-  margin-inline-end: 4px; vertical-align: 1px; background: var(--route-color);
-}
-.hf-scene__label[data-endpoint=source]::before { transform: rotate(45deg); border: 1px solid currentColor; }
-.hf-scene__label[data-endpoint=destination]::before { border-radius: 50%; border: 2px solid currentColor; }
-
-.hf-route-pin > * { display: none; stroke: var(--lab-color-text); stroke-width: 1.6; fill: var(--route-color); }
-.hf-scene__leader[data-endpoint=source] .hf-route-origin,
-.hf-scene__leader[data-endpoint=destination] :is(.hf-route-target, .hf-route-centre) { display: inline; }
-.hf-route-pin .hf-route-centre { fill: var(--lab-color-text); stroke: none; }
 .hf-scene__leader[data-hot=true] .hf-scene__leader-line { stroke: var(--lab-status-failed-fg); stroke-width: 2.5; }
 
 .plate-warning { display: none; pointer-events: none; }

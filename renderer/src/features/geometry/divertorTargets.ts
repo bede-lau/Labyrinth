@@ -72,7 +72,7 @@ export function buildTargets(T: Three, art: HeatfieldArtifact) {
   return {
     group,
     update(sim: Simulation, visible?: readonly boolean[]) {
-      const loads = sim.model.stripLoads(sim.state, sim.coils, sim.transfers);
+      const loads = sim.model.stripLoads(sim.state, sim.coils);
       const {tileLimit, Tcool} = sim.model.params;
       targets.forEach(({ bank, frameMat, tiles, loadsAtTiles }, k) => {
         bank.visible = visible?.[k] !== false;

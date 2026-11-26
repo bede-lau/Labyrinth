@@ -32,7 +32,9 @@ Frontend:
 | G7–G10 | `renderer/src/features/geometry/*.test.tsx` (one `test()` per outcome, named `G7 …` … `G10 …`) |
 
 ## Status
-DONE
+VERIFYING
+
+The files listed in the verification record have changed since its last recorded run.
 
 Independent verification passed at `628d997` on 2026-11-22. See the final run in [VERIFY.md](VERIFY.md).
 

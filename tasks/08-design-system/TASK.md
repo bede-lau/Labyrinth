@@ -17,7 +17,9 @@ design-lead (`renderer/src/design/`)
 | D1–D6 | `renderer/src/design/**/*.test.ts(x)` (D6 tests named `D6 …`) |
 
 ## Status
-DONE
+VERIFYING
+
+The files listed in the verification record have changed since its last recorded run.
 
 Independent verification passed at `9e017b6` on 2026-11-22. See the final run in [VERIFY.md](VERIFY.md).
 

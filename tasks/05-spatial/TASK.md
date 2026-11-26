@@ -20,7 +20,9 @@ Frontend:
 | S5–S6 | `renderer/src/features/spatial/*.test.tsx` |
 
 ## Status
-DONE
+VERIFYING
+
+The files listed in the verification record have changed since its last recorded run.
 
 Independent verification passed at `41a506b` on 2026-11-22. See the final run in [VERIFY.md](VERIFY.md).
 

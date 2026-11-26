@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useViewActive } from '../../lib/viewActive';
 import { Callout, Panel } from '../../design';
 import { useArtifact } from '../../lib/artifacts';
+import { AccuracyPanel } from './AccuracyPanel';
 import { ForecastChart } from './ForecastChart';
 import { INITIAL, advance, nextAction, type ForecastArtifact, type ReplayState } from './model';
 import './forecast.css';
@@ -45,7 +46,7 @@ function Replay({ artifact }: { artifact: ForecastArtifact }) {
     if (playing) {
       setPlaying(false);
     } else {
-      // In absolute-error mode the first point appears after the first Reveal.
+      // In percentage-error mode the first point appears after the first Reveal.
       if (restart) step();
       setPlaying(true);
     }
@@ -67,6 +68,7 @@ function Replay({ artifact }: { artifact: ForecastArtifact }) {
             </span>
           </div>
           <ForecastChart artifact={artifact} replay={state} />
+          <AccuracyPanel artifact={artifact} replay={state} />
         </>
       )}
     </Panel>

@@ -9,7 +9,7 @@ import type { HeatfieldArtifact } from '../heatfield/types';
 import '../heatfield/heatfield.css';
 import type { TubeField } from './tubeResponse';
 import { StrikeMonitor } from './StrikeMonitor';
-import { heatedRanges } from './heatedEdge';
+import { heatedRanges, scenarioHeating } from './heatedEdge';
 import type { ParticleTracks } from './particleTracks';
 import { CoreSlice } from './CoreSlice';
 import type { SceneModel } from './model';
@@ -43,7 +43,7 @@ const initial: Layers = { heat: true, particles: true, lines: false, hardware: f
 
 function Scale({ label, range, gradient, unit }: { label: string; range: readonly number[]; gradient: string; unit: string }) {
   return <div className="plasma-scale"><span>{label}</span><i style={{ background: gradient }} />
-    <span>{range[0]!.toFixed(2)}–{range[1]!.toFixed(2)} {unit}</span></div>;
+    <span>{range[0]!.toFixed(3)}–{range[1]!.toFixed(3)} {unit}, log scale</span></div>;
 }
 
 function SurfaceReading({hit, sim, plane}: {hit: HoverPoint; sim: Simulation; plane: number}) {
@@ -67,6 +67,7 @@ function SurfaceReading({hit, sim, plane}: {hit: HoverPoint; sim: Simulation; pl
 
 export function PlasmaExplorer({ onPowerOff, tracks, followed, feedback, onFeedback, art, model: tubes, theme, label, sim, slice, setSlice, response, onDecision, renderControls }: Props) {
   const model = sim.model;
+  const heating = scenarioHeating(art);
   const openPredictor = useCallback(() => {
     const worker = new Worker(new URL('./thermalForecast.worker.ts', import.meta.url), {type: 'module'});
     worker.postMessage({art});
@@ -144,11 +145,17 @@ export function PlasmaExplorer({ onPowerOff, tracks, followed, feedback, onFeedb
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v10M7 5a8 8 0 1 0 10 0"/></svg>
         {powered ? 'Power off' : 'Start reactor'}
       </button>
-      <ControlLoop disabled={!powered} balanceHeat openPredictor={openPredictor} onDecision={onDecision} onToggle={enabled => {
+      <ControlLoop disabled={!powered} openPredictor={openPredictor} onDecision={onDecision} onToggle={enabled => {
         onFeedback(enabled);
         setLayers(current => ({...current, lines: enabled || manualLines.current}));
       }} sim={sim} horizonS={0.25} playing={playback.playing} play={() => playback.setPlaying(true)} />
     </div>
+    <p className="plasma-scenario" data-testid="heating-scenario">
+      Heating scenario (model): {heating.mean.toFixed(1)} MW mean, {heating.lo.toFixed(1)}–{heating.hi.toFixed(1)} MW to the edge,
+      {' '}{heating.factor}× the model's P<sub>heat</sub> of {model.params.Pheat} MW, over {art.diverters.items.length} schematic
+      divertors; chosen so the field coils are needed. The edge receives what leaks from the core: dW/dt = P − W/τ<sub>E</sub>,
+      τ<sub>E</sub> = {heating.tauE.toFixed(2)} s (ISS04).
+    </p>
     <div className="plasma-transport">
       <button type="button" className="hf-btn" disabled={!powered} onClick={() => playback.setPlaying(!playback.playing)}>
         {playback.playing ? 'Pause flow' : 'Play flow'}

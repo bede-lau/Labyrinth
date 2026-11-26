@@ -370,3 +370,148 @@ The bundled Modal stella bean geometry and input are the 129-sample reference at
 Read the saved checkpoint bounds and traced GPU mapping for the Dommaschk replay. Recompute the means and 39-value reference check for each controlled run. Timing and kernel activity come from separate recorded experiments. Spatial fixture contracts accept both derived and earlier PRD-reported figures.
 
 The budget uses “PRD base estimate” for the GPU, CPU and RAM calculation. The guard estimate includes additional allowances.
+
+## D-031 · Heat model version 2: a sheath heat-flux law, physical edge temperatures, no heat transfers (owner, 2026-11-25)
+**Context.** Asked whether the Heat & field / W7-X model "obeys physics", the maintainer found that it does in its geometry
+and |B| (VMEC) and in the shape of its transport equation, but not in its numbers: a 1 keV LCFS (W7-X: ~0.1 keV), a free
+heat-flux scale W_q, and "heat transfers" that moved a fraction of one diverter's load onto another, which nothing in a
+stellarator divertor can do. The owner chose: remove the transfers; a physical retune, not a mere rescale.
+**Decision.**
+1. MODEL.md version 2. The edge temperatures and sheath-law inputs are physical orders of magnitude; the transport,
+   footprint, coil and tile parameters remain illustrative. Step 10 becomes the sheath heat-transmission law with two-point pressure balance,
+   q_k = (γ/2)·n_u·e·T·c_s(T_t)·sin α·(B/B_0)·g_k, c_s = √(2eT_t/m_i); T_ped 0.1 keV, T_t 0.02 keV, γ 7, hydrogen.
+   The unit conversions (keV, amu, MW) are artifact parameters, so neither implementation holds a numeric constant (H8).
+   `heatFluxScale` is gone; `tileGain` returns to MODEL.md's 100. Contract `heatfield.schema.json` lists the new
+   parameters (sheathGamma, nSep, ionMass, incidence, keV, amu, MW).
+2. Tuning: only `nSep` (1e19–6e19 m⁻³) and `incidence` (1°–4°), within those ranges. At the starting values (4e19, 2°)
+   no tile reaches the 1200 °C limit (~4.4 MW/m², ~450 °C). Only a narrow band near the top of both ranges
+   (n_u·sin α ≳ 0.93× the top value; tiles are linear in it) gives the regime the view needs; the corner (6e19, 4°) was taken (coils off: D1/D4 ~1290 °C at ~13 MW/m², above the 10 MW/m² W7-X target design load). The owner did not
+   pick an operating point when asked; the maintainer chose this high-power case, which the summary, the limitations
+   and MODEL.md state plainly. It is two parameter values to change.
+3. Heat transfers are removed from the renderer: load balancer, transfer dashes, tracer routes, label endpoints, the
+   loop's transfer weighing and the "Demo transfer" button. The coils' strike-line sweep is the only control.
+4. Known and stated, not fixed: the deposited heat flux is not energy-coupled to the plasma's exhaust term (as in
+   version 1), the sheath/two-point/lumped-tile pieces are textbook simplifications, the four diverters stay schematic,
+   and the coil response stays unvalidated.
+**Consequences.** `artifacts/heatfield.json` regenerated (geometry bytes unchanged; the model block and goldens new) and
+its manifest digest updated. Tasks 08, 09 and 10 are reopened until re-verified. The artifact was rebuilt natively on
+Windows with the pinned requirements; the unchanged model rebuilt byte-identically there first, so the build is the
+reference build, but `verify.sh` (WSL, D-020) has not run on it.
+
+## D-032 · Heat model version 3: two-point scrape-off layer, energy conserved (owner, 2026-11-25/26)
+**Context.** The owner's goal is a model "as physics accurate as possible" and chose energy conservation as the next
+gap to close. Checking it showed that version 2 could not conserve energy as built: its edge temperature relaxed to a
+fixed T_ped (no heat flows once it is reached) and a physical edge layer drains on microsecond time scales, far below
+the 1 ms step, so honest rates would need ~1000× smaller steps. Options put to the owner: the two-point model
+(quasi-steady edge), a quasi-steady 2D map, or explicit tiny steps. The owner chose the two-point model and then the
+operating point 6 MW heating, 30 % radiated, 0.10 m² wetted area per divertor. From then on the owner asked the
+maintainer to decide without asking.
+**Decision.**
+1. MODEL.md version 3. A fixed heating power P_heat crosses the LCFS; each divertor takes its toroidal sector's share
+   less the radiated fraction; the peak target load is that power, compressed with |B| at the strike line, over the
+   wetted area. Energy is conserved by construction. Each divertor's scrape-off layer is the two-point model: Spitzer
+   conduction (κ_0 = 2000 W m⁻¹ eV⁻⁷ᐟ², ν = 7/2) over a 200 m connection length, sheath (γ = 7) and pressure balance
+   with n_u = 4e19 m⁻³ and α = 2°, solved by a fixed 20-iteration fixed point. The edge is quasi-steady; only the
+   tiles evolve. The LCFS map draws the two-point drop into each footprint (an illustration, not a 2D transport
+   solution); the cross-section's edge reference is the plane's upstream temperature.
+2. Removed parameters: Tped, tauE, Dpar, Dperp0, tauDiv, Ttarget. Added: Pheat, fRad, wettedArea, connectionLength,
+   kappa0, conductionExponent, twoPointIterations (Spitzer's exponent and the iteration count are data, so neither
+   implementation holds a numeric constant, H8). Contract `heatfield.schema.json` updated.
+3. The W7-X view's heating scenario (`heatedEdge.ts`) becomes a relative heating power density (same start-up ramp,
+   heating sector and core modulation as before; the rotating θ pattern is dropped, since only the toroidal
+   distribution reaches the divertors). Its power is SCENARIO_POWER = 1.25 × P_heat: 7.5 MW mean, 6.6–8.4 MW. At the
+   nominal 6 MW its five divertors peak at ~1110–1160 °C and the control loop would never act; the maintainer chose
+   the factor so the coils are needed. The view states it in a line computed from the code ("Heating scenario
+   (model): …; chosen so the field coils are needed."). The colour ranges come from the start state's coldest and
+   hottest values; the stability notice is the tile update's Δt/τ_tile.
+4. Known and stated: no volume losses other than one radiated fraction, no detachment, electrons-only conduction,
+   T_e = T_i at the sheath; four schematic divertors carry about 2.5× a real unit's power; footprint, coil and tile
+   parameters illustrative; lumped tile.
+**Consequences.** Artifact and goldens regenerated natively (as in D-031); tasks 08, 09 and 10 stay reopened until
+re-verified; `verify.sh` is not run (the owner chose to skip WSL).
+
+## D-033 · Heat model version 4: conducting CFC tiles with a water-cooled heat sink (maintainer, 2026-11-26)
+**Context.** The owner asked to make the tiles physical ("do that and continue until most of the things are
+physical") and to decide without asking. Version 3's tile was lumped: T relaxed to T_cool + K·Q with τ_tile = 1 s,
+two tuned numbers with no material behind them.
+**Decision.**
+1. MODEL.md version 4, step 11: every strip cell of every divertor holds N_z = 6 finite-volume cells through a 6 mm CFC
+   armour (the machined NB31 thickness of the W7-X target elements). ρ c(T) ∂T/∂t = ∂_z(k(T) ∂_z T); the load enters
+   the surface, the back loses (T − T_cool)/(dz/2k + R_sink) to the water. k(T) = k_ref/(1 + (T − T_ref)/T_k) with
+   350 W m⁻¹ K⁻¹ at 20 °C and ~170 at 800 °C; c(T) = c_∞ − (c_∞ − c_ref) exp(−(T − T_ref)/T_c), 710 → ~1600 J kg⁻¹ K⁻¹ at
+   800 °C; ρ = 1900 kg m⁻³ (approximate NB31/graphite fits). R_sink = 4.5e-5 m² K W⁻¹ is an effective lumped resistance
+   of the Cu interlayer, CuCrZr heat sink and water film, not calibrated: it puts the CFC/Cu interface at ~1000 °C at
+   22 MW/m², consistent with element tests in which the interlayer approached its ~1100 °C melting point above
+   22 MW/m². Cooling water 30 °C (the design inlet). The reported tile temperature is the
+   surface, S[0] + q dz/(2k).
+2. Removed parameters: tileGain, tauTile. Added: tileThickness, tileCells, tileDensity, kRef, kScale, cpRef, cpHigh,
+   cpScale, Tref, sinkResistance. Contract and both implementations updated; the renderer state carries the tile
+   cells (`slab`) besides the surface temperatures (`tiles`). The stability number is Δt·G_max/(ρ c_ref dz), G_max the larger outflow conductance of an inner (2k/dz) or the
+   back cell (k/dz + 1/(dz/2k + R_sink)): 0.519 (review: the back cell was first left out).
+3. Operating point: with the physical tile 6 MW no longer passes the 1200 °C limit (D1 1035 °C at 3 s), so P_heat
+   becomes 7.5 MW (inside its 2–8 MW range): coils off at 3 s D1 1346, D2 1089, D3 1074, D4 1337 °C
+   (16.2/13.5/13.4/16.1 MW/m²); all on 549/451/427/545 °C. The W7-X view keeps SCENARIO_POWER = 1.25 (now 9.4 MW mean,
+   8.2–10.5 MW): at 1.0 its five targets never reach the limit. The view's footprint colour scale uses the load whose
+   steady surface temperature is the limit (closed form with k(T)).
+4. Known and stated: 1D through the thickness (no lateral conduction along the strip, no erosion or surface
+   radiation); the heat sink is a resistance without heat capacity; the material fits are approximate.
+**Consequences.** Artifact and goldens regenerated natively; tasks 08, 09 and 10 stay reopened until re-verified;
+`verify.sh` not run (WSL skipped by the owner).
+
+## D-034 · Heat model version 5: the target strip deposits exactly its divertor's power (maintainer, 2026-11-26)
+**Context.** Versions 3–4 conserved energy up to the target load q_t but drew the strip profile with a fixed width σ_θ,
+so the strip's integral was not the divertor's power (a stated caveat). The owner asked for most of the model to become
+physical.
+**Decision.** Step 9 becomes Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ/b_k): a flux tube's cross-section shrinks as 1/B, so
+the footprint narrows with the compression b_k. With each radian of strip A_wet/(√(2π)·σ_θ) of target area, the strip
+deposits exactly P_k (tested to the θ grid's sum accuracy, ~4e-5). No parameter changes. Coils off at 3 s is unchanged
+(the peak load is the same); all coils on from 0 s: D1 499, D2 443, D3 425, D4 497 °C (narrower strips are spread better
+by the sweep). Remaining illustrative inputs, stated in the artifact: footprint widths σ_θ, σ_φ; the coil perturbation
+ε, sweep amplitude, frequency and envelopes (no validated coil response, PRD later milestone); the LCFS map and the
+cross-section core profile (illustrations).
+**Consequences.** Artifact regenerated natively; verify.sh not run (WSL skipped).
+
+## D-035 · Heat model version 6: coils move power between divertors; one temperature colour scale (maintainer, 2026-11-26)
+**Context.** The owner asked why heat never moves between divertors and then "do that"; and that the heat maps be
+logical and physical (the edge drawn orange on the 3D surface but cool on the cross-section).
+**Decision.**
+1. MODEL.md step 6: u_k = mean(w·s_k), f_k = 1 − η·c_k, P_k = P_heat(1 − f_rad)·u_k·f_k·(Σu)/(Σu·f). A coil that is on
+   moves its island (its static field) and lowers its divertor's weight by 1 − η (η = `shareShift` = 0.3); the shares
+   are renormalised, so the others gain in proportion to their shares (D1 alone sheds ~24 %, review); the total is unchanged for any coils, and with every coil off or every
+   coil on nothing moves (so the regime checks are unchanged). η is illustrative, like the rest of the coil response
+   (no field-line tracing with the coil fields, no measured W7-X data in this repo). With no heating the shares are 0.
+   Consequence, now tested: D1 and D3 on heats D2 and D4 (D2 1089 → ~1319 °C at 3 s); a coil helps its own divertor
+   at its neighbours' expense, which the control loop's look-ahead already sees.
+2. Display: within each view every temperature map (3D edge, cross-section and its edge strip; explorer surface and
+   core slice) uses ONE logarithmic scale from T_FLOOR = 20 eV to that view's hottest core (T_0, or the explorer
+   scenario's modulated peak), so a temperature has one colour across the view's maps. The edge
+   (~0.2 keV) sits mid-scale, the targets (~0.03–0.045 keV) low, the core (3 keV) at the top. The edge footprint is
+   less contrasted than on the old edge-only scale (view test threshold 12 → 5 ΔE00, still clearly visible).
+**Consequences.** Contract, both implementations, artifact regenerated; verify.sh not run (WSL skipped).
+
+## D-036 · Heat model version 7: core temperature from energy confinement; the LCFS at the upstream temperature (maintainer, 2026-11-26)
+**Context.** The owner asked what is still unphysical and to change it.
+**Decision.**
+1. T_0 is no longer set by hand (3 keV): the ISS04 scaling gives τ_E at P_heat (W7-X R 5.5 m, a 0.53 m, B 2.5 T,
+   ι_2/3 0.896 from the written surfaces, n̄ 6e19 m⁻³), the stored energy W = τ_E·P_heat, the volume-mean temperature
+   with a flat density, and the axis temperature from the fixed profile: 3.38 keV at 7.5 MW. The build refuses a
+   written Tcore0 that is not this value. The W7-X view's scenario scales its core as ⟨T⟩ ∝ P^(1 + α_P).
+2. The LCFS temperature is its plane's upstream temperature (no drawn footprints): the island divertor's targets lie
+   outside the LCFS, so the two-point drop belongs to the scrape-off layer. The 3D view colours each diverter plate by
+   its target temperature T_t on the shared scale. sigmaPhi (the LCFS footprint width) is removed.
+3. Still illustrative, stated: the coil response (ε, A_s, f, envelopes, η), the strip width σ_θ, a single radiated
+   fraction, the profile shape and flat density, 1D tiles. They need field-line tracing with the coil fields or
+   measured W7-X data, which this repo does not have.
+**Consequences.** Contract, both implementations, artifact regenerated; verify.sh not run (WSL skipped).
+
+## D-037 · W7-X view: 0-D core energy balance replaces the hand-made heating timing (maintainer, 2026-11-26)
+**Context.** The owner asked to keep making the model more physical. The plasma explorer's scenario used hand-made
+timing: a core lag of 0.7 s, heating "crossing the LCFS" from 0.4 s, a 2 s edge ramp and a 5 s spread from the D1 sector.
+**Decision.** The heaters switch on at 0.2 s (0.3 s ramp) at 1.25 × P_heat, modulated ±12 % at 0.2 Hz (display
+choices, stated in the view). The core obeys dW/dt = P_in − W/τ_E with τ_E the ISS04 time at the scenario's mean
+power (0.13 s; `confinementTime` added to model.ts, the same formula as the reference), integrated exactly per step.
+The power crossing the LCFS is W/τ_E (energy conserved: while the core fills, part of the heating is stored), spread
+toroidally uniformly (fast parallel transport); the axis temperature follows from W (flat density, T_e = T_i, the
+MODEL.md profile) and the edge temperature from the two-point law T_u ∝ P^(1/ν). The view's scenario line states τ_E.
+**Consequences.** The D1-first sector spread is gone (it had no physical basis). τ_E is held at its mean-power value
+(no P-dependence during the ramp), stated in the code.

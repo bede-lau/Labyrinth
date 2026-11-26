@@ -66,21 +66,21 @@ export function FieldChangeCard({sim, tracks, followed}: {
   const a = frame.profile[index]!.change;
   const b = frame.profile[(index + 1) % frame.profile.length]!.change;
   const markerY = y(a + (cell - index) * (b - a));
-  const destination = particle?.steered ? particle.to : null;
+  const divertor = particle?.from ?? null;
   const summary = 'Signed fractional change in edge field by toroidal angle' +
     (particle ? `, P${particle.id} at ${angle.toFixed(1)}°` : '') +
-    (destination !== null ? `, redirected to D${destination + 1}` : '');
+    (divertor !== null ? `, at divertor D${divertor + 1}` : '');
   return <section className="calc-log field-change" aria-label="Magnetic field change">
     <div className="calc-log__head"><h2>Magnetic field change</h2><time>{frame.time.toFixed(2)} s</time></div>
     <svg style={{'--particle-ink': plasmaMaterials.targetCold} as CSSProperties} viewBox="0 0 352 166" role="img" aria-label={summary}>
       <text x="4" y="15">ΔB/B₀</text>
       {sim.model.phiK.map((phi, k) => <g key={k}>
         <line className="field-change__guide" x1={x(degrees(phi))} x2={x(degrees(phi))} y1="34" y2="129" />
-        {k === destination && <g className="field-change__target" transform={`translate(${x(degrees(phi))} 0)`}>
+        {k === divertor && <g className="field-change__target" transform={`translate(${x(degrees(phi))} 0)`}>
           <rect x="-14" y="16" width="28" height="19" rx="5" style={{fill: colour}} />
           <path d="M-3 35 L0 39 L3 35" style={{fill: colour}} />
         </g>}
-        <text className={k === destination ? 'field-change__target-label' : undefined} x={x(degrees(phi))} y="30" textAnchor="middle">D{k + 1}</text>
+        <text className={k === divertor ? 'field-change__target-label' : undefined} x={x(degrees(phi))} y="30" textAnchor="middle">D{k + 1}</text>
       </g>)}
       {[-bound, 0, bound].map(tick => <g key={tick}>
         <line className={tick === 0 ? 'field-change__zero' : 'field-change__guide'} x1={left} x2={right} y1={y(tick)} y2={y(tick)} />

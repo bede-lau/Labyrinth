@@ -18,10 +18,19 @@ export function StrikeMonitor({ sim }: { sim: Simulation }) {
   useEffect(() => {
     const rows = group.current?.children;
     if (!rows) return;
-    const limit = (params.tileLimit - params.Tcool) / params.tileGain;
+    // The load whose steady surface temperature is the tile limit (bisection on the steady conduction solution).
+    let lo = 0;
+    let hi = 1;
+    while (sim.model.steadySurface(hi) < params.tileLimit) hi *= 2;
+    for (let it = 0; it < 50; it++) {
+      const mid = (lo + hi) / 2;
+      if (sim.model.steadySurface(mid) < params.tileLimit) lo = mid;
+      else hi = mid;
+    }
+    const limit = (lo + hi) / 2;
     const samples = new Float64Array(indices.length);
     const render = () => {
-      const loads = sim.model.stripLoads(sim.state, sim.coils, sim.transfers);
+      const loads = sim.model.stripLoads(sim.state, sim.coils);
       for (let k = 0; k < nDiverters; k++) {
         const row = rows[k]!;
         const bins = row.querySelectorAll<HTMLElement>('i');

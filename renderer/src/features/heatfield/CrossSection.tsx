@@ -5,7 +5,7 @@
 import { memo, useId, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { fieldColor, formatNumber, heatColor, type ThemeName } from '../../design';
 import { cellMean, type SliceLayout } from './slice';
-import { rgbToHex, type ColorBy } from './scene';
+import { heatFraction, rgbToHex, type ColorBy } from './scene';
 
 export interface SliceHover {
   m: number;
@@ -40,8 +40,8 @@ export interface CrossSectionProps {
   overlay?: ReactNode;
   /**
    * The LCFS edge strip (DZ3-3): the last closed flux surface's temperature at this φ (one value per θ node, keV),
-   * drawn in a band just outside the LCFS on the 3D surface's colour range, where the cold footprint under a plate
-   * and its move with the coils show. Omitted when the slice is coloured by |B|.
+   * drawn in a band just outside the LCFS on the 3D surface's colour scale: the plane's upstream temperature, uniform in
+   * θ (version 7; the cold targets are the plates). Omitted when the slice is coloured by |B|.
    */
   edge?: EdgeStrip | null;
 }
@@ -56,7 +56,7 @@ export function edgeFill(values: ArrayLike<number>, i: number, range: readonly [
   const n = values.length;
   const v = (values[i]! + values[(i + 1) % n]!) / 2;
   const [lo, hi] = range;
-  return rgbToHex(heatColor(hi > lo ? (v - lo) / (hi - lo) : 0.5, theme));
+  return rgbToHex(heatColor(hi > lo ? heatFraction(v, range) : 0.5, theme));
 }
 
 function CrossSectionImpl({
@@ -75,7 +75,8 @@ function CrossSectionImpl({
 }: CrossSectionProps) {
   const [lo, hi] = range;
   const lookUp = colorBy === 'temperature' ? heatColor : fieldColor;
-  const fill = (v: number) => rgbToHex(lookUp(hi > lo ? (v - lo) / (hi - lo) : 0.5, theme));
+  const fill = (v: number) =>
+    rgbToHex(lookUp(hi > lo ? (colorBy === 'temperature' ? heatFraction(v, range) : (v - lo) / (hi - lo)) : 0.5, theme));
   const { plot } = layout;
   const hintId = useId();
   const boxRef = useRef<HTMLDivElement>(null);

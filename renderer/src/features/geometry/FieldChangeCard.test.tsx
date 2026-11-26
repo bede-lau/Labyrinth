@@ -29,25 +29,23 @@ test('graphs the applied field at the periodic seam and logs its signed sweep on
   expect(sim.listenerCount).toBe(0);
 });
 
-test('follows the same particle angle and receiver through rerouting, paused selection and deselection', () => {
+test('follows the particle angle and its strike divertor while running or paused', () => {
   const art = fiveTargetScenario(JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/heatfield.json'), 'utf8')));
   const sim = startupSimulation(art);
   const tracks = createParticleTracks(art, sim);
   const card = (followed: number | null) => <FieldChangeCard sim={sim} tracks={tracks} followed={followed} />;
   const view = render(card(1));
   const img = screen.getByRole('img');
-  for (const to of [4, 1]) {
-    act(() => {
-      sim.setCoils([1,0,0,0,0], [{from: 0, to, fraction: 0.2}]);
-      sim.advance(300);
-    });
+  for (const steps of [300, 900]) {
+    act(() => sim.advance(steps));
     const angle = tracks.read()[0]!.phi * 180 / Math.PI;
     expect(Number(img.querySelector('.field-change__cursor circle')!.getAttribute('cx'))).toBeCloseTo(47 + 289 * angle / 360);
-    expect(img.querySelector('.field-change__target-label')).toHaveTextContent('D' + (to + 1));
+    expect(img.querySelector('.field-change__target-label')).toHaveTextContent('D1');
   }
   view.rerender(card(2));
   expect(img).toHaveAccessibleName(/P2 at/);
-  expect(img.querySelector('.field-change__target-label')).toBeNull();
+  expect(img.querySelector('.field-change__target-label')).toHaveTextContent('D2');
   view.rerender(card(null));
   expect(img.querySelector('.field-change__cursor')).toBeNull();
+  expect(img.querySelector('.field-change__target-label')).toBeNull();
 });

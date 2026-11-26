@@ -51,9 +51,8 @@ function WorkerFeed() {
   );
 }
 
-function routeText(decision: Pick<LoopDecision, 'transfers' | 'coils'>) {
-  return decision.transfers.map(r => `D${r.from+1} → D${r.to+1} · ${(100*r.fraction).toFixed(1)}%`).join(' / ') ||
-    (decision.coils.some(Boolean) ? 'Sweep ' + decision.coils.flatMap((on,k) => on ? ['D'+(k+1)] : []).join(', ') : 'Hold');
+function routeText(decision: Pick<LoopDecision, 'coils'>) {
+  return decision.coils.some(Boolean) ? 'Sweep ' + decision.coils.flatMap((on,k) => on ? ['D'+(k+1)] : []).join(', ') : 'Hold';
 }
 
 function hottest(peaks: number[]) {
@@ -122,7 +121,7 @@ export function CalculationLog({ tubes, decision, sim, enabled }: {
       const id = ++sequence;
       const time = sim.time;
       const peaks = Array.from(sim.coils, (_, k) => sim.peakTileC(k));
-      const action = routeText({transfers: sim.commandedTransfers, coils: sim.commandedCoils});
+      const action = routeText({coils: sim.commandedCoils});
       const drive = Float32Array.from(sim.model.drive(sim.coils, sim.absoluteTime));
       void calculate(drive).then(result => {
         if (id === sequence) setLive({time, peaks, action, ...result});

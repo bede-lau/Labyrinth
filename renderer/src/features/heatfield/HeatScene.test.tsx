@@ -1,6 +1,6 @@
 // H9 / H10 with the real Three.js library: only WebGLRenderer is replaced (jsdom has no WebGL context); every
 // geometry, material, colour, raycast and group is built by real three from the committed artifact.
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as THREE from 'three';
@@ -16,7 +16,9 @@ import {
   CAMERA_FOV,
   DEFAULT_ORBIT,
   LABEL,
-  LCFS_T_STEP,
+  T_FLOOR,
+  heatFraction,
+  rgbToHex,
   LUT_SIZE,
   OUTLINE,
   SLICE_LABEL,
@@ -74,6 +76,7 @@ const frame = (over: Partial<FrameInput> = {}): FrameInput => ({
   B: model.field(OFF, start.n),
   drive: model.drive(OFF, model.time(start.n)),
   epsilon: model.params.epsilon,
+  targetT: model.edge(start.n, OFF).Tt,
   colorBy: 'temperature',
   ranges,
   theme: 'light',
@@ -465,14 +468,13 @@ test('H9 applyFrame colours the LCFS by temperature (red hottest, yellow coldest
   const array = attr.array;
   applyFrame(c, geom, frame());
   const v0 = attr.version;
-  // Temperature over [coldest start value rounded down to 0.05 keV, T_ped]: each vertex is its value's colour on
-  // the heat ramp (to one LUT step).
+  // Temperature on the one shared logarithmic scale, T_FLOOR to the core temperature T_0 (the cross-section uses the
+  // same): each vertex is its value's colour on the heat ramp (to one LUT step).
   const [lo, hi] = ranges.lcfsT;
-  const tMin = Math.min(...start.T);
-  expect(hi).toBe(ART.model.parameters.Tped.value);
-  expect(lo).toBeLessThanOrEqual(tMin);
-  expect(lo).toBeGreaterThan(tMin - LCFS_T_STEP);
-  expect(lo).toBeGreaterThanOrEqual(ART.model.parameters.Ttarget.value);
+  expect(ranges.lcfsT).toEqual([T_FLOOR, model.params.Tcore0]);
+  expect(ranges.sliceT).toEqual(ranges.lcfsT);
+  expect(lo).toBeLessThan(Math.min(...start.T));
+  expect(hi).toBeGreaterThan(Math.max(...start.T));
   let hot = 0;
   let cold = 0;
   for (let v = 0; v < N; v++) {
@@ -480,11 +482,18 @@ test('H9 applyFrame colours the LCFS by temperature (red hottest, yellow coldest
     if (start.T[v]! < start.T[cold]!) cold = v;
   }
   for (const v of [hot, cold, 1234, 3000]) {
-    const t = (start.T[v]! - lo) / (hi - lo);
+    const t = heatFraction(start.T[v]!, ranges.lcfsT);
     at(attr, v).forEach((x, k) => expect(Math.abs(x - want(heatColor(t, 'light'))[k]!)).toBeLessThan(4 / LUT_SIZE));
   }
-  // The hottest cell is nearer the red end than the coldest (D1 footprint) is.
-  expect((start.T[hot]! - lo) / (hi - lo)).toBeGreaterThan((start.T[cold]! - lo) / (hi - lo) + 0.3);
+  // The LCFS is at the sectors' upstream temperatures (version 7): hottest and coldest cells are close in colour; the
+  // cold plasma is at the targets, which the plates show.
+  expect(heatFraction(start.T[hot]!, ranges.lcfsT) - heatFraction(start.T[cold]!, ranges.lcfsT)).toBeLessThan(0.05);
+  const plate = (k: number) => ((c.plates.children[2 * k + 1] as THREE.Mesh).material as THREE.MeshBasicMaterial).color;
+  const targetT = model.edge(start.n, OFF).Tt;
+  [0, 1, 2, 3].forEach((k) => expect(plate(k).getHexString()).toBe(hex(rgbToHex(heatColor(heatFraction(targetT[k]!, ranges.lcfsT), 'light')))));
+  expect(heatFraction(targetT[0]!, ranges.lcfsT)).toBeLessThan(heatFraction(start.T[cold]!, ranges.lcfsT) - 0.2);
+  // The edge (~0.2 keV) sits mid-scale, below the core: the same colour as the rim of the cross-section.
+  expect(heatFraction(start.T[hot]!, ranges.lcfsT)).toBeLessThan(0.7);
 
   // Next frame: same attribute and array (nothing rebuilt), new version, new colours.
   const later = model.advance(start, [1, 1, 1, 1], 300);
@@ -745,6 +754,9 @@ test('H9 HeatScene mounts through three, redraws on every model change without r
   const content = scene.children[0] as THREE.Group;
   const surface = content.getObjectByName('lcfs') as THREE.Mesh;
   const colors = surface.geometry.getAttribute('color');
+  // The edge is quasi-steady (MODEL.md v3): with the coils unchanged the map does not change, so sweep D1's strike
+  // line; the switch itself redraws, the map follows with the next step.
+  act(() => sim.setCoil(0, true));
   const before = Array.from(colors.array);
 
   // A model step redraws at once, recolouring the same geometry.
@@ -851,7 +863,9 @@ test('H9 HeatScene mounts through three, redraws on every model change without r
   expect((darkOutline.material as THREE.MeshBasicMaterial).color.getHexString()).toBe(hex(sceneTheme('dark').outline));
   expect((darkOutline.material as THREE.MeshBasicMaterial).side).toBe(THREE.BackSide);
   expect(hex(sceneTheme('dark').outline)).not.toBe(lightOutline);
-  expect(((dark.getObjectByName('D1 plate') as THREE.Mesh).material as THREE.MeshBasicMaterial).color.getHexString()).toBe(hex(sceneTheme('dark').diverter.fill));
+  // Coloured by temperature, the plate shows its target temperature T_t (version 7) on the dark ramp.
+  const tt = model.edge(sim.state.n, sim.coils).Tt[0]!;
+  expect(((dark.getObjectByName('D1 plate') as THREE.Mesh).material as THREE.MeshBasicMaterial).color.getHexString()).toBe(hex(rgbToHex(heatColor(heatFraction(tt, ranges.lcfsT), 'dark'))));
 
   expect([...darkFreed.values()].every((n) => n === 0)).toBe(true);
   expect(sim.listenerCount).toBe(1);

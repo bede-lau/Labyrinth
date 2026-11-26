@@ -6,8 +6,7 @@
 // Geometry is built once per artifact and theme; per frame only BufferAttributes change (needsUpdate), never the
 // geometry itself.
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import { Callout, formatNumber, sceneTheme, type ThemeName } from '../../design';
-import { plasmaMaterials } from '../../design/tokens';
+import { Callout, formatNumber, heatColor, sceneTheme, type ThemeName } from '../../design';
 import type { HeatModel } from './model';
 import {
   ARROW_MARK,
@@ -36,6 +35,8 @@ import {
   sliceLabelTargets,
   sliceTube,
   writeColors,
+  heatFraction,
+  rgbToHex,
   type ColorBy,
   type ColourRanges,
   type HeatSceneGeometry,
@@ -149,6 +150,7 @@ export function buildContent(THREE: Three, geom: HeatSceneGeometry, theme: Theme
       g.setIndex(new THREE.BufferAttribute(part.index, 1));
       const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: new THREE.Color(color), side: THREE.DoubleSide, depthWrite }));
       m.name = `${p.id} ${part === p.fill ? 'plate' : 'edge'}`;
+      if (part === p.fill) m.userData.diverter = geom.plates.indexOf(p);
       m.renderOrder = order;
       plates.add(m);
     }
@@ -294,6 +296,8 @@ export interface FrameInput {
   ranges: ColourRanges;
   theme: ThemeName;
   showLines: boolean;
+  /** Two-point target temperature of every diverter (keV): the plates are coloured by it on the temperature map. */
+  targetT?: ArrayLike<number> | null;
   /** Heat-flow vector (angle space) when arrows are shown. */
   flow: { fPhi: Float64Array; fTheta: Float64Array } | null;
   sliceJ: number;
@@ -304,9 +308,19 @@ export interface FrameInput {
 /** Recolour / reposition in place (BufferAttribute.needsUpdate); nothing is rebuilt. */
 export function applyFrame(content: SceneContent, geom: HeatSceneGeometry, f: FrameInput): void {
   const surfaceArr = content.surfaceColors.array as Float32Array;
-  if (f.colorBy === 'temperature') writeColors(f.T, f.ranges.lcfsT, rampLut('temperature', f.theme), surfaceArr);
+  if (f.colorBy === 'temperature') writeColors(f.T, f.ranges.lcfsT, rampLut('temperature', f.theme), surfaceArr, true);
   else writeColors(f.B, f.ranges.B, rampLut('field', f.theme), surfaceArr);
   content.surfaceColors.needsUpdate = true;
+  // The plates show where the plasma is cold: the target temperature T_t,k on the same scale (version 7); by |B| they
+  // keep their near-black fill. Each fill mesh carries its diverter index (userData.diverter).
+  const fillColour = sceneTheme(f.theme).diverter.fill;
+  content.plates.children.forEach((mesh) => {
+    const k = mesh.userData.diverter as number | undefined;
+    if (k === undefined) return;
+    const t = f.colorBy === 'temperature' ? f.targetT?.[k] : undefined;
+    const colour = t === undefined ? fillColour : rgbToHex(heatColor(heatFraction(t, f.ranges.lcfsT), f.theme));
+    ((mesh as unknown as { material: { color: { set(c: string): void } } }).material).color.set(colour);
+  });
 
   content.lines.visible = f.showLines;
   if (f.showLines) {
@@ -536,6 +550,7 @@ export function HeatScene(props: HeatSceneProps) {
       ranges: p.ranges,
       theme: p.theme,
       showLines: p.showLines,
+      targetT: model.edge(p.sim.state.n, p.sim.coils).Tt,
       flow: p.showArrows ? model.heatFlow(p.sim.state, p.sim.coils) : null,
       sliceJ: p.sliceJ,
       metresPerPx: metresPerPx(distance, p.geom.extent, hh, h.camera.fov),
@@ -569,7 +584,7 @@ export function HeatScene(props: HeatSceneProps) {
       if (leader) {
         if (place) {
           const [x1, y1, x2, y2] = place.leader.map((c) => c.toFixed(1));
-          leader.querySelector('.hf-route-pin')?.setAttribute('transform', `translate(${x1} ${y1})`);
+          leader.querySelector('.hf-plate-pin')?.setAttribute('transform', `translate(${x1} ${y1})`);
           leader.querySelectorAll('line').forEach((line) => {
             line.setAttribute('x1', x1!);
             line.setAttribute('y1', y1!);
@@ -585,13 +600,12 @@ export function HeatScene(props: HeatSceneProps) {
     // hidden while the plate is behind the torus, where it is not drawn (HF3-2). "Slice φ …" (DZ3-1): placed the same
     // way, beyond a visible point of the ring, clear of the D labels and plates. All inside the scene box (DZ4-1).
     const roles = p.inspection ? p.geom.plates.map((_,k) => {
-      const route = p.sim.commandedTransfers.find(r => r.from === k || r.to === k);
       const temperature = p.sim.peakTileC(k);
-      return {route, temperature, hot: temperature >= model.params.tileLimit};
+      return {temperature, hot: temperature >= model.params.tileLimit};
     }) : [];
     const labels = layoutSceneLabels(
       p.geom.plates,
-      occ.plates.map((hidden,k) => hidden && !roles[k]?.route && !roles[k]?.hot),
+      occ.plates.map((hidden,k) => hidden && !roles[k]?.hot),
       sliceTargets.filter((_, i) => occ.slice[i]),
       project,
       { width: w, height: hh },
@@ -599,13 +613,11 @@ export function HeatScene(props: HeatSceneProps) {
     );
     if (p.inspection) labelRefs.current.forEach((el,k) => {
       if (!el) return;
-      const {route, temperature, hot} = roles[k]!;
+      const {temperature, hot} = roles[k]!;
       for (const node of [el, leaderRefs.current[k]]) {
         if (!node) continue;
         node.dataset.hot = String(hot);
-        node.dataset.followed = String(p.followed != null && (k + 1 === p.followed || (route && route.from + 1 === p.followed)));
-        node.dataset.endpoint = route ? (route.from === k ? 'source' : 'destination') : '';
-        if (route) node.style.setProperty('--route-color', plasmaMaterials.particleColours[route.from]!);
+        node.dataset.followed = String(p.followed != null && k + 1 === p.followed);
       }
       const reading = p.geom.plates[k]!.id + (p.showTemperatures === false ? '' : ' · ' + temperature.toFixed(1) + '°C');
       if (el.textContent !== reading) el.textContent = reading;
@@ -781,10 +793,7 @@ export function HeatScene(props: HeatSceneProps) {
             >
               <line className="hf-scene__leader-halo" />
               <line className="hf-scene__leader-line" />
-              {props.inspection && <g className="hf-route-pin">
-                <path className="hf-route-origin" d="M0 -6 6 0 0 6 -6 0Z" />
-                <circle className="hf-route-target" r="6" />
-                <circle className="hf-route-centre" r="2" />
+              {props.inspection && <g className="hf-plate-pin">
                 <svg className="plate-warning" x="-9" y="-24" width="18" height="18" viewBox="0 0 24 24">
                   <path d="m12 3 10 18H2Z"/><path d="M12 8v5m0 3v1"/>
                 </svg>
