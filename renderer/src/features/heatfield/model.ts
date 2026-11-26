@@ -166,12 +166,6 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     }
     return out;
   });
-  // Step 5, φ factor (time independent): g(wrap(φ_j − φ_k), σ_φ).
-  const gPhi = phiK.map((pk) => {
-    const out = new Float64Array(nPhi);
-    for (let j = 0; j < nPhi; j++) out[j] = gauss(wrap(phi[j]! - pk), p.sigmaPhi);
-    return out;
-  });
   // Step 6: toroidal sectors s_k(φ_j) = G_k/Σ_m G_m, G_k = g(wrap(φ_j − φ_k), π/N_div).
   const sector = phiK.map(() => new Float64Array(nPhi));
   for (let j = 0; j < nPhi; j++) {
@@ -320,29 +314,13 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     return out;
   };
 
-  /** Step 12: T[c] = (max(0, 1 − Σ_k g_k)·T_u[c]^ν + Σ_k g_k·T_t,k^ν)^(1/ν). */
+  /**
+   * Step 12 (version 7): the LCFS sits at its plane's upstream temperature, T[c] = T_u[j] = Σ_k s_k[j]·T_u,k. The
+   * island divertor's targets lie outside the LCFS: the two-point drop to T_t is at the targets (the plates).
+   */
   const lcfsInto = (n: number, coils: Coils, out: Float64Array) => {
-    const s = solve(n, coils);
-    const up = upstreamOf(s.edge);
-    const gTh = new Float64Array(nDiv * nTheta);
-    for (let k = 0; k < nDiv; k++) {
-      for (let i = 0; i < nTheta; i++) gTh[k * nTheta + i] = gauss(wrap(theta[i]! - s.strike[k]!), p.sigmaTheta);
-    }
-    const coldNu = Float64Array.from(s.edge.Tt, (t) => Math.pow(t, nu));
-    for (let j = 0; j < nPhi; j++) {
-      const upNu = Math.pow(up[j]!, nu);
-      for (let i = 0; i < nTheta; i++) {
-        let g = gPhi[0]![j]! * gTh[i]!;
-        let gSum = g;
-        let cold = g * coldNu[0]!;
-        for (let k = 1; k < nDiv; k++) {
-          g = gPhi[k]![j]! * gTh[k * nTheta + i]!;
-          gSum = gSum + g;
-          cold = cold + g * coldNu[k]!;
-        }
-        out[j * nTheta + i] = Math.pow(Math.max(1 - gSum, 0) * upNu + cold, 1 / nu);
-      }
-    }
+    const up = upstreamOf(solve(n, coils).edge);
+    for (let j = 0; j < nPhi; j++) out.fill(up[j]!, j * nTheta, (j + 1) * nTheta);
     return out;
   };
 

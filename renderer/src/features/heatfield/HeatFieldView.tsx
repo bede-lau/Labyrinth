@@ -518,7 +518,7 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
                 unit="keV"
                 decimals={3}
                 status={modelPill}
-                note="The strip just outside the last closed flux surface: its model temperature at this φ on the 3D surface's range, where the cold footprint under a diverter and its move with the field adjustments show."
+                note="The strip just outside the last closed flux surface: its model temperature at this φ on the 3D surface's scale, the plane's upstream temperature, uniform in θ. The cold plasma is at the targets, outside the LCFS: the diverter plates in the 3D view show the target temperature."
               />
             </>
           ) : (

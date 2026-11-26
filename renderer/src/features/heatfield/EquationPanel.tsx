@@ -71,7 +71,7 @@ export function EquationPanel({ art, stability }: EquationPanelProps) {
         </dl>
         <div className="hf-table-wrap" role="region" aria-label="Model parameters" tabIndex={0}>
           <table className="hf-table hf-eq__params">
-            <caption className="hf-loop__caption">Parameters as written in artifacts/heatfield.json (physics inputs at W7-X orders of magnitude; footprint, coil and tile parameters illustrative; none fitted)</caption>
+            <caption className="hf-loop__caption">Parameters as written in artifacts/heatfield.json (physics inputs at W7-X orders of magnitude; strip width and coil parameters illustrative; none fitted)</caption>
             <thead>
               <tr>
                 <th scope="col">Symbol</th>

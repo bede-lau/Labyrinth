@@ -6,7 +6,6 @@ import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { formatNumber, heatColor, themes, trimNumber } from '../../design';
-import { deltaE2000, hexToLab } from '../../design/color';
 import { declared, parseCss, rulesFor } from '../../design/cssRules';
 import { CHART_INTERVAL_MS, FrameTicker, UI_INTERVAL_MS } from './playback';
 import { heatFraction, rgbToHex, T_FLOOR } from './scene';
@@ -456,7 +455,7 @@ test('H11 the toroidal-angle slider (5° steps) and Go to D1–D4 choose the sli
   expect(fills.filter((f) => grays.includes(f!))).toEqual([]);
 });
 
-test('H11 the slice temperature bar starts at the data floor; the cold footprint under a coil-off plate shows on the edge strip, is colder in the slice ring, and follows the coils (DZ-4)', async () => {
+test('H11 the slice and the 3D surface share one temperature scale; the edge strip and outer ring sit at the plane\'s upstream temperature and follow the coils (DZ-4, version 7)', async () => {
   const user = userEvent.setup();
   renderContent();
   const ranges = lastScene().ranges;
@@ -492,69 +491,45 @@ test('H11 the slice temperature bar starts at the data floor; the cold footprint
     fillOf(i).forEach((v, k) => expect(Math.abs(v - want[k]!), `cell 7:${i}`).toBeLessThanOrEqual(1));
   };
 
-  // At the start (every coil off after the spin-up) the D1 footprint sits under the plate, θ 82.5°–97.5° round the
-  // strike line at 90°: below every outer cell 45° or more away from it.
-  const under = [11, 12];
-  const away = Array.from({ length: 48 }, (_, i) => i).filter((i) => i <= 5 || i >= 18);
-  // With a realistic ~0.1 keV edge under a 3 keV core (D-031) the outer ring sits low on this linear ramp, so the
-  // footprint is only colder than the ring round it here; the edge strip below shows it on the edge's own scale.
-  const footprintMax = Math.max(...under.map((i) => ramp(cellT(start.T, 0, i))));
-  away.forEach((i) => expect(ramp(cellT(start.T, 0, i)), `cell 7:${i}`).toBeGreaterThan(footprintMax));
-  // The slice draws exactly those positions.
-  for (const i of [...under, 0, 30]) expectFill(i, ramp(cellT(start.T, 0, i)));
+  // Version 7: the LCFS sits at its plane's upstream temperature (the cold plasma is at the targets, outside the LCFS).
+  // So the slice's outer ring and the edge strip are uniform round each plane, the slice gets hotter inward to T_0, and
+  // the slice draws exactly MODEL.md's cross-section values.
+  const ringStart = Array.from({ length: 48 }, (_, i) => cellT(start.T, 0, i));
+  ringStart.forEach((t) => expect(t).toBeCloseTo(ringStart[0]!, 12));
+  for (const i of [0, 12, 30]) expectFill(i, ramp(cellT(start.T, 0, i)));
+  const innerCell = (m: number) => (node(start.T, 0, m, 0) + node(start.T, 0, m, 1) + node(start.T, 0, m + 1, 0) + node(start.T, 0, m + 1, 1)) / 4;
+  expect(innerCell(3)).toBeGreaterThan(innerCell(6));
 
-  // The edge strip (DZ3-3): the LCFS temperature at this φ on the 3D surface's range (ranges.lcfsT), drawn just
-  // outside the LCFS. There the footprint under D1 stands at least 12 ΔE00 (the series gate) off every strip cell
-  // 45° or more away from it. In the slice's own outer ring it does not: on the single linear scale from the data
-  // floor to T_0 it is less than one ramp step from part of the ring (2.6 ΔE00 inboard, DZ3-3).
+  // The edge strip (DZ3-3): the LCFS temperature at this φ on the shared scale, drawn just outside the LCFS.
   const hexOf = (el: Element | null) => el!.getAttribute('fill')!;
   const strip = () => screen.getByTestId('edge-strip');
   const edgeHex = (i: number) => hexOf(strip().querySelector(`[data-edge="${i}"]`));
-  const cellHex = (i: number) => hexOf(document.querySelector(`[data-cell="7:${i}"]`));
-  const dE = (a: string, b: string) => deltaE2000(hexToLab(a), hexToLab(b));
   const [eLo, eHi] = ranges.lcfsT;
   const edgeT = (T: Float64Array, j: number, i: number) => (T[j * 48 + i]! + T[j * 48 + ((i + 1) % 48)]!) / 2;
   const expectEdge = (T: Float64Array, j: number, i: number) => {
     const want = rgb(rgbToHex(heatColor(heatFraction(edgeT(T, j, i), [eLo, eHi]), 'light')));
     rgb(edgeHex(i)).forEach((v, k) => expect(Math.abs(v - want[k]!), `strip ${i}`).toBeLessThanOrEqual(1));
   };
-  for (const i of [...under, 0, 30]) expectEdge(start.T, 0, i);
-  // On the one shared log scale (edge and core together) the footprint is still clearly visible on the strip (ΔE ≥ 5).
-  for (const i of under) expect(Math.min(...away.map((k) => dE(edgeHex(i), edgeHex(k)))), `strip ${i}`).toBeGreaterThanOrEqual(5);
-  expect(Math.min(...away.map((k) => dE(cellHex(12), cellHex(k))))).toBeLessThan(12);
+  for (const i of [0, 12, 30]) expectEdge(start.T, 0, i);
   // Its colour bar says what it shows.
   expect(within(xsPanel).getByRole('img', { name: barName('Edge (LCFS), same scale as the 3D view', ...ranges.lcfsT) })).toBeInTheDocument();
-  const footprintEdge = edgeHex(12);
 
-  // Moving the slider off the diverter (φ 45°) the cold patch is gone: the same cell is warmer and drawn warmer, and
-  // on the strip the change is at least 5 ΔE00 (one shared log scale).
+  // Another plane (φ 45°, between D1 and D2) has its own upstream temperature, drawn as such.
   fireEvent.change(screen.getByRole('slider', { name: /^Toroidal angle φ/ }), { target: { value: '45' } });
-  // (On the one shared log scale, 20 eV–3 keV, the edge sits mid-scale: the patch is visible, not dominant.)
-  expect(ramp(cellT(start.T, 9, 12))).toBeGreaterThan(ramp(cellT(start.T, 0, 12)));
   expectFill(12, ramp(cellT(start.T, 9, 12)));
   expectEdge(start.T, 9, 12);
-  expect(dE(edgeHex(12), footprintEdge)).toBeGreaterThanOrEqual(5);
 
-  // The D1 field adjustment on for 0.5 s: the strike line is at θ_d + A_s (107°) and the coldest outer cell has
-  // moved with it, from θ 82.5°–97.5° to 105°–112.5°, in the drawn colours too.
+  // The D1 field adjustment on for 0.5 s: D1 sheds power to the others (D-035), so its upstream temperature falls; the
+  // drawn ring follows the model.
   await user.click(screen.getByRole('button', { name: 'Go to D1' }));
   await user.click(screen.getByRole('button', { name: 'Field adjustment D1' }));
   for (let k = 0; k < 5; k++) await user.click(screen.getByRole('button', { name: 'Advance 0.1 s' }));
   const sweptState = model.advance(start, [1, 0, 0, 0], 500);
   const swept = sweptState.T;
   upstreamOf.set(swept, model.upstream(sweptState.n, [1, 0, 0, 0]));
-  const ring = Array.from({ length: 48 }, (_, i) => cellT(swept, 0, i));
-  const coldest = ring.indexOf(Math.min(...ring));
-  expect(coldest).toBe(14);
-  // The cell the footprint left is now clearly warmer than the one it moved to.
-  expect(ramp(ring[11]!)).toBeGreaterThan(ramp(ring[14]!));
-  for (const i of [11, 12, 14]) expectFill(i, ramp(ring[i]!));
-  // On the strip the move is plain to see: the cell it left and the cell it moved to are 12 ΔE00 or more apart, and the
-  // cell it moved to has changed by as much since the start.
+  expect(swept[0]!).toBeLessThan(start.T[0]!);
+  for (const i of [11, 12, 14]) expectFill(i, ramp(cellT(swept, 0, i)));
   for (const i of [11, 12, 14]) expectEdge(swept, 0, i);
-  const stripStart14 = rgbToHex(heatColor(heatFraction(edgeT(start.T, 0, 14), [eLo, eHi]), 'light'));
-  expect(dE(edgeHex(11), edgeHex(14))).toBeGreaterThanOrEqual(5);
-  expect(dE(edgeHex(14), stripStart14)).toBeGreaterThanOrEqual(5);
 
   // Coloured by |B| the slice is |B| everywhere: no temperature strip, no edge bar.
   await user.click(screen.getByRole('radio', { name: '|B| (VMEC)' }));
@@ -825,7 +800,7 @@ test('H16 the equation, the parameter table and the honesty notes are shown; eve
   // Parameter table: symbol, value, unit and meaning of all 30 parameters, from the artifact.
   const params = screen.getByRole('table', { name: /Parameters as written in artifacts\/heatfield.json/ });
   const rows = within(params).getAllByRole('row').slice(1);
-  expect(rows).toHaveLength(39);
+  expect(rows).toHaveLength(49);
   for (const [name, p] of Object.entries(ART.model.parameters)) {
     const row = params.querySelector<HTMLElement>(`tr[data-parameter="${name}"]`)!;
     expect(row.querySelector('th')!.textContent).toBe(p.symbol.replace('_', ''));

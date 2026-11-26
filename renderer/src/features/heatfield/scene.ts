@@ -535,7 +535,7 @@ export function arrowScale(g: ArrowGrid, fPhi: Float64Array, fTheta: Float64Arra
 }
 
 /** Arrow length (m) for magnitude |v|: refLength·√(|v|/vRef), capped at maxFactor·refLength. √ so that the weak
- * flow away from the footprints still shows its direction (the scene key says so). */
+ * flow along the nearly isothermal LCFS still shows its direction (the scene key says so). */
 export function arrowLength(mag: number, vRef: number): number {
   return vRef > 0 ? Math.min(ARROWS.maxFactor * ARROWS.refLength, ARROWS.refLength * Math.sqrt(mag / vRef)) : 0;
 }

@@ -6,7 +6,7 @@
 // Geometry is built once per artifact and theme; per frame only BufferAttributes change (needsUpdate), never the
 // geometry itself.
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import { Callout, formatNumber, sceneTheme, type ThemeName } from '../../design';
+import { Callout, formatNumber, heatColor, sceneTheme, type ThemeName } from '../../design';
 import type { HeatModel } from './model';
 import {
   ARROW_MARK,
@@ -35,6 +35,8 @@ import {
   sliceLabelTargets,
   sliceTube,
   writeColors,
+  heatFraction,
+  rgbToHex,
   type ColorBy,
   type ColourRanges,
   type HeatSceneGeometry,
@@ -148,6 +150,7 @@ export function buildContent(THREE: Three, geom: HeatSceneGeometry, theme: Theme
       g.setIndex(new THREE.BufferAttribute(part.index, 1));
       const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: new THREE.Color(color), side: THREE.DoubleSide, depthWrite }));
       m.name = `${p.id} ${part === p.fill ? 'plate' : 'edge'}`;
+      if (part === p.fill) m.userData.diverter = geom.plates.indexOf(p);
       m.renderOrder = order;
       plates.add(m);
     }
@@ -293,6 +296,8 @@ export interface FrameInput {
   ranges: ColourRanges;
   theme: ThemeName;
   showLines: boolean;
+  /** Two-point target temperature of every diverter (keV): the plates are coloured by it on the temperature map. */
+  targetT?: ArrayLike<number> | null;
   /** Heat-flow vector (angle space) when arrows are shown. */
   flow: { fPhi: Float64Array; fTheta: Float64Array } | null;
   sliceJ: number;
@@ -306,6 +311,16 @@ export function applyFrame(content: SceneContent, geom: HeatSceneGeometry, f: Fr
   if (f.colorBy === 'temperature') writeColors(f.T, f.ranges.lcfsT, rampLut('temperature', f.theme), surfaceArr, true);
   else writeColors(f.B, f.ranges.B, rampLut('field', f.theme), surfaceArr);
   content.surfaceColors.needsUpdate = true;
+  // The plates show where the plasma is cold: the target temperature T_t,k on the same scale (version 7); by |B| they
+  // keep their near-black fill. Each fill mesh carries its diverter index (userData.diverter).
+  const fillColour = sceneTheme(f.theme).diverter.fill;
+  content.plates.children.forEach((mesh) => {
+    const k = mesh.userData.diverter as number | undefined;
+    if (k === undefined) return;
+    const t = f.colorBy === 'temperature' ? f.targetT?.[k] : undefined;
+    const colour = t === undefined ? fillColour : rgbToHex(heatColor(heatFraction(t, f.ranges.lcfsT), f.theme));
+    ((mesh as unknown as { material: { color: { set(c: string): void } } }).material).color.set(colour);
+  });
 
   content.lines.visible = f.showLines;
   if (f.showLines) {
@@ -535,6 +550,7 @@ export function HeatScene(props: HeatSceneProps) {
       ranges: p.ranges,
       theme: p.theme,
       showLines: p.showLines,
+      targetT: model.edge(p.sim.state.n, p.sim.coils).Tt,
       flow: p.showArrows ? model.heatFlow(p.sim.state, p.sim.coils) : null,
       sliceJ: p.sliceJ,
       metresPerPx: metresPerPx(distance, p.geom.extent, hh, h.camera.fov),

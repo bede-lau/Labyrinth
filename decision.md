@@ -488,3 +488,18 @@ logical and physical (the edge drawn orange on the 3D surface but cool on the cr
    (~0.2 keV) sits mid-scale, the targets (~0.03–0.045 keV) low, the core (3 keV) at the top. The edge footprint is
    less contrasted than on the old edge-only scale (view test threshold 12 → 5 ΔE00, still clearly visible).
 **Consequences.** Contract, both implementations, artifact regenerated; verify.sh not run (WSL skipped).
+
+## D-036 · Heat model version 7: core temperature from energy confinement; the LCFS at the upstream temperature (maintainer, 2026-11-26)
+**Context.** The owner asked what is still unphysical and to change it.
+**Decision.**
+1. T_0 is no longer set by hand (3 keV): the ISS04 scaling gives τ_E at P_heat (W7-X R 5.5 m, a 0.53 m, B 2.5 T,
+   ι_2/3 0.896 from the written surfaces, n̄ 6e19 m⁻³), the stored energy W = τ_E·P_heat, the volume-mean temperature
+   with a flat density, and the axis temperature from the fixed profile: 3.38 keV at 7.5 MW. The build refuses a
+   written Tcore0 that is not this value. The W7-X view's scenario scales its core as ⟨T⟩ ∝ P^(1 + α_P).
+2. The LCFS temperature is its plane's upstream temperature (no drawn footprints): the island divertor's targets lie
+   outside the LCFS, so the two-point drop belongs to the scrape-off layer. The 3D view colours each diverter plate by
+   its target temperature T_t on the shared scale. sigmaPhi (the LCFS footprint width) is removed.
+3. Still illustrative, stated: the coil response (ε, A_s, f, envelopes, η), the strip width σ_θ, a single radiated
+   fraction, the profile shape and flat density, 1D tiles. They need field-line tracing with the coil fields or
+   measured W7-X data, which this repo does not have.
+**Consequences.** Contract, both implementations, artifact regenerated; verify.sh not run (WSL skipped).

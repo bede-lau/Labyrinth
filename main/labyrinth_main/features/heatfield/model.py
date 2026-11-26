@@ -3,7 +3,7 @@
 This is NOT a simulation of W7-X. The scrape-off layer at each divertor is the textbook two-point model (Spitzer
 parallel conduction, sheath, pressure balance), fed by a fixed heating power, so the power that reaches the targets
 is exactly the heating power less the radiated fraction (energy is conserved by construction). The physics inputs are
-W7-X orders of magnitude; the footprint, coil-sweep and tile parameters are illustrative; nothing is fitted to
+W7-X orders of magnitude; the strip width and coil-sweep parameters are illustrative; nothing is fitted to
 measurements; the four diverters are schematic and the control coils are not a validated coil response. Every output
 is provenance `model`.
 
@@ -37,11 +37,22 @@ N_DIVERTERS = 4
 # four schematic diverters carry the power W7-X's ten units share. Spitzer's exponent and the fixed iteration count of
 # the two-point solve are data, so that neither implementation holds a numeric constant of the model.
 PARAMETERS: dict[str, tuple[float, str, str, str]] = {
-    "Tcore0": (3.0, "keV", "T_0", "core temperature on axis (cross-sections only)"),
+    "Tcore0": (3.381445, "keV", "T_0", "core temperature on axis (cross-sections only), from energy confinement: the "
+               "ISS04 stellarator scaling at P_heat gives the stored energy, hence the mean and axis temperature"),
+    "majorRadius": (5.5, "m", "R", "W7-X major radius"),
+    "minorRadius": (0.53, "m", "a", "W7-X effective minor radius"),
+    "coreDensity": (6.0e19, "m⁻³", "n̄", "line-averaged density (flat profile assumed; W7-X high-performance range)"),
+    "densityUnit": (1.0e19, "m⁻³", "n_unit", "density unit of the ISS04 scaling (unit conversion)"),
+    "iss04C": (0.134, "s", "C", "ISS04 coefficient: τ_E = C a^α_a R^α_R P^α_P (n̄/n_unit)^α_n B^α_B ι_2/3^α_ι"),
+    "iss04A": (2.28, "–", "α_a", "ISS04 exponent of the minor radius (m)"),
+    "iss04R": (0.64, "–", "α_R", "ISS04 exponent of the major radius (m)"),
+    "iss04P": (-0.61, "–", "α_P", "ISS04 exponent of the heating power (MW)"),
+    "iss04N": (0.54, "–", "α_n", "ISS04 exponent of the line-averaged density (10¹⁹ m⁻³)"),
+    "iss04B": (0.84, "–", "α_B", "ISS04 exponent of the field (T)"),
+    "iss04Iota": (0.41, "–", "α_ι", "ISS04 exponent of the rotational transform at two-thirds of the minor radius"),
     "rhoBlend": (0.7, "–", "ρ_b", "inside ρ_b the cross-section shows the core profile only"),
     "B0": (2.5, "T", "B_0", "reference field"),
-    "sigmaPhi": (0.06, "rad", "σ_φ", "footprint width in φ on the LCFS map (illustrative)"),
-    "sigmaTheta": (0.12, "rad", "σ_θ", "footprint and strike-line width in θ (illustrative)"),
+    "sigmaTheta": (0.12, "rad", "σ_θ", "width in θ of the target strip at B_0 (illustrative)"),
     "sweepAmplitude": (0.30, "rad", "A_s", "strike-line excursion when a coil is on (illustrative)"),
     "sweepFrequency": (2.0, "Hz", "f", "coil (sweep) frequency (illustrative)"),
     "epsilon": (0.03, "–", "ε", "relative |B| perturbation of one coil at its centre (illustrative)"),
@@ -129,6 +140,7 @@ class Inputs:
     theta_d: float
     phi_k: tuple[float, ...]
     probes: tuple[tuple[int, int], ...] = PROBES
+    iota23: float = float("nan")  # rotational transform at rho = 2/3 (linear between the written surfaces)
 
     def with_params(self, **changes: float) -> Inputs:
         return replace(self, params={**self.params, **changes})
@@ -158,7 +170,17 @@ def inputs_from_artifact(art: Mapping) -> Inputs:
         theta_d=float(div["thetaCentre"]),
         phi_k=tuple(float(d["phi"]) for d in div["items"]),
         probes=tuple((int(i), int(j)) for i, j in art["model"]["probes"]),
+        iota23=iota_at(art["surfaces"], 2 / 3),
     )
+
+
+def iota_at(surfaces: Sequence[Mapping], rho: float) -> float:
+    """Rotational transform at rho, linear between the two written surfaces around it."""
+    for lo, hi in zip(surfaces, surfaces[1:], strict=False):
+        if lo["rho"] <= rho <= hi["rho"]:
+            w = (rho - lo["rho"]) / (hi["rho"] - lo["rho"])
+            return float((1 - w) * lo["iota"] + w * hi["iota"])
+    raise ValueError(f"no surfaces around rho {rho}")
 
 
 @dataclass(frozen=True)
@@ -187,8 +209,6 @@ class Model:
         # Step 2 (time independent): coil envelope h_k[c] = g(wrap(phi_j - phi_k), s_cphi) * g(wrap(theta_i - theta_d), s_ctheta)
         g_theta_d = gauss(wrap(self.theta - inp.theta_d), p["sigmaCoilTheta"])
         self.h = np.stack([gauss(wrap(self.phi - pk), p["sigmaCoilPhi"])[:, None] * g_theta_d[None, :] for pk in inp.phi_k])
-        # Step 5, phi factor (time independent): g(wrap(phi_j - phi_k), sigma_phi)
-        self.g_phi = np.stack([gauss(wrap(self.phi - pk), p["sigmaPhi"]) for pk in inp.phi_k])
         # Step 6: toroidal sectors s_k(phi_j) = G_k / sum_m G_m, G_k = g(wrap(phi_j - phi_k), pi/nDiv)
         big = np.stack([gauss(wrap(self.phi - pk), math.pi / N_DIVERTERS) for pk in inp.phi_k])
         self.sector = big / big.sum(axis=0)[None, :]
@@ -196,7 +216,7 @@ class Model:
         self.j_k = tuple(int(round(pk / self.dphi)) % n_p for pk in inp.phi_k)
         self._cache = {}
 
-    # ---- steps 1-5: coils, field, strike lines, footprints --------------------------------------------------------
+    # ---- steps 1-4: coils, field, strike lines --------------------------------------------------------------------
     def coil_drive(self, coils: Sequence[int], t: float) -> np.ndarray:
         """Step 1: a_k = c_k * cos(2 pi f t)."""
         c = math.cos(TWO_PI * self.inp.params["sweepFrequency"] * t)
@@ -212,12 +232,6 @@ class Model:
     def strike_lines(self, a: np.ndarray) -> np.ndarray:
         """Step 4: theta_s,k = theta_d + A_s * a_k."""
         return self.inp.theta_d + self.inp.params["sweepAmplitude"] * a
-
-    def footprints(self, a: np.ndarray) -> np.ndarray:
-        """Step 5: g_k[c] = g(wrap(phi_j - phi_k), sigma_phi) * g(wrap(theta_i - theta_s,k), sigma_theta); (4, nPhi, nTheta)."""
-        ts = self.strike_lines(a)
-        g_theta = np.stack([gauss(wrap(self.theta - tk), self.inp.params["sigmaTheta"]) for tk in ts])
-        return self.g_phi[:, :, None] * g_theta[:, None, :]
 
     # ---- steps 6-10: power, compression, target load, two-point model --------------------------------------------
     def power_shares(self, coils: Sequence[float] = (0,) * N_DIVERTERS) -> np.ndarray:
@@ -295,19 +309,28 @@ class Model:
         return out
 
     def lcfs_temperature(self, n: int, coils: Sequence[int]) -> np.ndarray:
-        """Step 12: T_u(c) = sum_k s_k(phi_j) T_u,k; along a conducting field line T^nu falls linearly to the target, so
-        T(c) = (max(0, 1 - sum_k g_k[c]) T_u(c)^nu + sum_k g_k[c] T_t,k^nu)^(1/nu): upstream away from the footprints,
-        the target temperature at their centre."""
+        """Step 12 (version 7): the LCFS sits at its plane's upstream temperature, T[c] = T_u(phi_j) =
+        sum_k s_k(phi_j) T_u,k. The island divertor's targets lie outside the LCFS: the two-point drop to T_t is in the
+        scrape-off layer, at the targets, not on this surface."""
         sol = self.solve(n, coils)
-        nu = self.inp.params["conductionExponent"]
-        g = self.footprints(sol["a"])
-        t_up = (self.sector * sol["Tu"][:, None]).sum(axis=0)[:, None] * np.ones((1, self.inp.n_theta))
-        g_sum = g[0]
-        cold = g[0] * sol["Tt"][0] ** nu
-        for k in range(1, N_DIVERTERS):
-            g_sum = g_sum + g[k]
-            cold = cold + g[k] * sol["Tt"][k] ** nu
-        return (np.maximum(1.0 - g_sum, 0.0) * t_up ** nu + cold) ** (1 / nu)
+        return (self.sector * sol["Tu"][:, None]).sum(axis=0)[:, None] * np.ones((1, self.inp.n_theta))
+
+    # ---- core temperature from energy confinement (cross-sections) ----------------------------------------------------
+    def confinement(self) -> dict:
+        """ISS04: tau_E = C a^aa R^aR P^aP (n/n_unit)^an B^aB iota_2/3^ai (s); stored energy W = tau_E P_heat MW (J);
+        with a flat density and T_e = T_i, W = 3 n <T> keV V, V = 2 pi^2 R a^2, so <T> (keV); with the profile
+        T = T_e + (T_0 - T_e)(1 - rho^2)^2 (volume mean T_e + (T_0 - T_e)/3) and T_e the mean upstream temperature,
+        T_0 = T_e + 3 (<T> - T_e)."""
+        p = self.inp.params
+        tau = (p["iss04C"] * p["minorRadius"] ** p["iss04A"] * p["majorRadius"] ** p["iss04R"] * p["Pheat"] ** p["iss04P"]
+               * (p["coreDensity"] / p["densityUnit"]) ** p["iss04N"] * p["B0"] ** p["iss04B"] * self.inp.iota23 ** p["iss04Iota"])
+        volume = 2 * math.pi ** 2 * p["majorRadius"] * p["minorRadius"] ** 2
+        energy = tau * p["Pheat"] * p["MW"]
+        mean_t = energy / (3 * p["coreDensity"] * volume * p["keV"])
+        sol = self.solve(0, (0,) * N_DIVERTERS)
+        t_e = float((self.sector * sol["Tu"][:, None]).sum(axis=0).mean())
+        return {"tauE": tau, "volume": volume, "energy": energy, "meanT": mean_t, "edgeT": t_e,
+                "axisT": t_e + 3 * (mean_t - t_e)}
 
     # ---- the step ---------------------------------------------------------------------------------------------------
     def initial_state(self) -> State:
@@ -421,6 +444,9 @@ class Model:
                 sheath = p["sheathGamma"] * (p["nSep"] * t_u / (2 * t_t)) * p["keV"] * t_t * c_s
                 if not abs(sheath / q_par - 1) < 1e-6:
                     raise ValueError("two-point iteration not converged at the operating loads (sheath residual)")
+        axis = self.confinement()["axisT"]
+        if not abs(axis / p["Tcore0"] - 1) < 1e-6:
+            raise ValueError(f"Tcore0 {p['Tcore0']:.7g} keV is not the ISS04 axis temperature {axis:.7g} keV (MODEL.md)")
         return number
 
 

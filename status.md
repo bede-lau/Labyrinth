@@ -7,6 +7,11 @@
 
 ## Current state
 
+### 2026-11-26: heat model version 7 — core temperature from ISS04; LCFS at the upstream temperature (D-036)
+- T_0 from ISS04 energy confinement (3.38 keV at 7.5 MW; checked at build). LCFS = plane's upstream temperature; the
+  plates show the target temperature. sigmaPhi removed. Remaining illustrative: coil response, strip width, f_rad.
+- Checks (native): renderer 1,739 tests, `tsc` clean; backend 26/27 (Windows path). Review: APPROVED on the second pass.
+
 ### 2026-11-26: heat model version 6 — coils move power between divertors; one temperature colour scale (D-035)
 - Step 6: a coil that is on lowers its divertor's weight by 1 − η (η 0.3), renormalised (D1 alone sheds ~24 %; total
   conserved; all-off and all-on unchanged). D1+D3 on now heats D2/D4 (~1319 °C). η illustrative.

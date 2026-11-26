@@ -260,8 +260,10 @@ def test_H3_four_schematic_diverters_at_quarter_turns():
 
 
 # ---- H4: the reference model ----------------------------------------------------------------------------------------
-MODEL_MD_TABLE = {  # tasks/10-heat-field/MODEL.md "Parameters", version 6 (Pheat and wettedArea set the operating point)
-    "Tcore0": (3.0, "keV"), "rhoBlend": (0.7, "–"), "B0": (2.5, "T"), "sigmaPhi": (0.06, "rad"),
+MODEL_MD_TABLE = {  # tasks/10-heat-field/MODEL.md "Parameters", version 7 (Pheat and wettedArea set the operating point)
+    "Tcore0": (3.381445, "keV"), "majorRadius": (5.5, "m"), "minorRadius": (0.53, "m"), "coreDensity": (6.0e19, "m⁻³"),
+    "densityUnit": (1.0e19, "m⁻³"), "iss04C": (0.134, "s"), "iss04A": (2.28, "–"), "iss04R": (0.64, "–"),
+    "iss04P": (-0.61, "–"), "iss04N": (0.54, "–"), "iss04B": (0.84, "–"), "iss04Iota": (0.41, "–"), "rhoBlend": (0.7, "–"), "B0": (2.5, "T"),
     "sigmaTheta": (0.12, "rad"), "sweepAmplitude": (0.30, "rad"), "sweepFrequency": (2.0, "Hz"), "epsilon": (0.03, "–"),
     "sigmaCoilPhi": (0.20, "rad"), "sigmaCoilTheta": (0.60, "rad"), "shareShift": (0.3, "–"), "Pheat": (7.5, "MW"), "fRad": (0.3, "–"),
     "wettedArea": (0.1, "m²"), "connectionLength": (200.0, "m"), "kappa0": (6.324555e13, "W m⁻¹ keV⁻⁷ᐟ²"),
@@ -386,13 +388,11 @@ def _literal_step(inp: model.Inputs, slab: np.ndarray, n: int, coils) -> tuple[n
             slab_new[k, i] = new
             tiles_new[k, i] = new[0] + q * dz / (2 * k_of(new[0]))
     nxt = solve(n + 1)
-    nu = p["conductionExponent"]
     T = np.empty((n_p, n_t))
     for j in range(n_p):
         t_up = sum(sector[k][j] * nxt[k][2] for k in range(4))
         for i in range(n_t):
-            gk = [g(wrap(ph[j] - inp.phi_k[k]), p["sigmaPhi"]) * g(wrap(th[i] - nxt[k][0]), p["sigmaTheta"]) for k in range(4)]
-            T[j, i] = (max(0.0, 1 - sum(gk)) * t_up ** nu + sum(gk[k] * nxt[k][3] ** nu for k in range(4))) ** (1 / nu)  # 12
+            T[j, i] = t_up  # 12
     return T, slab_new, tiles_new
 
 
@@ -409,6 +409,28 @@ def test_H4_one_step_is_model_md_transcribed_literally():
         np.testing.assert_allclose(got.T, want_T, rtol=1e-12, atol=0)
         np.testing.assert_allclose(got.slab, want_slab, rtol=1e-12, atol=0)
         np.testing.assert_allclose(got.tiles, want_tiles, rtol=1e-12, atol=0)
+
+
+def test_H4_the_core_temperature_follows_from_iss04_energy_confinement():
+    inp = written_inputs()
+    p = inp.params
+    m = model.Model(inp)
+    c = m.confinement()
+    # rho 2/3 iota from the written surfaces (0.625 and 0.75): W7-X ~0.9
+    assert 0.88 < inp.iota23 < 0.91
+    # ISS04 at W7-X size and 7.5 MW: ~0.15 s, ~1.1 MJ in ~30 m^3, <T> ~1.3 keV, T_0 ~3.4 keV (W7-X: 3-4 keV)
+    assert c["tauE"] == pytest.approx(0.149, rel=0.01) and c["volume"] == pytest.approx(30.5, rel=0.01)
+    assert c["energy"] == pytest.approx(1.12e6, rel=0.01) and c["meanT"] == pytest.approx(1.27, rel=0.01)
+    assert c["axisT"] == pytest.approx(p["Tcore0"], rel=1e-6)
+    # stored energy is the profile integral: 3 n keV V (T_e + (T_0 - T_e)/3)
+    assert 3 * p["coreDensity"] * p["keV"] * c["volume"] * (c["edgeT"] + (c["axisT"] - c["edgeT"]) / 3) == pytest.approx(c["energy"], rel=1e-12)
+    # more heating, hotter core, but less than proportionally (tau_E falls as P^-0.61)
+    hot = model.Model(inp.with_params(Pheat=2 * p["Pheat"])).confinement()
+    assert c["meanT"] < hot["meanT"] < 2 * c["meanT"]
+    assert hot["meanT"] / c["meanT"] == pytest.approx(2 ** (1 + p["iss04P"]), rel=1e-12)
+    # a written Tcore0 that is not the scaling's is refused
+    with pytest.raises(ValueError, match="ISS04"):
+        model.Model(inp.with_params(Tcore0=3.0)).check_stability()
 
 
 def test_H4_the_tile_conducts_and_conserves_energy():
@@ -501,18 +523,17 @@ def test_H4_the_two_point_solution_satisfies_conduction_sheath_and_pressure_bala
     assert m.two_point(0.0) == (0.0, 0.0)
 
 
-def test_H4_the_lcfs_map_runs_from_target_to_upstream_temperature():
+def test_H4_the_lcfs_sits_at_the_upstream_temperature():
     inp = written_inputs()
     m = model.Model(inp)
-    sol = m.solve(0, (0, 0, 0, 0))
-    T = m.lcfs_temperature(0, (0, 0, 0, 0))
-    assert T.min() >= sol["Tt"].min() * (1 - 1e-9) and T.max() <= sol["Tu"].max() * (1 + 1e-9)
-    # at each footprint centre (theta_12 = theta_d up to rounding, plane j_k) the target temperature
-    for k in range(4):
-        assert T[m.j_k[k], 12] == pytest.approx(sol["Tt"][k], rel=1e-5)
-    # far from every divertor the upstream temperature of the sector
-    j_mid = N_PHI // 8
-    assert T[j_mid, 36] == pytest.approx(float((m.sector[:, j_mid] * sol["Tu"]).sum()), rel=1e-6)
+    for coils in ((0, 0, 0, 0), (1, 0, 1, 0)):
+        sol = m.solve(0, coils)
+        T = m.lcfs_temperature(0, coils)
+        # every cell of a plane is that plane's upstream temperature: the targets (T_t) lie outside the LCFS
+        up = (m.sector * sol["Tu"][:, None]).sum(axis=0)
+        np.testing.assert_allclose(T, up[:, None] * np.ones((1, N_THETA)), rtol=1e-12)
+        assert T.min() >= sol["Tu"].min() * (1 - 1e-9) and T.max() <= sol["Tu"].max() * (1 + 1e-9)
+        assert T.min() > 3 * sol["Tt"].max()  # nothing on the LCFS is as cold as a target
 
 
 def test_H4_stability_is_the_tile_conduction():
@@ -559,8 +580,8 @@ def test_H4_a_coil_moves_the_strike_line_and_changes_B_by_epsilon_at_its_centre(
             assert B[j, i] / inp.b_lcfs[j, i] - 1 == pytest.approx(p["epsilon"] * drive, abs=1e-12)
             # ... and nowhere by more
             assert np.abs(B / inp.b_lcfs - 1).max() <= p["epsilon"] * abs(drive) + 1e-12
-            # the footprint follows: its theta centroid on plane j_k sits at the swept strike line
-            g = m.footprints(a)[k, j]
+            # the target strip follows: its theta centroid sits at the swept strike line
+            g = m.strip_loads(np.ones(4), a, np.ones(4))[k]
             off = np.array([model.wrap(th - inp.theta_d) for th in TAU * np.arange(N_THETA) / N_THETA])
             assert float(g @ off / g.sum()) == pytest.approx(p["sweepAmplitude"] * drive, abs=1e-6)
     # a coil that is off leaves the field exactly as VMEC gives it
@@ -665,9 +686,9 @@ def test_H5_regime_requirements_hold():
 
 def test_H5_model_text_states_what_the_model_is():
     m = built()["model"]
-    assert m["version"] == 6 and m["name"] and m["summary"]
+    assert m["version"] == 7 and m["name"] and m["summary"]
     ids = [e["id"] for e in m["equations"]]
-    assert ids == ["power", "target-load", "two-point", "lcfs-map", "field", "strike-line", "footprint", "tiles"]
+    assert ids == ["power", "target-load", "two-point", "lcfs-map", "field", "strike-line", "core", "tiles"]
     assert all(e["text"] and e["meaning"] for e in m["equations"])
     assert m["equations"][0]["text"].startswith("P_k = P_heat·(1 − f_rad)")
     for phrase in ("wrap(x) = x − 2π·floor(x/(2π) + 0.5)", "quasi-steady", "largest fromStep ≤ n",
@@ -677,7 +698,7 @@ def test_H5_model_text_states_what_the_model_is():
     lim = m["limitations"]
     for phrase in ("Reduced model, not a simulation of W7-X", "not fitted to measurements", "schematic",
                    "ten island-divertor units", "coil response is not validated", "later milestone",
-                   "not a 2D transport solution", "no detachment", "2.5 times the power",
+                   "no 2D transport across the surface", "ISS04", "no detachment", "2.5 times the power",
                    "not the GENE-X spatial-parallel run", "remain illustrative"):
         assert phrase in lim, phrase
     assert "two-point model" in m["summary"] and "not a simulation of W7-X" in m["summary"]

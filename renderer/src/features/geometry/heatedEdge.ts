@@ -1,4 +1,4 @@
-import { createModel } from '../heatfield/model';
+import { createModel, paramsOf } from '../heatfield/model';
 import { colourRanges, T_FLOOR } from '../heatfield/scene';
 import { Simulation } from '../heatfield/sim';
 import type { Diverter, HeatfieldArtifact } from '../heatfield/types';
@@ -28,7 +28,7 @@ function coreResponse(time: number) {
 
 export function heatedRanges(art: HeatfieldArtifact, sim: Simulation) {
   const ranges = colourRanges(art, sim.model, sim.start.T);
-  const {Tcore0} = sim.model.params;
+  const Tcore0 = scenarioCore(sim.model.params);
   // One shared logarithmic scale for the edge and the core slice: T_FLOOR to the hottest core the scenario reaches.
   const hot = Tcore0 * (1 + modulation / Math.hypot(1, omega * lossTime));
   ranges.lcfsT = [T_FLOOR, hot];
@@ -57,6 +57,14 @@ export function startupSimulation(art: HeatfieldArtifact) {
  */
 export const SCENARIO_POWER = 1.25;
 
+/**
+ * The scenario's mean core temperature on axis: the model's T_0 (ISS04 at P_heat) scaled with the scenario's power as
+ * ISS04 scales the mean temperature, <T> ∝ τ_E·P ∝ P^(1 + α_P) (≈ P^0.39; the edge term is neglected here).
+ */
+export function scenarioCore(p: { Tcore0: number; iss04P: number }) {
+  return p.Tcore0 * SCENARIO_POWER ** (1 + p.iss04P);
+}
+
 /** The scenario's heating power once on (MW): its mean and the range the core modulation spans. */
 export function scenarioHeating(Pheat: number) {
   const mean = SCENARIO_POWER * Pheat;
@@ -84,5 +92,5 @@ export function heatedEdge(art: HeatfieldArtifact) {
       weight.fill(gain * supply, j * nTheta, (j + 1) * nTheta);
     }
     return weight;
-  }, time => ramp(time, 1.3) * art.model.parameters.Tcore0.value * coreResponse(time));
+  }, time => ramp(time, 1.3) * scenarioCore(paramsOf(art)) * coreResponse(time));
 }

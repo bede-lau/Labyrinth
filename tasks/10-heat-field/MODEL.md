@@ -1,4 +1,4 @@
-# Edge heat model, version 6: two-point scrape-off layer, energy conserved, conducting CFC tiles (D-027, D-031–D-035)
+# Edge heat model, version 7: two-point scrape-off layer, energy conserved, conducting CFC tiles (D-027, D-031–D-036)
 
 **What this is.** A reduced model of the owner's loop (heat map → predicted heat load → change the magnetic field →
 new heat map) on the **real** W7-X geometry and |B| of `wout_w7x_kjm.nc`. Version 3 (D-032) replaces version 2's 2D
@@ -8,7 +8,7 @@ part. The edge is **quasi-steady** (its time scales are microseconds, far below 
 Version 4 (D-033) replaces the lumped tile (gain K, time constant τ_tile) with **heat conduction through the CFC
 armour** of the W7-X target elements: 6 mm of NB31 with temperature-dependent conductivity and heat capacity, cooled at
 its back through the copper heat sink by 30 °C water. The heating, transport, sheath and tile inputs are W7-X orders
-of magnitude (the material fits are approximate); the footprint and coil-sweep parameters remain illustrative; nothing
+of magnitude (the material fits are approximate); the strip width and coil parameters remain illustrative; nothing
 is fitted to measurements. The operating point is a **high-power case** (below). It is
 **not** a simulation of W7-X, its diverter positions are schematic (the owner's four; W7-X has ten divertor units, so
 each one here carries about 2.5 times the power of a real one) and its "control coils" are not a validated coil
@@ -36,16 +36,27 @@ document exactly; a change here changes both implementations and the golden valu
 
 | Name | Symbol | Value | Unit | Meaning |
 |---|---|---|---|---|
-| Tcore0 | T_0 | 3 | keV | core temperature on axis (cross-sections only) |
+| Tcore0 | T_0 | 3.38144 | keV | core temperature on axis (cross-sections only), from energy confinement: the ISS04 stellarator scaling at P_heat gives the stored energy, hence the mean and axis temperature |
+| majorRadius | R | 5.5 | m | W7-X major radius |
+| minorRadius | a | 0.53 | m | W7-X effective minor radius |
+| coreDensity | n̄ | 6e+19 | m⁻³ | line-averaged density (flat profile assumed; W7-X high-performance range) |
+| densityUnit | n_unit | 1e+19 | m⁻³ | density unit of the ISS04 scaling (unit conversion) |
+| iss04C | C | 0.134 | s | ISS04 coefficient: τ_E = C a^α_a R^α_R P^α_P (n̄/n_unit)^α_n B^α_B ι_2/3^α_ι |
+| iss04A | α_a | 2.28 | – | ISS04 exponent of the minor radius (m) |
+| iss04R | α_R | 0.64 | – | ISS04 exponent of the major radius (m) |
+| iss04P | α_P | -0.61 | – | ISS04 exponent of the heating power (MW) |
+| iss04N | α_n | 0.54 | – | ISS04 exponent of the line-averaged density (10¹⁹ m⁻³) |
+| iss04B | α_B | 0.84 | – | ISS04 exponent of the field (T) |
+| iss04Iota | α_ι | 0.41 | – | ISS04 exponent of the rotational transform at two-thirds of the minor radius |
 | rhoBlend | ρ_b | 0.7 | – | inside ρ_b the cross-section shows the core profile only |
 | B0 | B_0 | 2.5 | T | reference field |
-| sigmaPhi | σ_φ | 0.06 | rad | footprint width in φ on the LCFS map (illustrative) |
-| sigmaTheta | σ_θ | 0.12 | rad | footprint and strike-line width in θ (illustrative) |
+| sigmaTheta | σ_θ | 0.12 | rad | width in θ of the target strip at B_0 (illustrative) |
 | sweepAmplitude | A_s | 0.3 | rad | strike-line excursion when a coil is on (illustrative) |
 | sweepFrequency | f | 2 | Hz | coil (sweep) frequency (illustrative) |
 | epsilon | ε | 0.03 | – | relative |B| perturbation of one coil at its centre (illustrative) |
 | sigmaCoilPhi | σ_cφ | 0.2 | rad | coil envelope width in φ (illustrative) |
 | sigmaCoilTheta | σ_cθ | 0.6 | rad | coil envelope width in θ (illustrative) |
+| shareShift | η | 0.3 | – | a coil fully on lowers its divertor's power weight by 1 − η (its static field moves the island); the shares are renormalised so the total is unchanged: D1 alone sheds ~24 % to the others, every coil on moves nothing (illustrative, no validated coil response) |
 | Pheat | P_heat | 7.5 | MW | heating power crossing the LCFS (W7-X: ECRH up to ~8 MW, more with NBI) |
 | fRad | f_rad | 0.3 | – | fraction of the heating power radiated before it reaches the targets |
 | wettedArea | A_wet | 0.1 | m² | effective wetted target area per divertor at B_0 |
@@ -69,7 +80,7 @@ document exactly; a change here changes both implementations and the golden valu
 | cpHigh | c_∞ | 2000 | J kg⁻¹ K⁻¹ | high-temperature limit of the graphite specific heat |
 | cpScale | T_c | 670 | °C | c(T) = c_∞ − (c_∞ − c_ref)·exp(−(T − T_ref)/T_c): ~1600 at 800 °C (approximate fit) |
 | Tref | T_ref | 20 | °C | reference temperature of the material fits |
-| sinkResistance | R_sink | 4.5e-05 | m² K W⁻¹ | Cu interlayer, CuCrZr heat sink and water film per unit area (CFC/Cu interface ~1000 °C at 22 MW m⁻², near the ~1100 °C seen in W7-X element tests) |
+| sinkResistance | R_sink | 4.5e-05 | m² K W⁻¹ | effective lumped resistance of the Cu interlayer, CuCrZr heat sink and water film per unit area (not calibrated; it puts the CFC/Cu interface at ~1000 °C at 22 MW m⁻², consistent with element tests in which the interlayer approached its ~1100 °C melting point above 22 MW m⁻²) |
 | Tcool | T_cool | 30 | °C | cooling-water temperature (W7-X design inlet 30 °C) |
 | tileLimit | T_lim | 1200 | °C | tile surface temperature limit (operational, illustrative) |
 | dt | Δt | 0.001 | s | time step |
@@ -97,7 +108,7 @@ Let `wrap(x) = x − 2π·floor(x/(2π) + 0.5)` and `g(x, σ) = exp(−x²/(2σ�
 2. Coil envelope: h_k[c] = g(wrap(φ_j − φ_k), σ_cφ)·g(wrap(θ_i − θ_d), σ_cθ).
 3. Field: B[c] = B_s[c]·(1 + ε Σ_k a_k h_k[c]).
 4. Strike line: θ_s,k = θ_d + A_s·a_k.
-5. Footprint on the LCFS map: g_k[c] = g(wrap(φ_j − φ_k), σ_φ)·g(wrap(θ_i − θ_s,k), σ_θ).
+5. (Removed in version 7: the LCFS no longer carries the footprints.)
 6. Power (energy conservation): sectors s_k[j] = G_k[j]/Σ_m G_m[j], G_k[j] = g(wrap(φ_j − φ_k), π/N_div);
    u_k = mean_c(w[c]·s_k[j]), with w ≡ 1 (a renderer scenario may supply a relative heating density w[c](t); the
    golden runs use none). Coils redistribute (version 6, D-035): f_k = 1 − η·c_k, and
@@ -124,10 +135,10 @@ Let `wrap(x) = x − 2π·floor(x/(2π) + 0.5)` and `g(x, σ) = exp(−x²/(2σ�
     S[z] ← S[z] + Δt·net[z]/(ρ·c(S[z])·dz). The surface temperature is Tt_k[i] = S[0] + q·dz/(2k(S[0])) with the new
     S[0]. This is the finite-volume form of ρc(T)∂T/∂t = ∂_z(k(T)∂_zT) with the load entering the surface and the heat
     sink plus water film a thermal resistance R_sink at the back; energy is conserved cell by cell.
-12. The new state's LCFS map at t_(n+1) with the same coils: T_u[c] = Σ_k s_k[j]·T_u,k;
-    T[c] = (max(0, 1 − Σ_k g_k[c])·T_u[c]^ν + Σ_k g_k[c]·T_t,k^ν)^(1/ν): upstream away from the divertors, the target
-    temperature at each footprint centre, interpolated in T^ν as along a conducting field line. The footprint g_k keeps the width σ_θ (the strip of step 9 narrows; the map is an illustration). This map only shows
-    where the two-point drop lies; it is not a 2D transport solution.
+12. The new state's LCFS temperature at t_(n+1) with the same coils (version 7, D-036): T[c] = T_u[j] =
+    Σ_k s_k[j]·T_u,k, the upstream temperature of the plane. The island divertor's targets lie outside the LCFS, so the
+    two-point drop to T_t is in the scrape-off layer; the renderer colours each diverter plate by its T_t,k. No 2D
+    transport across the surface and no poloidal variation.
 
 Stability: the only explicit update is step 11, monotone when Δt·G_max/(ρ·c_ref·dz) ≤ 1 with G_max the larger of an
 inner cell's outflow conductance 2k_ref/dz and the back cell's k_ref/dz + 1/(dz/(2k_ref) + R_sink) (here the inner
@@ -152,6 +163,12 @@ balance to 1e-6 at the operating loads (loads beyond ~50 MW/m² would not conver
 At plane j, surface m (ρ_m), with T_e = T_u[j] the plane's upstream temperature: T_xs = T_core(ρ_m) + w(ρ_m)·(T[i,j] − T_e),
 T_core(ρ) = T_e + (T_0 − T_e)(1 − ρ²)², w(ρ) = (max(0, (ρ − ρ_b)/(1 − ρ_b)))². |B|_xs = B_m[c]·(1 + ρ_m² ε Σ_k a_k h_k[c]).
 At ρ = 1 both equal the LCFS values.
+
+T_0 (`Tcore0`) follows from energy confinement (version 7, D-036; the build checks the written value to 1e-6): the
+ISS04 stellarator scaling τ_E = C·a^α_a·R^α_R·P_heat^α_P·(n̄/n_unit)^α_n·B_0^α_B·ι_2/3^α_ι (ι_2/3 linear between the
+written surfaces at ρ = 2/3), stored energy W = τ_E·P_heat·MW, volume V = 2π²Ra², flat density and T_e = T_i so
+W = 3·n̄·⟨T⟩·keV·V, and with the profile above (volume mean T_e + (T_0 − T_e)/3, T_e the mean upstream temperature with
+every coil off) T_0 = T_e + 3(⟨T⟩ − T_e). At 7.5 MW: τ_E 0.149 s, W 1.12 MJ, ⟨T⟩ 1.27 keV, T_0 3.38 keV.
 
 ## Golden checkpoints (artifact `model.golden`)
 

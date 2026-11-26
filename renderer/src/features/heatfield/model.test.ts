@@ -215,11 +215,11 @@ test('H8 heat-flow vector and cross-section fields follow MODEL.md', () => {
   // Uniform temperature carries no heat flow.
   const flat = model.heatFlow({ n: 0, T: new Float64Array(model.nCells).fill(0.1), tiles: st.tiles, slab: st.slab }, OFF);
   expect(flat.fPhi.every((v) => v === 0) && flat.fTheta.every((v) => v === 0)).toBe(true);
-  expect(fPhi.some((v) => Math.abs(v) > 1e-3)).toBe(true);
-  // Heat flows towards the cold D1 footprint (φ = 0, θ = θ_d): just before it in φ, F_φ > 0; just after, F_φ < 0.
-  const iD = Math.round(model.thetaD / model.dTheta);
-  expect(fPhi[(model.nPhi - 1) * model.nTheta + iD]).toBeGreaterThan(0);
-  expect(fPhi[1 * model.nTheta + iD]).toBeLessThan(0);
+  // The LCFS sits at the sectors' upstream temperatures (version 7): nearly isothermal, so the flow along it is weak
+  // and runs from the hotter D1 sector (T_u ≈ 0.222 keV) towards the cooler D2 sector (≈ 0.211 keV) at φ = 45°.
+  expect(fPhi.every((v) => Math.abs(v) < 1e-2)).toBe(true);
+  expect(fPhi[(model.nPhi / 8) * model.nTheta]).toBeGreaterThan(0);
+  expect(st.T.every((t, c) => Math.abs(t - st.T[Math.floor(c / model.nTheta) * model.nTheta]!) < 1e-15)).toBe(true);
   expect(Number.isFinite(fTheta[0]!)).toBe(true);
 
   const xs = model.crossSection(st, ALL_ON, 0);

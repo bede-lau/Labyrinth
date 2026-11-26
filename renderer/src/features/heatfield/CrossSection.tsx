@@ -40,8 +40,8 @@ export interface CrossSectionProps {
   overlay?: ReactNode;
   /**
    * The LCFS edge strip (DZ3-3): the last closed flux surface's temperature at this φ (one value per θ node, keV),
-   * drawn in a band just outside the LCFS on the 3D surface's colour range, where the cold footprint under a plate
-   * and its move with the coils show. Omitted when the slice is coloured by |B|.
+   * drawn in a band just outside the LCFS on the 3D surface's colour scale: the plane's upstream temperature, uniform in
+   * θ (version 7; the cold targets are the plates). Omitted when the slice is coloured by |B|.
    */
   edge?: EdgeStrip | null;
 }

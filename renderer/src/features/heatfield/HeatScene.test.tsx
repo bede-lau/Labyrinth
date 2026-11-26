@@ -18,6 +18,7 @@ import {
   LABEL,
   T_FLOOR,
   heatFraction,
+  rgbToHex,
   LUT_SIZE,
   OUTLINE,
   SLICE_LABEL,
@@ -75,6 +76,7 @@ const frame = (over: Partial<FrameInput> = {}): FrameInput => ({
   B: model.field(OFF, start.n),
   drive: model.drive(OFF, model.time(start.n)),
   epsilon: model.params.epsilon,
+  targetT: model.edge(start.n, OFF).Tt,
   colorBy: 'temperature',
   ranges,
   theme: 'light',
@@ -483,8 +485,13 @@ test('H9 applyFrame colours the LCFS by temperature (red hottest, yellow coldest
     const t = heatFraction(start.T[v]!, ranges.lcfsT);
     at(attr, v).forEach((x, k) => expect(Math.abs(x - want(heatColor(t, 'light'))[k]!)).toBeLessThan(4 / LUT_SIZE));
   }
-  // The hottest cell is nearer the red end than the coldest (D1 footprint) is.
-  expect(heatFraction(start.T[hot]!, ranges.lcfsT)).toBeGreaterThan(heatFraction(start.T[cold]!, ranges.lcfsT) + 0.3);
+  // The LCFS is at the sectors' upstream temperatures (version 7): hottest and coldest cells are close in colour; the
+  // cold plasma is at the targets, which the plates show.
+  expect(heatFraction(start.T[hot]!, ranges.lcfsT) - heatFraction(start.T[cold]!, ranges.lcfsT)).toBeLessThan(0.05);
+  const plate = (k: number) => ((c.plates.children[2 * k + 1] as THREE.Mesh).material as THREE.MeshBasicMaterial).color;
+  const targetT = model.edge(start.n, OFF).Tt;
+  [0, 1, 2, 3].forEach((k) => expect(plate(k).getHexString()).toBe(hex(rgbToHex(heatColor(heatFraction(targetT[k]!, ranges.lcfsT), 'light')))));
+  expect(heatFraction(targetT[0]!, ranges.lcfsT)).toBeLessThan(heatFraction(start.T[cold]!, ranges.lcfsT) - 0.2);
   // The edge (~0.2 keV) sits mid-scale, below the core: the same colour as the rim of the cross-section.
   expect(heatFraction(start.T[hot]!, ranges.lcfsT)).toBeLessThan(0.7);
 
@@ -856,7 +863,9 @@ test('H9 HeatScene mounts through three, redraws on every model change without r
   expect((darkOutline.material as THREE.MeshBasicMaterial).color.getHexString()).toBe(hex(sceneTheme('dark').outline));
   expect((darkOutline.material as THREE.MeshBasicMaterial).side).toBe(THREE.BackSide);
   expect(hex(sceneTheme('dark').outline)).not.toBe(lightOutline);
-  expect(((dark.getObjectByName('D1 plate') as THREE.Mesh).material as THREE.MeshBasicMaterial).color.getHexString()).toBe(hex(sceneTheme('dark').diverter.fill));
+  // Coloured by temperature, the plate shows its target temperature T_t (version 7) on the dark ramp.
+  const tt = model.edge(sim.state.n, sim.coils).Tt[0]!;
+  expect(((dark.getObjectByName('D1 plate') as THREE.Mesh).material as THREE.MeshBasicMaterial).color.getHexString()).toBe(hex(rgbToHex(heatColor(heatFraction(tt, ranges.lcfsT), 'dark'))));
 
   expect([...darkFreed.values()].every((n) => n === 0)).toBe(true);
   expect(sim.listenerCount).toBe(1);
