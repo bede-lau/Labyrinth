@@ -397,3 +397,23 @@
 @media (max-width: 689px) { .field-change { order: 3; } }
 .field-change__log { height: 7.5rem; overflow-y: auto; scrollbar-gutter: stable; }
 .field-change__log th { position: sticky; top: 0; background: var(--lab-color-surface); }
+
+/* Power between divertors (PowerFlow.tsx, D-039): a top view of the torus and a ledger. */
+.geo-flow { margin: 0; padding: .65rem .8rem .85rem; border: 1px solid var(--lab-color-border); border-radius: var(--lab-radius-md); background: var(--lab-color-surface-sunken); }
+.geo-flow figcaption { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; font-weight: 600; font-size: .85rem; }
+.geo-flow figcaption span { font-weight: 400; color: var(--lab-color-text-subtle); font-size: .75rem; }
+.geo-flow__body { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.2rem; margin-top: .4rem; }
+.geo-flow__ring { flex: 0 1 13rem; width: 13rem; max-width: 100%; height: auto; }
+.geo-flow__edge { fill: none; stroke: var(--lab-color-border-strong); stroke-width: 1; stroke-dasharray: 3 3; }
+.geo-flow__arrow { fill: none; stroke: var(--lab-color-accent); stroke-linecap: round; }
+.geo-flow__head { fill: var(--lab-color-accent); }
+.geo-flow__node circle { fill: var(--lab-color-surface); stroke: var(--lab-color-border-strong); stroke-width: 1.5; }
+.geo-flow__node[data-change=loss] circle { stroke: var(--lab-color-text); stroke-width: 2.5; stroke-dasharray: 3 2; }
+.geo-flow__node[data-change=gain] circle { stroke: var(--lab-color-accent); stroke-width: 2.5; }
+.geo-flow__node text { font: 600 11px var(--lab-font-sans, sans-serif); fill: var(--lab-color-text); }
+.geo-flow__centre { font: 600 13px var(--lab-font-mono, monospace); fill: var(--lab-color-text); }
+.geo-flow__centre--small { font-size: 10px; font-weight: 400; fill: var(--lab-color-text-subtle); }
+.geo-flow__table { flex: 1 1 10rem; border-collapse: collapse; font-size: .78rem; }
+.geo-flow__table th, .geo-flow__table td { padding: .15rem .5rem; text-align: right; border-bottom: 1px solid var(--lab-color-border); }
+.geo-flow__table th[scope=row], .geo-flow__table thead th:first-child { text-align: left; }
+.geo-flow__note { margin: .5rem 0 0; font-size: .75rem; color: var(--lab-color-text-subtle); }

@@ -564,13 +564,15 @@ export function renderTokensCss(): string {
 /** Co-registered Locate scene: edge temperature spectrum, flux tracer and hardware materials. */
 export const plasmaMaterials = {
   /**
-   * Temperature, coldest -> hottest (D-038): 17 samples of the Turbo map (Mikhailov 2019) between 0.06 and 0.94, indigo ->
-   * blue -> cyan -> green -> yellow -> orange -> red, so the two-decade log scale shows a distinct hue per third of a decade.
+   * Temperature, coldest -> hottest (D-038, owner 2026-11-26: blue to red, no green): ColorBrewer RdYlBu reversed, 11 stops,
+   * dark blue -> light blue -> pale yellow -> orange -> dark red. Diverging, so the middle is the lightest colour.
    */
-  temperature: ['#493dab', '#4763e9', '#3789f9', '#29aeec', '#25cdd0', '#2fe6ac', '#48f789', '#6cfd69', '#96fa50', '#c1ed3d', '#e5d730', '#feb927', '#ff9520', '#fe6e1a', '#e54813', '#c2270a', '#a01101'],
+  temperature: ['#313695', '#4575b4', '#74add1', '#abd9e9', '#e0f3f8', '#ffffbf', '#fee090', '#fdae61', '#f46d43', '#d73027', '#a50026'],
   /** The warm band of a divertor target (the old ramp's yellow, kept when the ramp widened). */
   targetWarm: '#f4c75c',
   tracer: '#fff4ca',
+  /** Power moved between divertors (D-039): arrows round the torus; magenta, a hue the blue-to-red temperature ramp never takes. */
+  powerFlow: '#ff4fe0',
   particleColours: ['#fe4e93', '#31c8ff', '#ffbc32', '#a987ff', '#70e65a'],
   solenoid: { steel: '#a9b6c6', jacket: '#b790c2', copper: '#dc9362', collar: '#56658b', fastener: '#d7d9e1' },
   targetCold: '#263447',

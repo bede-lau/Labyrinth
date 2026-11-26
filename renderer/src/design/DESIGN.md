@@ -365,7 +365,7 @@ treatment, the prefix "Danger:"), used only for the danger rows above.
 `sceneTheme(theme)` returns every colour below. Pass hex strings to `new THREE.Color(hex)`;
 `toThreeHex(hex)` is there for APIs that want an integer.
 
-* **Locate temperature and hardware**. `plasmaMaterials` defines the temperature, tracer, vessel and coil colours. `rampColor(stops, t)` interpolates the temperature stops for the edge and magnified core. The temperature stops are 17 samples of Turbo (D-038): many hues, but not monotonic in lightness (the indigo cold end and dark-red hot end are about equally dark) and not gated for colour-blind viewers, so always show the colour bar with its MK ticks.
+* **Locate temperature and hardware**. `plasmaMaterials` defines the temperature, tracer, vessel and coil colours. `rampColor(stops, t)` interpolates the temperature stops for the edge and magnified core. The temperature stops are ColorBrewer RdYlBu reversed (D-038; the owner asked for blue to red with no green): 11 stops, dark blue → light blue → pale yellow → orange → dark red. It is diverging, so lightness rises to the pale middle and falls again, and both ends are dark; the pale middle (near 0.26 keV on the log scale, about the edge temperature) carries no special meaning. Read it by hue (blue cold, red hot) through the colour bar and its MK ticks. Colour-blind viewers keep the blue/red distinction, but the ramp has no gate in ramps.test.ts.
 * **Surface**: a gray wireframe (`scene.surfaceLine`) on the panel surface, matching the reference
   figures. It is context only. Unsampled parts of the surface or line stay `scene.unsampled` gray.
 * **Field lines**: tube identity colours come from the series palette (bean teal, triangular rust).

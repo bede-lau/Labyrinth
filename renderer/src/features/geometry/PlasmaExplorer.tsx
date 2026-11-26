@@ -4,6 +4,7 @@ import { ControlLoop, type LoopDecision } from '../heatfield/ControlLoop';
 import { HeatScene, type HeatSceneProps, type HoverPoint } from '../heatfield/HeatScene';
 import { usePlayback, usePrefersReducedMotion } from '../heatfield/playback';
 import { LogTicks } from '../heatfield/LogTicks';
+import { PowerFlow } from './PowerFlow';
 import { ARROWS, buildSceneGeometry, toMK } from '../heatfield/scene';
 import { Simulation } from '../heatfield/sim';
 import type { HeatfieldArtifact } from '../heatfield/types';
@@ -172,6 +173,7 @@ export function PlasmaExplorer({ onPowerOff, tracks, followed, feedback, onFeedb
       </label>
     </div>
     {feedback && <StrikeMonitor sim={sim}/>}
+    {powered && <PowerFlow sim={sim}/>}
     {renderControls(
       <div className="plasma-toolbar">
         <div className="plasma-slice">

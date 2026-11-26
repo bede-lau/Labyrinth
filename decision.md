@@ -521,10 +521,10 @@ MODEL.md profile) and the edge temperature from the two-point law T_u ∝ P^(1/�
 W7-X explorer's ramp had 6 stops (navy → cyan → yellow → crimson) interpolated in sRGB; Heat & field's had 9 stops from
 yellow to red. Both scales were labelled in keV.
 **Decision.** (1) The explorer's temperature ramp (`plasmaMaterials.temperature`, used by the 3D edge, the core slice,
-the cross-section and the strike monitor) is 17 samples of the Turbo map (indigo → blue → cyan → green → yellow → orange →
-red). The divertor target's warm band keeps the old yellow as its own token (`targetWarm`). Turbo is not monotonic in
-lightness (its indigo and dark-red ends are about equally dark), so it is read by hue and through its colour bar; it has
-no colour-blind gate. (2) Heat & field's `scene.heat`
+the cross-section and the strike monitor) is ColorBrewer RdYlBu reversed, 11 stops: dark blue → light blue → pale
+yellow → orange → dark red. A first version used 17 Turbo samples; the owner rejected its green ("blue to red, no green").
+The divertor target's warm band keeps the old yellow as its own token (`targetWarm`). The ramp is diverging (pale middle,
+dark ends), so it is read by hue through its colour bar; it has no colour-blind gate. (2) Heat & field's `scene.heat`
 widens D-027 to 11 stops, yellow → orange → red → crimson → magenta → plum, taken at equal CIEDE2000 arc length (step sizes vary by
 < 20 %, the ramps.test.ts gate) with lightness still falling. It still clears every ramps.test.ts gate: 14.3 / 15.8 ΔE00 from the |B| ramp, every step visible under
 protanopia and deuteranopia. (3) Every temperature colour bar reads in megakelvin (1 keV / k_B = 11.6045 MK, CODATA 2018)
@@ -532,3 +532,18 @@ with 1-2-5 ticks placed on the logarithmic bar; hover read-outs give keV and MK.
 273 K offset is invisible, and kelvin is the absolute scale. The tiles stay in °C, the engineering unit.
 **Consequences.** The model and the artifact are unchanged (keV inside). The temperature ramps no longer end in red;
 DESIGN.md §7 states the new rule and the measured separations.
+
+## D-039 · W7-X view: power moved between divertors (maintainer, 2026-11-26)
+**Context.** The owner asked for a way to show heat transfer from one divertor to another. The plates are not connected:
+the coils move strike lines, and the power one divertor sheds lands on the others through the scrape-off layer.
+**Decision.** `heatfield/transfer.ts` computes each divertor's change ΔP_k against the same heating with every coil off,
+from the model's own shares (MODEL.md v6). ΣΔP = 0. The flow from loser k to gainer j is L_k·G_j/ΣG: exact for one coil,
+a proportional attribution (not unique) for several. Every row sums to the loss and every column to the gain. The explorer shows it twice:
+- a "Power between divertors" panel (`PowerFlow.tsx`): a top view of the torus with arrows round the edge, and a
+  ledger of power and change per divertor;
+- magenta 3D arrows round the outboard side of the torus (`flowArrows.ts`), as thick as the MW moved.
+Both are labelled model, and both say that the path is schematic.
+**Consequences.** No new physics and no new parameters; the artifact and the Python reference are unchanged. Which
+divertor receives the power follows the model's illustrative coil response, not traced W7-X field lines (stated in the
+panel). Also fixed here, regressions from D-038 found while wiring this: the explorer's edge shader still assumed a
+6-stop palette, and the core glow picked stops 3 and 4 by index (now by place on the ramp).

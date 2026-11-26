@@ -7,6 +7,7 @@ import { plasmaMaterials } from '../../design/tokens';
 import type { Group, MeshBasicMaterial } from 'three';
 import { buildContent as buildTubes } from './FluxScene';
 import { buildTargets } from './divertorTargets';
+import { buildFlowArrows } from './flowArrows';
 import { buildReactorHardware } from './reactorHardware';
 import type { SceneModel } from './model';
 import type { HeatSceneProps, SceneContent } from '../heatfield/HeatScene';
@@ -74,11 +75,13 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
     shader.uniforms.edgePalette = {value: HEAT_STOPS.map(stop => new three.Color(stop))};
     shader.vertexShader = 'attribute float edgeTemperature; varying float vEdgeT;\n' + shader.vertexShader.replace(
       '#include <begin_vertex>', '#include <begin_vertex>\nvEdgeT = edgeTemperature;');
-    shader.fragmentShader = 'varying float vEdgeT; uniform bool showEdgeHeat; uniform vec2 edgeRange; uniform vec3 edgePalette[6];\n' +
+    // The palette's size comes from HEAT_STOPS, so the ramp can change length (D-038).
+    const last = HEAT_STOPS.length - 1;
+    shader.fragmentShader = `varying float vEdgeT; uniform bool showEdgeHeat; uniform vec2 edgeRange; uniform vec3 edgePalette[${last + 1}];\n` +
       shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
       if (showEdgeHeat) {
-        float t = 5.0 * clamp(log(max(vEdgeT,edgeRange.x)/edgeRange.x)/log(edgeRange.y/edgeRange.x),0.0,1.0);
-        int i = min(4,int(floor(t)));
+        float t = ${last}.0 * clamp(log(max(vEdgeT,edgeRange.x)/edgeRange.x)/log(edgeRange.y/edgeRange.x),0.0,1.0);
+        int i = min(${last - 1},int(floor(t)));
         diffuseColor.rgb = mix(edgePalette[i],edgePalette[i+1],t-float(i));
       }`);
   };
@@ -127,6 +130,8 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
   content.group.add(core);
   const particles = particleMarks(three, tracks);
   content.group.add(particles.group);
+  const flow = buildFlowArrows(three, art);
+  content.group.add(flow.group);
 
   let lastPlane = -1;
   let hardware: Group | undefined;
@@ -184,12 +189,14 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
         glow[0]!.opacity = gain;
         glow[1]!.opacity = 0.45 * gain;
         glow[2]!.opacity = 0.2 * gain;
-        glow[1]!.color.set(HEAT_STOPS[3]);
-        glow[2]!.color.set(HEAT_STOPS[4]);
+        // Warm stops by their place on the ramp (60 % and 80 %: yellow and orange), whatever its length (D-038).
+        glow[1]!.color.set(HEAT_STOPS[Math.round(0.6 * (HEAT_STOPS.length - 1))]!);
+        glow[2]!.color.set(HEAT_STOPS[Math.round(0.8 * (HEAT_STOPS.length - 1))]!);
       }
       writeColors(xs.T, frame.ranges.sliceT, heat, color.array as Float32Array, true);
       color.needsUpdate = true;
     }
+    flow.update(frame.sim, layers.heat && time > 0);
     particles.group.visible = layers.particles && time > 0;
     if (layers.particles) particles.update(frame.followed);
   };

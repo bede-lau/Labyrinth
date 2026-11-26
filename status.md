@@ -7,8 +7,12 @@
 
 ## Current state
 
+### 2026-11-26: W7-X view — power moved between divertors (D-039)
+- New "Power between divertors" panel and 3D arrows: each divertor's share and its change against coils-off, and who
+  sends to whom (`transfer.ts`, exact for one coil, conserved). The D-038 explorer shader/glow palette regressions are fixed.
+
 ### 2026-11-26: temperature maps with more hues, in kelvin (D-038)
-- Explorer temperature ramp: 17-stop Turbo spectrum (was 6 stops). Heat & field: 11 stops, yellow → magenta (was 9,
+- Explorer temperature ramp: 11-stop blue → red (RdYlBu reversed, no green; was 6 stops). Heat & field: 11 stops, yellow → magenta (was 9,
   yellow → red). Every temperature colour bar reads in MK with 1-2-5 log ticks (`LogTicks.tsx`); read-outs give keV and MK.
 
 ### 2026-11-26: README for external reviewers
