@@ -47,6 +47,9 @@ PARAMETERS: dict[str, tuple[float, str, str, str]] = {
     "epsilon": (0.03, "–", "ε", "relative |B| perturbation of one coil at its centre (illustrative)"),
     "sigmaCoilPhi": (0.20, "rad", "σ_cφ", "coil envelope width in φ (illustrative)"),
     "sigmaCoilTheta": (0.60, "rad", "σ_cθ", "coil envelope width in θ (illustrative)"),
+    "shareShift": (0.3, "–", "η", "a coil fully on lowers its divertor's power weight by 1 − η (its static field moves "
+                  "the island); the shares are renormalised so the total is unchanged: D1 alone sheds ~24 % to the "
+                  "others, every coil on moves nothing (illustrative, no validated coil response)"),
     "Pheat": (7.5, "MW", "P_heat", "heating power crossing the LCFS (W7-X: ECRH up to ~8 MW, more with NBI)"),
     "fRad": (0.3, "–", "f_rad", "fraction of the heating power radiated before it reaches the targets"),
     "wettedArea": (0.1, "m²", "A_wet", "effective wetted target area per divertor at B_0"),
@@ -217,10 +220,21 @@ class Model:
         return self.g_phi[:, :, None] * g_theta[:, None, :]
 
     # ---- steps 6-10: power, compression, target load, two-point model --------------------------------------------
-    def power_shares(self) -> np.ndarray:
-        """Step 6: P_k = P_heat (1 - f_rad) * mean_c(s_k[c]) (MW), uniform heating."""
+    def power_shares(self, coils: Sequence[float] = (0,) * N_DIVERTERS) -> np.ndarray:
+        """Step 6: u_k = mean_c(s_k[c]); a coil on lowers its divertor's weight by 1 - eta (renormalised below),
+        f_k = 1 - eta c_k, P_k = P_heat (1 - f_rad) u_k f_k (sum_m u_m) / (sum_m u_m f_m) (MW), uniform heating.
+        The sum over k is P_heat (1 - f_rad) whatever the coils."""
         p = self.inp.params
-        return np.array([p["Pheat"] * (1 - p["fRad"]) * float(self.sector[k].mean()) for k in range(N_DIVERTERS)])
+        u = [float(self.sector[k].mean()) for k in range(N_DIVERTERS)]
+        f = [1 - p["shareShift"] * float(coils[k]) for k in range(N_DIVERTERS)]
+        total = u[0]
+        weighted = u[0] * f[0]
+        for k in range(1, N_DIVERTERS):
+            total = total + u[k]
+            weighted = weighted + u[k] * f[k]
+        if not weighted > 0:  # no heating reaches the edge: nothing to share
+            return np.zeros(N_DIVERTERS)
+        return np.array([p["Pheat"] * (1 - p["fRad"]) * u[k] * f[k] * total / weighted for k in range(N_DIVERTERS)])
 
     def compression(self, B: np.ndarray, a: np.ndarray) -> np.ndarray:
         """Step 7: b_k = |B| at the strike line on plane j_k (linear in theta between grid nodes) / B_0."""
@@ -272,7 +286,7 @@ class Model:
         a = self.coil_drive(coils, self.time(n))
         B = self.field(a)
         b = self.compression(B, a)
-        q_t = self.target_loads(self.power_shares(), b)
+        q_t = self.target_loads(self.power_shares(coils), b)
         tp = [self.two_point(float(q)) for q in q_t]
         out = {"a": a, "B": B, "b": b, "q_t": q_t, "Tu": np.array([u for u, _ in tp]), "Tt": np.array([t for _, t in tp])}
         if len(self._cache) > 64:
@@ -390,6 +404,8 @@ class Model:
             raise ValueError(f"unstable parameters: conduction number {number:.4g} not in (0, 1] (MODEL.md)")
         if not (p["Tcool"] >= p["Tref"] and p["tileCells"] >= 2 and float(p["tileCells"]).is_integer()):
             raise ValueError("the tiles need T_cool >= T_ref (the stability bound) and a whole number (>= 2) of cells")
+        if not 0 <= p["shareShift"] < 1:
+            raise ValueError("shareShift must lie in [0, 1): a coil cannot shed all of its divertor's power")
         if not p["sinkResistance"] >= 0:
             raise ValueError("the heat-sink resistance must not be negative")
         # The fixed N_2pt iterations converge while the layer is conduction-limited (the map's slope -2(T_t/T_u)^nu

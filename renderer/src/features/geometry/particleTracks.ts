@@ -46,7 +46,8 @@ export function createParticleTracks(art: HeatfieldArtifact, sim: Simulation) {
     // The model's own strike line of each diverter (θ where its footprint sits under the applied coils).
     const strike = sim.model.strikeLines(sim.coils, sim.state.n);
     return tracks.map((track, from) => {
-      // Each tracer stays with its own diverter: nothing moves heat from one target to another (D-031).
+      // Each tracer stays with its own diverter: nothing pipes heat between targets (D-031); the coils only change how
+      // much power each divertor receives (D-035).
       const centre = sites[from]!.phi;
       const phase = 1.9*time + tau*from/sites.length;
       const phi = wrap(centre + 0.13*Math.sin(phase));

@@ -421,7 +421,7 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
           {colorBy === 'temperature'
             ? tempBar(
                 ranges.lcfsT,
-                `Fixed range: ${formatNumber(ranges.lcfsT[0], 3)} keV (just below the coldest surface temperature at the start, the two-point target temperature) to just above the hottest, the upstream temperature T_u; anything colder takes the coldest colour, anything hotter the hottest.`,
+                `One logarithmic scale for every temperature map: ${formatNumber(ranges.lcfsT[0], 3)} keV (below the two-point target temperature) to the core temperature T_0, so the edge at the upstream temperature T_u has the same colour here and at the rim of the cross-section; anything colder takes the coldest colour.`,
               )
             : fieldBar}
           <ul className="hf-key" aria-label="Scene key">
@@ -508,7 +508,7 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
             <>
               {tempBar(
                 ranges.sliceT,
-                `Fixed range: ${formatNumber(ranges.sliceT[0], 3)} keV (just below the coldest surface temperature at the start, as on the 3D surface) to the core temperature T_0 on the axis; anything colder takes the coldest colour.`,
+                `The same logarithmic scale as the 3D surface: ${formatNumber(ranges.sliceT[0], 3)} keV to the core temperature T_0 on the axis; anything colder takes the coldest colour.`,
               )}
               <ColorBar
                 kind="temperature"

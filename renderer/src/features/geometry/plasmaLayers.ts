@@ -77,7 +77,7 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
     shader.fragmentShader = 'varying float vEdgeT; uniform bool showEdgeHeat; uniform vec2 edgeRange; uniform vec3 edgePalette[6];\n' +
       shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
       if (showEdgeHeat) {
-        float t = 5.0 * clamp((vEdgeT-edgeRange.x)/(edgeRange.y-edgeRange.x),0.0,1.0);
+        float t = 5.0 * clamp(log(max(vEdgeT,edgeRange.x)/edgeRange.x)/log(edgeRange.y/edgeRange.x),0.0,1.0);
         int i = min(4,int(floor(t)));
         diffuseColor.rgb = mix(edgePalette[i],edgePalette[i+1],t-float(i));
       }`);
@@ -187,7 +187,7 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
         glow[1]!.color.set(HEAT_STOPS[3]);
         glow[2]!.color.set(HEAT_STOPS[4]);
       }
-      writeColors(xs.T, frame.ranges.sliceT, heat, color.array as Float32Array);
+      writeColors(xs.T, frame.ranges.sliceT, heat, color.array as Float32Array, true);
       color.needsUpdate = true;
     }
     particles.group.visible = layers.particles && time > 0;

@@ -13,6 +13,7 @@ export const PARAMETER_NAMES = [
   'epsilon',
   'sigmaCoilPhi',
   'sigmaCoilTheta',
+  'shareShift',
   'Pheat',
   'fRad',
   'wettedArea',

@@ -44,7 +44,7 @@ test('five numbered tracers follow the live readout and the sectional solenoid f
     expect([pos.getX(0),pos.getY(0),pos.getZ(0)]).toEqual(Array.from(Float32Array.from(row.position)));
     expect(row.field).toBeGreaterThan(0);
   }
-  // No heat-transfer routes are drawn: nothing moves heat between targets (D-031).
+  // No heat-transfer routes are drawn: nothing pipes heat between targets (D-031); the coils change the shares (D-035).
   expect(content.group.getObjectByName('Heat transfer routes')).toBeUndefined();
   update({...frame,followed: 3});
   for (const row of tracks.read()) {

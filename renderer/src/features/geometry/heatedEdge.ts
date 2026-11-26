@@ -1,5 +1,5 @@
-import { createModel, modelFor } from '../heatfield/model';
-import { colourRanges } from '../heatfield/scene';
+import { createModel } from '../heatfield/model';
+import { colourRanges, T_FLOOR } from '../heatfield/scene';
 import { Simulation } from '../heatfield/sim';
 import type { Diverter, HeatfieldArtifact } from '../heatfield/types';
 
@@ -29,14 +29,10 @@ function coreResponse(time: number) {
 export function heatedRanges(art: HeatfieldArtifact, sim: Simulation) {
   const ranges = colourRanges(art, sim.model, sim.start.T);
   const {Tcore0} = sim.model.params;
-  // The nominal edge (uniform heating at P_heat, coils off) sets the scale: the start-up state is still cold.
-  const nominal = modelFor(art).edge(0, art.diverters.items.map(() => 0));
-  const upstream = Math.max(...nominal.Tu);
-  ranges.sliceT[1] = Tcore0 * (1 + modulation / Math.hypot(1, omega * lossTime));
-  // Keep the operating window legible: the edge runs from its target to about 1.4x its upstream temperature
-  // (the heating modulation and the sector ramp move it); colder cells take the low end of the palette.
-  ranges.lcfsT = [0, 1.4 * upstream];
-  ranges.sliceT[0] = 0;
+  // One shared logarithmic scale for the edge and the core slice: T_FLOOR to the hottest core the scenario reaches.
+  const hot = Tcore0 * (1 + modulation / Math.hypot(1, omega * lossTime));
+  ranges.lcfsT = [T_FLOOR, hot];
+  ranges.sliceT = [T_FLOOR, hot];
   return ranges;
 }
 

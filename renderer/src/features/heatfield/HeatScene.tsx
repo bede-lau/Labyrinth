@@ -303,7 +303,7 @@ export interface FrameInput {
 /** Recolour / reposition in place (BufferAttribute.needsUpdate); nothing is rebuilt. */
 export function applyFrame(content: SceneContent, geom: HeatSceneGeometry, f: FrameInput): void {
   const surfaceArr = content.surfaceColors.array as Float32Array;
-  if (f.colorBy === 'temperature') writeColors(f.T, f.ranges.lcfsT, rampLut('temperature', f.theme), surfaceArr);
+  if (f.colorBy === 'temperature') writeColors(f.T, f.ranges.lcfsT, rampLut('temperature', f.theme), surfaceArr, true);
   else writeColors(f.B, f.ranges.B, rampLut('field', f.theme), surfaceArr);
   content.surfaceColors.needsUpdate = true;
 

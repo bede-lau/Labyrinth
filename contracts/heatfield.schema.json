@@ -116,7 +116,7 @@
           "type": "object",
           "required": [
             "Tcore0", "rhoBlend", "B0", "sigmaPhi", "sigmaTheta", "sweepAmplitude", "sweepFrequency", "epsilon",
-            "sigmaCoilPhi", "sigmaCoilTheta", "Pheat", "fRad", "wettedArea", "connectionLength", "kappa0", "conductionExponent",
+            "sigmaCoilPhi", "sigmaCoilTheta", "shareShift", "Pheat", "fRad", "wettedArea", "connectionLength", "kappa0", "conductionExponent",
             "twoPointIterations", "sheathGamma", "nSep", "ionMass", "incidence", "keV", "amu", "MW",
             "tileThickness", "tileCells", "tileDensity", "kRef", "kScale", "cpRef",
             "cpHigh", "cpScale", "Tref", "sinkResistance", "Tcool", "tileLimit", "dt", "spinup"
@@ -133,6 +133,7 @@
             "epsilon": { "$ref": "#/$defs/parameter" },
             "sigmaCoilPhi": { "$ref": "#/$defs/parameter" },
             "sigmaCoilTheta": { "$ref": "#/$defs/parameter" },
+            "shareShift": { "$ref": "#/$defs/parameter" },
             "Pheat": { "$ref": "#/$defs/parameter" },
             "fRad": { "$ref": "#/$defs/parameter" },
             "wettedArea": { "$ref": "#/$defs/parameter" },

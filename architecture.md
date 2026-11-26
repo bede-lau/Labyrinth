@@ -66,8 +66,8 @@ independent reference in one view. Replay costs $0; live GX is gated behind qual
   min–max of the squared errors and of the signed errors (predicted − actual) per forecaster, shown with the predicted-vs-actual chart.
 * **Heat & field (D-027, `tasks/10-heat-field/MODEL.md`).** Real: R, Z, |B| (T) on ρ = 0…1 (9 surfaces) × 48 θ × 72 φ from the same VMEC reader,
   eight LCFS field lines from the same tracer. Illustrative (provenance kind `model`, not a W7-X simulation): an edge heat model on the
-  LCFS (MODEL.md v5: fixed heating power shared by four schematic diverters with energy conserved, a two-point scrape-off layer per diverter,
-  |B| compression at the strike line narrowing the footprint, a coil perturbation that sweeps the strike line, 1D heat conduction through 6 mm CFC tiles into a
+  LCFS (MODEL.md v6: fixed heating power shared by four schematic diverters with energy conserved, a two-point scrape-off layer per diverter,
+  |B| compression at the strike line narrowing the footprint, a coil perturbation that sweeps the strike line and shifts power between diverters, 1D heat conduction through 6 mm CFC tiles into a
   water-cooled heat sink). The Python model is the reference and writes golden checkpoints;
   the renderer runs a TypeScript port (interactive) that reads every input from the artifact and must reproduce the golden values.
 * **Budget.** PRD figures recomputed in exact decimals (`pricing.py` is the single source of PRD constants); PRD ranges are

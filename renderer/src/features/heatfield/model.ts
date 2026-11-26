@@ -1,4 +1,4 @@
-// The edge heat model of tasks/10-heat-field/MODEL.md (version 5, D-034: two-point scrape-off layer, energy
+// The edge heat model of tasks/10-heat-field/MODEL.md (version 6, D-035: two-point scrape-off layer, energy
 // conserved, CFC tiles conducting through their depth), ported from the Python reference (main/), step by step. Pure TypeScript on Float64Arrays: no DOM, no
 // three, no React.
 //
@@ -217,15 +217,15 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     return out;
   };
 
-  /** Step 6: P_k = P_heat·(1 − f_rad)·mean_c(w[c]·s_k[c]) (MW); w ≡ 1 without a heating scenario. */
-  const uniformShares = Float64Array.from(sector, (s) => {
+  /** Step 6: u_k = mean_c(w[c]·s_k[c]) (w ≡ 1 without a heating scenario). */
+  const uniformSectors = Float64Array.from(sector, (s) => {
     let sum = 0;
     for (let j = 0; j < nPhi; j++) sum += s[j]!;
-    return (p.Pheat * (1 - p.fRad)) * (sum / nPhi);
+    return sum / nPhi;
   });
-  const sharesAt = (t: number) => {
+  const sectorsAt = (t: number) => {
     const weight = heating?.(t);
-    if (!weight) return uniformShares;
+    if (!weight) return uniformSectors;
     return Float64Array.from(sector, (s) => {
       let sum = 0;
       for (let j = 0; j < nPhi; j++) {
@@ -233,8 +233,22 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
         for (let i = 0; i < nTheta; i++) row += weight[j * nTheta + i]!;
         sum += s[j]! * row;
       }
-      return (p.Pheat * (1 - p.fRad)) * (sum / nCells);
+      return sum / nCells;
     });
+  };
+  /** Step 6: f_k = 1 − η·c_k, P_k = P_heat·(1 − f_rad)·u_k·f_k·(Σ u_m)/(Σ u_m·f_m) (MW): coils move power, never make it. */
+  const sharesAt = (t: number, coils: Coils) => {
+    const u = sectorsAt(t);
+    const f = Float64Array.from(u, (_, k) => 1 - p.shareShift * (coils[k] ?? 0));
+    let total = u[0]!;
+    let weighted = u[0]! * f[0]!;
+    for (let k = 1; k < nDiv; k++) {
+      total = total + u[k]!;
+      weighted = weighted + u[k]! * f[k]!;
+    }
+    // No heating reaches the edge (a scenario's cold start): nothing to share.
+    if (!(weighted > 0)) return new Float64Array(nDiv);
+    return Float64Array.from(u, (uk, k) => (((p.Pheat * (1 - p.fRad)) * uk) * f[k]! * total) / weighted);
   };
 
   /** Step 10: (T_u, T_t) in keV for a peak target load q_t (MW/m²). */
@@ -261,7 +275,7 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     const a = drive(coils, time(n));
     const strike = new Float64Array(nDiv);
     for (let k = 0; k < nDiv; k++) strike[k] = thetaD + p.sweepAmplitude * a[k]!;
-    const shares = sharesAt(time(n));
+    const shares = sharesAt(time(n), coils);
     const qT = new Float64Array(nDiv);
     const Tu = new Float64Array(nDiv);
     const Tt = new Float64Array(nDiv);

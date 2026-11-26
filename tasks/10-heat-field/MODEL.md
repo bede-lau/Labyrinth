@@ -1,4 +1,4 @@
-# Edge heat model, version 5: two-point scrape-off layer, energy conserved, conducting CFC tiles (D-027, D-031–D-034)
+# Edge heat model, version 6: two-point scrape-off layer, energy conserved, conducting CFC tiles (D-027, D-031–D-035)
 
 **What this is.** A reduced model of the owner's loop (heat map → predicted heat load → change the magnetic field →
 new heat map) on the **real** W7-X geometry and |B| of `wout_w7x_kjm.nc`. Version 3 (D-032) replaces version 2's 2D
@@ -99,8 +99,12 @@ Let `wrap(x) = x − 2π·floor(x/(2π) + 0.5)` and `g(x, σ) = exp(−x²/(2σ�
 4. Strike line: θ_s,k = θ_d + A_s·a_k.
 5. Footprint on the LCFS map: g_k[c] = g(wrap(φ_j − φ_k), σ_φ)·g(wrap(θ_i − θ_s,k), σ_θ).
 6. Power (energy conservation): sectors s_k[j] = G_k[j]/Σ_m G_m[j], G_k[j] = g(wrap(φ_j − φ_k), π/N_div);
-   P_k = P_heat·(1 − f_rad)·mean_c(w[c]·s_k[j]) (MW), with w ≡ 1 (a renderer scenario may supply a relative heating
-   density w[c](t); the golden runs use none). Σ_k P_k = P_heat·(1 − f_rad).
+   u_k = mean_c(w[c]·s_k[j]), with w ≡ 1 (a renderer scenario may supply a relative heating density w[c](t); the
+   golden runs use none). Coils redistribute (version 6, D-035): f_k = 1 − η·c_k, and
+   P_k = P_heat·(1 − f_rad)·u_k·f_k·(Σ_m u_m)/(Σ_m u_m·f_m) (MW; sums in order m = 0…3). A coil that is on moves its
+   island and lowers its divertor's weight by 1 − η; the renormalisation hands the difference to the others in
+   proportion to their shares (D1 alone keeps (1 − η)·4/(4 − η) ≈ 0.757 of its share, so sheds ~24 %); with every coil
+   off or every coil on nothing moves. Σ_k P_k = P_heat·(1 − f_rad) for any coils.
 7. Field compression at the strike line: j_k = round(φ_k/dφ) mod nPhi; x = θ_s,k/dθ, i₀ = floor(x), w = x − i₀;
    b_k = ((1 − w)·B[j_k, i₀] + w·B[j_k, i₀+1])/B_0 (indices mod nTheta).
 8. Peak target load: q_t,k = P_k·b_k/A_wet (MW/m²): a flux tube's cross-section shrinks as 1/B.

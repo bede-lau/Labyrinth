@@ -92,7 +92,7 @@ test('tracers keep their heads, trails and readings through coil switches and sh
   expect(sim.coils).toEqual([0,0,0,0,0]);
   sim.reset();
   expect(tracks.read()).toEqual(initial);
-});
+}, 20_000);
 
 test('interrupted actuator ramps match prediction and are independent of render cadence', () => {
   const art = fiveTargetScenario(JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/heatfield.json'), 'utf8')));

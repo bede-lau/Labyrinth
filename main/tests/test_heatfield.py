@@ -260,10 +260,10 @@ def test_H3_four_schematic_diverters_at_quarter_turns():
 
 
 # ---- H4: the reference model ----------------------------------------------------------------------------------------
-MODEL_MD_TABLE = {  # tasks/10-heat-field/MODEL.md "Parameters", version 5 (Pheat and wettedArea set the operating point)
+MODEL_MD_TABLE = {  # tasks/10-heat-field/MODEL.md "Parameters", version 6 (Pheat and wettedArea set the operating point)
     "Tcore0": (3.0, "keV"), "rhoBlend": (0.7, "–"), "B0": (2.5, "T"), "sigmaPhi": (0.06, "rad"),
     "sigmaTheta": (0.12, "rad"), "sweepAmplitude": (0.30, "rad"), "sweepFrequency": (2.0, "Hz"), "epsilon": (0.03, "–"),
-    "sigmaCoilPhi": (0.20, "rad"), "sigmaCoilTheta": (0.60, "rad"), "Pheat": (7.5, "MW"), "fRad": (0.3, "–"),
+    "sigmaCoilPhi": (0.20, "rad"), "sigmaCoilTheta": (0.60, "rad"), "shareShift": (0.3, "–"), "Pheat": (7.5, "MW"), "fRad": (0.3, "–"),
     "wettedArea": (0.1, "m²"), "connectionLength": (200.0, "m"), "kappa0": (6.324555e13, "W m⁻¹ keV⁻⁷ᐟ²"),
     "conductionExponent": (3.5, "–"), "twoPointIterations": (20.0, "–"), "sheathGamma": (7.0, "–"),
     "nSep": (4.0e19, "m⁻³"), "ionMass": (1.0, "u"), "incidence": (0.03490659, "rad"), "keV": (1.602177e-16, "J"),
@@ -322,7 +322,9 @@ def _literal_step(inp: model.Inputs, slab: np.ndarray, n: int, coils) -> tuple[n
         G = [g(wrap(ph[j] - inp.phi_k[k]), math.pi / 4) for k in range(4)]  # 6
         for k in range(4):
             sector[k][j] = G[k] / sum(G)
-    shares = [p["Pheat"] * (1 - p["fRad"]) * sum(sector[k]) * n_t / (n_t * n_p) for k in range(4)]
+    u = [sum(sector[k]) * n_t / (n_t * n_p) for k in range(4)]
+    f = [1 - p["shareShift"] * coils[k] for k in range(4)]
+    shares = [p["Pheat"] * (1 - p["fRad"]) * u[k] * f[k] * sum(u) / sum(u[q] * f[q] for q in range(4)) for k in range(4)]
 
     def solve(m):
         t = m * p["dt"]
@@ -458,6 +460,20 @@ def test_H4_energy_is_conserved_power_in_equals_power_on_the_targets():
             area_per_rad = p["wettedArea"] / (math.sqrt(TAU) * p["sigmaTheta"])
             # (a grid sum of the Gaussian: ~4e-5 off its integral at the narrowest width, sigma_theta/1.23 < dtheta)
             np.testing.assert_allclose(Q.sum(axis=1) * m.dtheta * area_per_rad, shares, rtol=1e-4)
+    # the coils move power between divertors (the field moves the islands) but never create or lose any
+    total = p["Pheat"] * (1 - p["fRad"])
+    for coils in ((1, 0, 1, 0), (1, 0, 0, 0), (0.5, 1, 0, 0.25), (1, 1, 1, 1)):
+        moved = m.power_shares(coils)
+        assert moved.sum() == pytest.approx(total, rel=1e-12)
+        sol = m.solve(31, coils)
+        np.testing.assert_allclose(sol["q_t"] * p["wettedArea"] / sol["b"], moved, rtol=1e-12)
+    one = m.power_shares((1, 0, 0, 0))
+    eta = p["shareShift"]
+    assert one[0] == pytest.approx(total / 4 * (1 - eta) * 4 / (4 - eta), rel=1e-6)  # D1 sheds, the others gain equally
+    assert np.allclose(one[1:], total / 4 * 4 / (4 - eta), rtol=1e-6)
+    np.testing.assert_allclose(m.power_shares((1, 1, 1, 1)), shares, rtol=1e-12)  # every coil on: nothing moves
+    with pytest.raises(ValueError, match="shareShift"):
+        model.Model(inp.with_params(shareShift=1.0)).check_stability()
     # no heating, no load and no plasma: the tiles stay at the coolant temperature
     cold = model.Model(inp.with_params(Pheat=0.0))
     _, st = model.run(cold, model.ALL_OFF, [200])
@@ -565,10 +581,14 @@ def test_H4_sweeping_lowers_the_peak_tile_temperature():
     off = _golden("coils-off", 3000)["peakTileC"]
     on = all_on_at_3s()["peakTileC"]
     assert all(o < f for o, f in zip(on, off, strict=True)), (on, off)
-    # only the swept diverters cool: D1 and D3 on, D2 and D4 off
+    # D1 and D3 on, D2 and D4 off: the swept diverters cool, and the power they shed heats the other two (version 6)
     d13 = _golden("coils-D1-D3", 3000)["peakTileC"]
     assert d13[0] < off[0] and d13[2] < off[2]
-    assert d13[1] == pytest.approx(off[1], rel=0.01) and d13[3] == pytest.approx(off[3], rel=0.01)
+    assert d13[1] > off[1] * 1.1 and d13[3] > off[3] * 1.1
+    # without the share shift only the swept diverters change
+    m = model.Model(written_inputs().with_params(shareShift=0.0))
+    still = model.run(m, model.SCENARIOS[1]["coilSchedule"], [3000])[0][0]["peakTileC"]
+    assert still[1] == pytest.approx(off[1], rel=0.01) and still[3] == pytest.approx(off[3], rel=0.01)
 
 
 def test_H4_runs_are_deterministic():
@@ -645,7 +665,7 @@ def test_H5_regime_requirements_hold():
 
 def test_H5_model_text_states_what_the_model_is():
     m = built()["model"]
-    assert m["version"] == 5 and m["name"] and m["summary"]
+    assert m["version"] == 6 and m["name"] and m["summary"]
     ids = [e["id"] for e in m["equations"]]
     assert ids == ["power", "target-load", "two-point", "lcfs-map", "field", "strike-line", "footprint", "tiles"]
     assert all(e["text"] and e["meaning"] for e in m["equations"])

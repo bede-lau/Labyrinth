@@ -16,7 +16,8 @@ import {
   CAMERA_FOV,
   DEFAULT_ORBIT,
   LABEL,
-  LCFS_T_STEP,
+  T_FLOOR,
+  heatFraction,
   LUT_SIZE,
   OUTLINE,
   SLICE_LABEL,
@@ -465,15 +466,13 @@ test('H9 applyFrame colours the LCFS by temperature (red hottest, yellow coldest
   const array = attr.array;
   applyFrame(c, geom, frame());
   const v0 = attr.version;
-  // Temperature over the start's [coldest, hottest] rounded out to LCFS_T_STEP: each vertex is its value's colour on
-  // the heat ramp (to one LUT step).
+  // Temperature on the one shared logarithmic scale, T_FLOOR to the core temperature T_0 (the cross-section uses the
+  // same): each vertex is its value's colour on the heat ramp (to one LUT step).
   const [lo, hi] = ranges.lcfsT;
-  const tMin = Math.min(...start.T);
-  const tMax = Math.max(...start.T);
-  expect(lo).toBeLessThanOrEqual(tMin);
-  expect(lo).toBeGreaterThan(tMin - LCFS_T_STEP);
-  expect(hi).toBeGreaterThanOrEqual(tMax);
-  expect(hi).toBeLessThan(tMax + LCFS_T_STEP);
+  expect(ranges.lcfsT).toEqual([T_FLOOR, model.params.Tcore0]);
+  expect(ranges.sliceT).toEqual(ranges.lcfsT);
+  expect(lo).toBeLessThan(Math.min(...start.T));
+  expect(hi).toBeGreaterThan(Math.max(...start.T));
   let hot = 0;
   let cold = 0;
   for (let v = 0; v < N; v++) {
@@ -481,11 +480,13 @@ test('H9 applyFrame colours the LCFS by temperature (red hottest, yellow coldest
     if (start.T[v]! < start.T[cold]!) cold = v;
   }
   for (const v of [hot, cold, 1234, 3000]) {
-    const t = (start.T[v]! - lo) / (hi - lo);
+    const t = heatFraction(start.T[v]!, ranges.lcfsT);
     at(attr, v).forEach((x, k) => expect(Math.abs(x - want(heatColor(t, 'light'))[k]!)).toBeLessThan(4 / LUT_SIZE));
   }
   // The hottest cell is nearer the red end than the coldest (D1 footprint) is.
-  expect((start.T[hot]! - lo) / (hi - lo)).toBeGreaterThan((start.T[cold]! - lo) / (hi - lo) + 0.3);
+  expect(heatFraction(start.T[hot]!, ranges.lcfsT)).toBeGreaterThan(heatFraction(start.T[cold]!, ranges.lcfsT) + 0.3);
+  // The edge (~0.2 keV) sits mid-scale, below the core: the same colour as the rim of the cross-section.
+  expect(heatFraction(start.T[hot]!, ranges.lcfsT)).toBeLessThan(0.7);
 
   // Next frame: same attribute and array (nothing rebuilt), new version, new colours.
   const later = model.advance(start, [1, 1, 1, 1], 300);

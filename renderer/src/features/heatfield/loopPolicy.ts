@@ -17,8 +17,8 @@
 //     all-or-nothing by design: one diverter still between the release temperature and the limit keeps every
 //     ready coil on. Probing costs a few seconds of model time, so it is not repeated more often than `probeRetryS`,
 //     and a request may forbid it (`allowProbe: false`) for a quick guard-only decision.
-// The coils' strike-line sweep is the only control: there is no "heat transfer" between diverters (D-031: nothing in
-// a stellarator divertor pipes heat from one target to another).
+// The coils are the only control: each sweeps its strike line and, by moving its island, shifts part of its divertor's
+// power to the others (D-035). Nothing pipes heat directly from one target to another (D-031).
 import { controlRamp, type AppliedControls, type RampSpec } from './controlRamp';
 import type { HeatModel, ModelState } from './model';
 import type { Simulation } from './sim';

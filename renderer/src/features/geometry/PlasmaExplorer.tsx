@@ -43,7 +43,7 @@ const initial: Layers = { heat: true, particles: true, lines: false, hardware: f
 
 function Scale({ label, range, gradient, unit }: { label: string; range: readonly number[]; gradient: string; unit: string }) {
   return <div className="plasma-scale"><span>{label}</span><i style={{ background: gradient }} />
-    <span>{range[0]!.toFixed(3)}–{range[1]!.toFixed(3)} {unit}</span></div>;
+    <span>{range[0]!.toFixed(3)}–{range[1]!.toFixed(3)} {unit}, log scale</span></div>;
 }
 
 function SurfaceReading({hit, sim, plane}: {hit: HoverPoint; sim: Simulation; plane: number}) {

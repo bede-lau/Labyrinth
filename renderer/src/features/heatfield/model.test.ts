@@ -205,7 +205,7 @@ test('H8 diagnostics: probes, mean, tile peaks and heat-flux peaks of a state; s
   const off = sim.predict(1000, OFF);
   const on = sim.predict(1000, [1, 0, 0, 0]);
   expect(on.peakTileC[0]).toBeLessThan(off.peakTileC[0]! - 100);
-  expect(on.peakTileC[1]).toBeCloseTo(off.peakTileC[1]!, 0);
+  expect(on.peakTileC[1]).toBeGreaterThan(off.peakTileC[1]! + 20); // D1 sheds part of its power to the others (version 6)
   expect(sim.state.n).toBe(start.n); // predict never moves the running state
 });
 

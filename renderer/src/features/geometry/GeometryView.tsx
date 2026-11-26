@@ -217,7 +217,7 @@ export function GeometryContent({ g, assignmentsAnchor }: { g: GeometryArtifact;
                     <i
                       style={{ background: 'linear-gradient(to right,' + plasmaMaterials.temperature.join(',') + ')' }}
                     />
-                    <span>{ranges.sliceT[1].toFixed(3)} keV</span>
+                    <span>{ranges.sliceT[1].toFixed(3)} keV, log scale</span>
                   </div>
                 )}
               </div>

@@ -7,6 +7,12 @@
 
 ## Current state
 
+### 2026-11-26: heat model version 6 — coils move power between divertors; one temperature colour scale (D-035)
+- Step 6: a coil that is on lowers its divertor's weight by 1 − η (η 0.3), renormalised (D1 alone sheds ~24 %; total
+  conserved; all-off and all-on unchanged). D1+D3 on now heats D2/D4 (~1319 °C). η illustrative.
+- Display: one logarithmic temperature scale per view (20 eV – that view's hottest core) for the 3D edge, the
+  cross-sections and the explorer's surface and slice.
+
 ### 2026-11-26: heat model version 5 — the strip deposits exactly its power (D-034)
 - Step 9: the strip narrows as 1/B (σ_θ/b_k), so each divertor's strip deposits exactly its power; all coils on now
   499/443/425/497 °C, coils off unchanged. Checks (native): renderer 1,739 tests, `tsc` clean; backend 25/26 (Windows path).

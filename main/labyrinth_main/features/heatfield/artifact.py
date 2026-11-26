@@ -20,8 +20,8 @@ SCHEMA = "heatfield.schema.json"
 RUNTIME = "not recorded (artifact is byte-deterministic; no wall-clock values are stored)"
 MODEL_SPEC = "tasks/10-heat-field/MODEL.md"
 
-MODEL_NAME = "Two-point scrape-off layer and conducting CFC tiles, energy conserved (MODEL.md version 5)"
-MODEL_VERSION = 5
+MODEL_NAME = "Two-point scrape-off layer and conducting CFC tiles, energy conserved (MODEL.md version 6)"
+MODEL_VERSION = 6
 SUMMARY = (
     "Edge heat model on the last closed flux surface (LCFS) of the real W7-X VMEC equilibrium. A fixed heating power "
     "(7.5 MW, 30 % radiated) crosses the LCFS and leaves through four schematic divertors: each takes the power of its "
@@ -38,10 +38,13 @@ SUMMARY = (
 )
 EQUATIONS = [
     {"id": "power",
-     "text": "P_k = P_heat·(1 − f_rad)·mean(s_k),  s_k(φ) = G_k / Σ_m G_m,  G_k = g(φ − φ_k, π/N_div)",
+     "text": "P_k = P_heat·(1 − f_rad)·u_k·f_k·Σ_m u_m / Σ_m u_m·f_m,  u_k = mean(s_k),  f_k = 1 − η·c_k,  "
+             "s_k(φ) = G_k / Σ_m G_m,  G_k = g(φ − φ_k, π/N_div)",
      "meaning": "Governing equation (used to predict how the heat moves): energy conservation. The heating power that "
-                "is not radiated leaves through the divertors, each taking the share of its toroidal sector; the "
-                "two-point model below turns each share into the target load and the edge temperatures."},
+                "is not radiated leaves through the divertors, each taking the share of its toroidal sector; a coil that "
+                "is on moves the island and lowers its divertor's weight by 1 − η, and the shares are renormalised so "
+                "the total never changes (one coil alone sheds ~24 %, every coil on moves nothing); the two-point "
+                "model below turns each share into the target load and the edge temperatures."},
     {"id": "target-load",
      "text": "q_t,k = P_k·(B_k/B_0)/A_wet,  Q_k(θ) = q_t,k·g(θ − θ_s,k(t), σ_θ/b_k),  b_k = B_k/B_0",
      "meaning": "Peak heat flux on target k (MW/m²): its power on the wetted area, compressed with |B| at the strike "
@@ -88,7 +91,8 @@ def discretization(stability: float) -> str:
         "coils c: (1) a_k = c_k·cos(2πf·t_n); (2) h_k[c] = g(wrap(φ_j − φ_k), σ_cφ)·g(wrap(θ_i − θ_d), σ_cθ); "
         "(3) B[c] = B_s[c]·(1 + ε·Σ_k a_k·h_k[c]); (4) θ_s,k = θ_d + A_s·a_k; "
         "(5) g_k[c] = g(wrap(φ_j − φ_k), σ_φ)·g(wrap(θ_i − θ_s,k), σ_θ); "
-        "(6) s_k[j] = G_k[j]/Σ_m G_m[j], G_k[j] = g(wrap(φ_j − φ_k), π/N_div), P_k = P_heat·(1 − f_rad)·mean_c s_k (MW); "
+        "(6) s_k[j] = G_k[j]/Σ_m G_m[j], G_k[j] = g(wrap(φ_j − φ_k), π/N_div), u_k = mean_c s_k, f_k = 1 − η·c_k, "
+        "P_k = P_heat·(1 − f_rad)·u_k·f_k·(Σ_m u_m)/(Σ_m u_m·f_m) (MW, sums in order m = 0…3); "
         "(7) j_k = round(φ_k/dφ) mod nPhi, x = θ_s,k/dθ, i₀ = floor(x), w = x − i₀, "
         "B_k = (1 − w)·B[j_k, i₀] + w·B[j_k, i₀+1], b_k = B_k/B_0; (8) q_t,k = P_k·b_k/A_wet (MW/m²); "
         "(9) Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ/b_k); (10) q_∥ = q_t,k·MW/sin α (W/m²; none: T_u = T_t = 0), "
@@ -157,7 +161,7 @@ def limitations(reg: dict, params: dict) -> str:
         "divertors by toroidal sector; W7-X has ten island-divertor units, so each schematic divertor here carries "
         "about 2.5 times the power of a real one. The LCFS map only illustrates where the two-point temperature drop "
         "lies: it is not a 2D transport solution, and heat does not spread across the surface in time (the edge is "
-        "quasi-steady; only the tiles evolve). The control-coil response is not validated: ε, the sweep amplitude, "
+        "quasi-steady; only the tiles evolve). The control-coil response is not validated: ε, the share shift η, the sweep amplitude, "
         "frequency and envelope are illustrative (the PRD keeps a validated coil response, state transfer across "
         "equilibria and matched divertor and core-energy measurements for a later milestone). Each tile cell conducts only "
         "through its depth (1D: no lateral conduction along the strip, no erosion, no radiation from the surface); the "

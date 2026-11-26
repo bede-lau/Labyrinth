@@ -470,3 +470,21 @@ by the sweep). Remaining illustrative inputs, stated in the artifact: footprint 
 ε, sweep amplitude, frequency and envelopes (no validated coil response, PRD later milestone); the LCFS map and the
 cross-section core profile (illustrations).
 **Consequences.** Artifact regenerated natively; verify.sh not run (WSL skipped).
+
+## D-035 · Heat model version 6: coils move power between divertors; one temperature colour scale (maintainer, 2026-11-26)
+**Context.** The owner asked why heat never moves between divertors and then "do that"; and that the heat maps be
+logical and physical (the edge drawn orange on the 3D surface but cool on the cross-section).
+**Decision.**
+1. MODEL.md step 6: u_k = mean(w·s_k), f_k = 1 − η·c_k, P_k = P_heat(1 − f_rad)·u_k·f_k·(Σu)/(Σu·f). A coil that is on
+   moves its island (its static field) and lowers its divertor's weight by 1 − η (η = `shareShift` = 0.3); the shares
+   are renormalised, so the others gain in proportion to their shares (D1 alone sheds ~24 %, review); the total is unchanged for any coils, and with every coil off or every
+   coil on nothing moves (so the regime checks are unchanged). η is illustrative, like the rest of the coil response
+   (no field-line tracing with the coil fields, no measured W7-X data in this repo). With no heating the shares are 0.
+   Consequence, now tested: D1 and D3 on heats D2 and D4 (D2 1089 → ~1319 °C at 3 s); a coil helps its own divertor
+   at its neighbours' expense, which the control loop's look-ahead already sees.
+2. Display: within each view every temperature map (3D edge, cross-section and its edge strip; explorer surface and
+   core slice) uses ONE logarithmic scale from T_FLOOR = 20 eV to that view's hottest core (T_0, or the explorer
+   scenario's modulated peak), so a temperature has one colour across the view's maps. The edge
+   (~0.2 keV) sits mid-scale, the targets (~0.03–0.045 keV) low, the core (3 keV) at the top. The edge footprint is
+   less contrasted than on the old edge-only scale (view test threshold 12 → 5 ΔE00, still clearly visible).
+**Consequences.** Contract, both implementations, artifact regenerated; verify.sh not run (WSL skipped).

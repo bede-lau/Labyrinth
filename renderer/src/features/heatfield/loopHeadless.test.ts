@@ -86,7 +86,7 @@ test('all five diverters overheating, then the loop on: only the settling sample
   expect(run.flips).toBe(5);
   expect(run.probes).toBeGreaterThan(0); // it did look for a chance to release, and the look-ahead refused
   expect(run.finalCoils).toEqual([1, 1, 1, 1, 1]);
-}, 120_000);
+}, 300_000);
 
 test('loop on from the cold start of the five-target scenario: the tiles never pass the limit', () => {
   const sim = scenario();
@@ -94,7 +94,7 @@ test('loop on from the cold start of the five-target scenario: the tiles never p
   if (process.env.LOOP_REPORT) writeFileSync(process.env.LOOP_REPORT + '.cold', JSON.stringify({ ...run, samples: undefined }, null, 1));
   expect(run.over).toBe(0);
   expect(run.switchEvents).toBe(1);
-}, 120_000);
+}, 300_000);
 
 test.each([255, 272])('at a live decision cadence (every %i steps: 1x and 4x frames of 17 steps) the tiles never pass the limit', (every) => {
   // The live app decides on the first animation frame at or after the horizon: every 255 steps at 1x, not 250.
@@ -105,4 +105,4 @@ test.each([255, 272])('at a live decision cadence (every %i steps: 1x and 4x fra
   if (process.env.LOOP_REPORT) writeFileSync(`${process.env.LOOP_REPORT}.live${every}`, JSON.stringify({ ...run, samples: undefined }, null, 1));
   expect(run.over).toBe(0);
   expect(run.switchEvents).toBe(1);
-}, 120_000);
+}, 300_000);

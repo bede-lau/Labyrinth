@@ -880,12 +880,29 @@ export function rampLut(kind: ColorBy, theme: ThemeName): Float32Array {
 }
 
 /** Normalise each value over `range` (clamped) and write its LUT colour into `out` (3 per value). */
-export function writeColors(values: ArrayLike<number>, range: readonly [number, number], lut: Float32Array, out: Float32Array): Float32Array {
+/**
+ * Lowest temperature on the shared temperature scale (keV): 20 eV, below every target temperature of the model. Within a
+ * view every temperature map (the 3D edge and the cross-sections; the explorer's surface and slice) uses ONE
+ * logarithmic scale from here to that view's hottest core, so a temperature has one colour across its maps; logarithmic because the model
+ * spans two decades (targets ~0.03 keV, edge ~0.2 keV, core ~3 keV).
+ */
+export const T_FLOOR = 0.02;
+
+/** Position (0–1) of a temperature on the shared logarithmic scale [lo, hi] (lo > 0); colder than lo reads 0. */
+export function heatFraction(v: number, range: readonly number[]): number {
+  const lo = range[0]!;
+  const hi = range[1]!;
+  if (!(hi > lo && lo > 0)) return 0.5;
+  const t = Math.log(Math.max(v, lo) / lo) / Math.log(hi / lo);
+  return t <= 0 ? 0 : t >= 1 ? 1 : t;
+}
+
+export function writeColors(values: ArrayLike<number>, range: readonly [number, number], lut: Float32Array, out: Float32Array, logScale = false): Float32Array {
   const [lo, hi] = range;
   const span = hi > lo ? hi - lo : 1;
   const top = LUT_SIZE - 1;
   for (let c = 0; c < values.length; c++) {
-    const t = (values[c]! - lo) / span;
+    const t = logScale ? heatFraction(values[c]!, range) : (values[c]! - lo) / span;
     const x = t <= 0 ? 0 : t >= 1 ? top : Math.round(t * top);
     out[c * 3] = lut[x * 3]!;
     out[c * 3 + 1] = lut[x * 3 + 1]!;
@@ -897,33 +914,23 @@ export function writeColors(values: ArrayLike<number>, range: readonly [number, 
 /** Fixed colour ranges, labelled on the colour bars. */
 export interface ColourRanges {
   /**
-   * LCFS temperature (keV): from the coldest to the hottest LCFS temperature of the spun-up start (the two-point
-   * target and upstream temperatures, ~0.025 and ~0.21 keV), rounded out to LCFS_T_STEP. Values outside take the
-   * end colours.
+   * LCFS temperature (keV) and cross-section temperature (keV): the SAME logarithmic scale, T_FLOOR (20 eV) to the
+   * core temperature T_0, so a temperature has one colour everywhere (the edge at ~0.2 keV is the same colour on the
+   * 3D surface and at the rim of the slice). Logarithmic so the targets (~0.03 keV), the edge and the core (3 keV)
+   * stay apart; colder values take the coldest colour. Colour with `heatFraction` / `writeColors(…, true)`.
    */
   lcfsT: [number, number];
-  /**
-   * Cross-section temperature (keV): from the same data floor as `lcfsT` (the coldest LCFS temperature of the
-   * spun-up start, rounded down) to T_0, which the core reaches on the axis. Not from T_t: the slice never gets
-   * near T_t, and a bar from T_t put the whole edge band (where the footprint, the slider and the coils change
-   * anything) inside one or two stops (DESIGN.md §7, DZ-4). Colder values take the coldest colour.
-   */
   sliceT: [number, number];
   /** |B| over every surface and every coil state (T). */
   B: [number, number];
 }
 
-/** Rounding of the LCFS colour range's cold end (keV): a display choice, not a model number. */
-export const LCFS_T_STEP = 0.005;
-
 export function colourRanges(art: HeatfieldArtifact, model: HeatModel, startT: ArrayLike<number>): ColourRanges {
   const p = model.params;
-  let tMin = Infinity;
-  for (let c = 0; c < startT.length; c++) tMin = Math.min(tMin, startT[c]!);
   let tMax = -Infinity;
   for (let c = 0; c < startT.length; c++) tMax = Math.max(tMax, startT[c]!);
-  const lcfsLo = Math.max(0, Math.floor(tMin / LCFS_T_STEP) * LCFS_T_STEP);
-  const lcfsHi = Math.max(lcfsLo + LCFS_T_STEP, Math.ceil(tMax / LCFS_T_STEP) * LCFS_T_STEP);
+  // One shared logarithmic temperature scale, T_FLOOR to the core temperature (or a hotter start state).
+  const temperature: [number, number] = [T_FLOOR, Math.max(p.Tcore0, tMax)];
   let lo = Infinity;
   let hi = -Infinity;
   for (const s of art.surfaces) {
@@ -935,7 +942,7 @@ export function colourRanges(art: HeatfieldArtifact, model: HeatModel, startT: A
       hi = Math.max(hi, b * (1 + r2 * p.epsilon * hs));
     });
   }
-  return { lcfsT: [lcfsLo, lcfsHi], sliceT: [lcfsLo < p.Tcore0 ? lcfsLo : 0, p.Tcore0], B: [lo, hi] };
+  return { lcfsT: [...temperature], sliceT: [...temperature], B: [lo, hi] };
 }
 
 // ---------------------------------------------------------------------------------------------
