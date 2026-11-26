@@ -25,6 +25,7 @@ vi.mock('../features/forecast/ForecastView', async () => {
     },
   };
 });
+vi.mock('../features/validation/ValidationView', () => ({ ValidationView: () => <p>view:validation</p> }));
 vi.mock('../features/spatial/SpatialView', () => ({
   SpatialView: () => {
     if (boom.spatial) throw new Error('runs[0].ranks is undefined');
@@ -84,7 +85,7 @@ test('A1 three keyboard-accessible views, current page and route announcements',
   const user = userEvent.setup();
   render(<App />);
   const links = within(screen.getByRole('navigation', {name: 'Views'})).getAllByRole('link');
-  expect(navLabels()).toEqual(['W7-X Model', 'Forecast replay', 'Spatial parallelism' ]);
+  expect(navLabels()).toEqual(['W7-X Model', 'Validation', 'Forecast replay', 'Spatial parallelism']);
   for (const [i, route] of ROUTES.entries()) {
     links[i]!.focus();
     await user.keyboard('{Enter}');
@@ -107,7 +108,7 @@ test('A1 navigation reaches all three views by keyboard and the URL hash names t
   expect(screen.getByText('view:locate')).toBeInTheDocument();
 
   const links = navLinks();
-  expect(links.map((l) => l.getAttribute('href'))).toEqual(['#/locate', '#/forecast', '#/spatial']);
+  expect(links.map((l) => l.getAttribute('href'))).toEqual(['#/locate', '#/validation', '#/forecast', '#/spatial']);
   expect(links.map((l) => l.getAttribute('href'))).toEqual(ROUTES.map((r) => `#/${r.id}`));
   expect(links[0]).toHaveAttribute('aria-current', 'page');
   // Keyboard: Tab past the skip link to the nav, then through each link + Enter.
@@ -192,11 +193,11 @@ test('A1 a route change is announced and moves focus to the view, unless the key
 
   // Keyboard on a nav link: the announcement is made and focus stays on the link (Tab continues along the nav).
   const links = navLinks();
-  links[2]!.focus();
+  links[3]!.focus();
   await user.keyboard('{Enter}');
   await waitFor(() => expect(announcer).toHaveTextContent('Spatial parallelism view'));
   expect(screen.getByText('view:spatial')).toBeInTheDocument();
-  expect(links[2]).toHaveFocus();
+  expect(links[3]).toHaveFocus();
 });
 
 test('DS-5 the active nav tab is centred inside the nav scroller (the page is never scrolled) and hidden edges are flagged', async () => {
@@ -208,7 +209,7 @@ test('DS-5 the active nav tab is centred inside the nav scroller (the page is ne
   const links = navLinks();
   // Four 122 px tabs inside a 215 px scroller.
   Object.defineProperty(scroller, 'clientWidth', { configurable: true, value: 215 });
-  Object.defineProperty(scroller, 'scrollWidth', { configurable: true, value: 366 });
+  Object.defineProperty(scroller, 'scrollWidth', { configurable: true, value: 488 });
   scroller.getBoundingClientRect = () => ({ left: 0, width: 215 }) as DOMRect;
   links.forEach((l, i) => {
     l.getBoundingClientRect = () => ({ left: i * 122 - scroller.scrollLeft, width: 122 }) as DOMRect;
@@ -221,11 +222,11 @@ test('DS-5 the active nav tab is centred inside the nav scroller (the page is ne
     await waitFor(() => expect(screen.getByText(`view:${id}`)).toBeInTheDocument());
   };
   // The edge cue is state set from the scroll effect: it lands one render after the view (waited for, not raced).
-  await go('forecast'); // 122 − (215 − 122) / 2
+  await go('validation'); // 122 − (215 − 122) / 2
   expect(scroller.scrollLeft).toBe(76);
   await waitFor(() => expect(scroller).toHaveAttribute('data-fade', 'both'));
-  await go('spatial'); // 244 − (215 − 122) / 2
-  expect(scroller.scrollLeft).toBe(151);
+  await go('spatial'); // 366 − (215 − 122) / 2, clamped to 488 − 215
+  expect(scroller.scrollLeft).toBe(273);
   await waitFor(() => expect(scroller).toHaveAttribute('data-fade', 'start'));
   await go('locate'); // first tab: back at 0, only the end is hidden
   expect(scroller.scrollLeft).toBe(0);
@@ -492,6 +493,7 @@ test('A3 a view that throws shows the named error panel inside the shell, and na
   // Every route names the file its view reads.
   expect(ROUTES.map((r) => [r.id, r.files])).toEqual([
     ['locate', ['artifacts/geometry.json']],
+    ['validation', ['artifacts/geometry.json', 'artifacts/transport.json']],
     ['forecast', ['artifacts/forecast.json']],
     ['spatial', ['artifacts/spatial.json']],
   ]);

@@ -11,6 +11,7 @@ const plotly = vi.hoisted(() => ({ react: vi.fn(), purge: vi.fn() }));
 vi.mock('plotly.js-dist-min', () => ({ default: plotly }));
 vi.mock('../features/geometry/GeometryView', () => ({ GeometryView: () => <p>view:locate</p> }));
 vi.mock('../features/forecast/ForecastView', () => ({ ForecastView: () => <p>view:forecast</p> }));
+vi.mock('../features/validation/ValidationView', () => ({ ValidationView: () => <p>view:validation</p> }));
 vi.mock('../features/spatial/SpatialView', () => ({ SpatialView: () => <p>view:spatial</p> }));
 vi.mock('../features/heatfield/HeatFieldView', () => ({ HeatFieldView: () => <p>view:heat</p> }));
 
@@ -37,7 +38,7 @@ afterEach(() => {
 });
 
 test('the billing-alert cases cover every route in the nav', () => {
-  expect(ROUTES.map((r) => r.id)).toEqual(['locate', 'forecast', 'spatial']);
+  expect(ROUTES.map((r) => r.id)).toEqual(['locate', 'validation', 'forecast', 'spatial']);
 });
 
 test.each(ROUTES.map((r) => r.id))('existing billing alert offers Terminate on %s', async route => {

@@ -42,7 +42,7 @@ export function ValidationPanel({ g }: { g: GeometryArtifact }) {
   const { reason, unblock } = splitUnblock(acc.details);
   return (
     <Panel
-      eyebrow="Locate the tubes"
+      eyebrow="Field-line geometry"
       title="Validation"
       subtitle="Does the field-line tracer reproduce stella? Two checks, reported separately."
       density="compact"

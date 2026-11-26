@@ -7,6 +7,17 @@
 
 ## Current state
 
+### 2026-11-26: README for external reviewers
+- `README.md` rewritten (was one line): what the tool does, one screenshot (`docs/screenshot-w7x-model.png`, headless
+  Chrome at 1440×900 ×2), what is validated (|B| vs stella float64 2.94e-13; stella vs GENE window means with
+  autocorrelation-aware stderr, no saturated claim) and what is illustrative (the divertor/heat model).
+- `ValidationPanel` and `TransportView` had been unmounted since bbf2fc6 (the redesign dropped "Check transport" and
+  the geometry validation panel). Re-mounted, unchanged, on a new **Validation** route (`#/validation`, second in the
+  nav; `features/validation/ValidationView.tsx` + test). Shell tests updated for four tabs. Browser-checked: both
+  panels and the stella/GENE chart render, no layout overflow; the only console errors are the absent backend's 502s.
+- Not done: no reviewer pass on the README; the 2.94e-13 figure is quoted from the verifier record (netCDF4 is not
+  installed natively, so it was not recomputed this session; the artifact's published bound 4e-13 was read).
+
 ### 2026-11-26: W7-X view — 0-D core energy balance (D-037)
 - The explorer's heating timing is now physical: dW/dt = P_in − W/τ_E (ISS04, 0.13 s); the edge receives W/τ_E; the core
   temperature follows from W. Hand-made lags, delays and the D1-first spread removed.

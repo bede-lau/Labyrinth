@@ -1,7 +1,7 @@
 // Hash routes in rail order. `#gallery` is handled separately by main.tsx.
 import type { ArtifactId } from '../lib/artifacts';
 
-export type RouteId = 'locate' | 'forecast' | 'spatial';
+export type RouteId = 'locate' | 'validation' | 'forecast' | 'spatial';
 
 export interface RouteDef {
   id: RouteId;
@@ -20,6 +20,7 @@ const artifactFile = (id: ArtifactId) => `artifacts/${id}.json`;
 
 export const ROUTES: readonly RouteDef[] = [
   { id: 'locate', label: 'W7-X Model', source: 'replay', files: [artifactFile('geometry')] },
+  { id: 'validation', label: 'Validation', source: 'replay', files: [artifactFile('geometry'), artifactFile('transport')] },
   { id: 'forecast', label: 'Forecast replay', source: 'replay', files: [artifactFile('forecast')] },
   { id: 'spatial', label: 'Spatial parallelism', source: 'replay', files: [artifactFile('spatial')] },
 ];

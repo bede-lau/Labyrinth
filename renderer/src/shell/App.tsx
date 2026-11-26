@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentType } from 'react';
 import { GeometryView } from '../features/geometry/GeometryView';
+import { ValidationView } from '../features/validation/ValidationView';
 import { ForecastView } from '../features/forecast/ForecastView';
 import { SpatialView } from '../features/spatial/SpatialView';
 import { ViewActive } from '../lib/viewActive';
@@ -14,6 +15,7 @@ import { useHashRoute } from './useHashRoute';
 import './shell.css';
 
 const VIEWS: Record<Exclude<RouteId, 'locate'>, ComponentType> = {
+  validation: ValidationView,
   forecast: ForecastView,
   spatial: SpatialView,
 };
@@ -21,6 +23,7 @@ const VIEWS: Record<Exclude<RouteId, 'locate'>, ComponentType> = {
 // Each navigation glyph describes the view beside it. Text carries the accessible name.
 const ROUTE_GLYPHS: Record<RouteId, string> = {
   locate: 'M12 3c6 0 9 5 7 10s-9 10-14 6-2-9 1-12 4-4 6-4Z M15 7c3 2 0 7-3 9s-6 1-5-2 4-9 8-7Z',
+  validation: 'M4 12.5l5 5L20 6.5',
   forecast: 'M3 17l5-6 4 2 3-6m3-2 1-1m1 5 1-1M14 7l-1 4',
   spatial: 'M12 2.5 21 7l-9 4.5L3 7zM3 12l9 4.5 9-4.5M3 17l9 4.5 9-4.5',
 };
