@@ -10,7 +10,7 @@
 ### 2026-11-26: W7-X view — power moved between divertors (D-039)
 - New "Power between divertors" panel and 3D arrows: each divertor's share and its change against coils-off, and who
   sends to whom (`transfer.ts`, exact for one coil, conserved). The D-038 explorer shader/glow palette regressions are fixed.
-- 3D: glowing gold heat comets (core → divertors, divertor → divertor when a coil acts), glowing catchers, and a
+- 3D: glowing gold heat comets (along the edge into each divertor from both sides, divertor → divertor when a coil acts), glowing catchers, and a
   plain-words "How the heat moves" key. Field-line coil colouring now uses the VMEC θ (λ included). Explorer
   temperature ramp: Turbo (blue → green → yellow → red) on a linear 0–T_core scale (edge coldest blue, core red).
 

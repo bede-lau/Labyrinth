@@ -17,7 +17,7 @@ const along = (path: FlowPath, p: THREE.Vector3) => {
   return best / 400;
 };
 
-test('streams run from the core to every divertor, comets move outward, and a coil adds transfer paths from its divertor', () => {
+test('streams run along the edge into every divertor from both sides, comets move toward the plates, and a coil adds transfer paths from its divertor', () => {
   const art = fiveTargetScenario(saved);
   const sim = startupSimulation(art);
   const n = sim.model.nDiverters;
@@ -30,24 +30,21 @@ test('streams run from the core to every divertor, comets move outward, and a co
   sim.advance(Math.round(1 / dt));
   flow.update(sim, true);
   let paths = flow.paths();
-  expect(paths.map((p) => p.name)).toEqual(sim.model.phiK.map((_, k) => `core to D${k + 1}`));
-  // A stream starts on the magnetic axis and ends at the plate, outside the LCFS (further from the axis than any LCFS point
-  // of that plane).
+  // Every divertor is fed from both sides along the edge: two streams each, ending at its plate.
+  expect(paths.filter((p) => p.kind === 'stream')).toHaveLength(2 * n);
+  for (let k = 0; k < n; k++) expect(paths.filter((p) => p.name.startsWith(`edge to D${k + 1} `))).toHaveLength(2);
   const s0 = paths[0]!;
-  const j0 = Math.round(sim.model.phiK[0]! / ((2 * Math.PI) / art.grid.nPhi)) % art.grid.nPhi;
-  const ax = art.surfaces[0]!;
-  const lc = art.surfaces[art.surfaces.length - 1]!;
-  const nT = art.grid.nTheta;
-  const axisR = ax.R[j0 * nT]!, axisZ = ax.Z[j0 * nT]!;
-  const start = s0.curve.getPoint(0);
-  expect(Math.abs(Math.hypot(start.x, start.y) - axisR)).toBeLessThan(1e-6);
-  expect(Math.abs(start.z - axisZ)).toBeLessThan(1e-6);
-  const end = s0.curve.getPoint(1);
-  const endMinor = Math.hypot(Math.hypot(end.x, end.y) - axisR, end.z - axisZ);
-  let lcfsMax = 0;
-  for (let i = 0; i < nT; i++) lcfsMax = Math.max(lcfsMax, Math.hypot(lc.R[j0 * nT + i]! - axisR, lc.Z[j0 * nT + i]! - axisZ));
-  expect(endMinor).toBeGreaterThan(0.5 * lcfsMax);
-  // Comets move outward: about a tenth of the stream in a tenth of PULSE_SECONDS (modulo a wrap back to the core).
+  const k0 = Number(s0.name.split(' ')[2]!.slice(1)) - 1;
+  const angle0 = (v: THREE.Vector3) => Math.atan2(v.y, v.x);
+  const gap0 = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+  // Every stream starts halfway to a neighbour and ends at its own divertor's toroidal angle (both wrap cases included).
+  for (const p of paths) {
+    const k = Number(p.name.split(' ')[2]!.slice(1)) - 1;
+    expect(gap0(angle0(p.curve.getPoint(1)), sim.model.phiK[k]!)).toBeLessThan(0.1);
+    expect(gap0(angle0(p.curve.getPoint(0)), sim.model.phiK[k]!)).toBeGreaterThan(0.3);
+  }
+  expect(k0).toBe(0);
+  // Comets move toward the plate: about a tenth of the stream in a tenth of PULSE_SECONDS (modulo a wrap to the start).
   const a0 = along(s0, flow.head(0, 0));
   sim.advance(Math.round((0.1 * PULSE_SECONDS) / dt));
   flow.update(sim, true);
@@ -62,8 +59,9 @@ test('streams run from the core to every divertor, comets move outward, and a co
   paths = flow.paths();
   const streams = paths.filter((p) => p.kind === 'stream');
   const transfers = paths.filter((p) => p.kind === 'transfer');
-  expect(Math.min(...streams.map((p) => p.weight))).toBe(streams[2]!.weight);
-  expect(streams[2]!.comets).toBeLessThanOrEqual(Math.min(...streams.map((p) => p.comets)));
+  const d3 = streams.filter((p) => p.name.startsWith('edge to D3 '));
+  expect(Math.min(...streams.map((p) => p.weight))).toBe(d3[0]!.weight);
+  expect(d3[0]!.comets).toBeLessThanOrEqual(Math.min(...streams.map((p) => p.comets)));
   expect(transfers.map((p) => p.name.split(' to ')[0])).toEqual(new Array(n - 1).fill('D3'));
   // Each transfer starts at D3's toroidal angle and ends at its receiver's; its arrowhead points on toward the receiver.
   const angle = (v: THREE.Vector3) => Math.atan2(v.y, v.x);

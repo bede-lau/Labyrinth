@@ -154,7 +154,7 @@ export function PlasmaExplorer({ onPowerOff, tracks, followed, feedback, onFeedb
     {powered && layers.heat && (
       <ol className="heat-story" aria-label="How the heat moves">
         <li><span className="heat-story__icon" style={storyIcons.core} aria-hidden="true" />The middle of the plasma is the hottest part (red). The edge is the coolest (blue).</li>
-        <li><span className="heat-story__icon heat-story__icon--comet" style={storyIcons.comet} aria-hidden="true" />Glowing dots are heat. They fly out from the hot middle to the {art.diverters.items.length} catchers, {art.diverters.items[0]!.id} to {art.diverters.items.at(-1)!.id} (the divertors).</li>
+        <li><span className="heat-story__icon heat-story__icon--comet" style={storyIcons.comet} aria-hidden="true" />Glowing dots are heat. Heat leaks out of the hot middle, then slides along the edge (following the magnetic field) into the nearest of the {art.diverters.items.length} catchers, {art.diverters.items[0]!.id} to {art.diverters.items.at(-1)!.id} (the divertors).</li>
         <li><span className="heat-story__icon" style={storyIcons.catcher} aria-hidden="true" />A catcher glows brighter when it catches more heat.</li>
         <li><span className="heat-story__icon heat-story__icon--push" style={storyIcons.push} aria-hidden="true" />If a catcher gets too hot, its magnet switches on and pushes heat round the ring to the others (dots with an arrow).</li>
       </ol>

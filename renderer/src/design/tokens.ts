@@ -573,7 +573,7 @@ export const plasmaMaterials = {
   /** Heat on the move (D-039): glowing comets from the core to the divertors and between them; warm gold tails. */
   heatGlow: '#ffa94d',
   /** The bright head of a heat comet. */
-  heatGlowCore: '#fff1d6',
+  heatGlowCore: '#ffd88a',
   /** The warm band of a divertor target (the old ramp's yellow, kept when the ramp widened). */
   targetWarm: '#f4c75c',
   tracer: '#fff4ca',

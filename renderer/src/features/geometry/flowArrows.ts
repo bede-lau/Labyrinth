@@ -1,8 +1,8 @@
 // How the heat flows, drawn on the 3D model (D-039) so anyone can follow it. Heat is shown one way only: glowing
 // warm dots with fading tails (comets) that drift along faint guide lines and land on the divertor plates.
-//  - streams: from the hot core out to every divertor. More and brighter comets for a divertor that receives more
-//    power (its share P_k). Schematic in path (heat crosses the LCFS everywhere and follows field lines to the plates),
-//    exact in amount (the model's shares).
+//  - streams: along the plasma's outer edge, round the torus, into every divertor from both sides (heat that crosses
+//    the LCFS follows the field to the nearest plate). More and brighter comets for a divertor that receives more power
+//    (its share P_k). Schematic in path (real field lines wind round poloidally too), exact in amount (the model's shares).
 //  - transfers: round the outside of the torus from a divertor whose coil sheds power to each divertor that takes it up
 //    (transfer.ts), with an arrowhead at the receiver. More comets for a larger transfer.
 //  - catchers: every divertor plate glows as brightly as the power it catches.
@@ -20,12 +20,12 @@ const MIN_MW = 0.005;
 /** Seconds of simulation time for a comet to run the length of its path. */
 export const PULSE_SECONDS = 1.2;
 /** Points in a comet's tail behind its head, and the spacing between them (fraction of the path). */
-const TAIL = 10;
-const TAIL_STEP = 0.012;
+const TAIL = 12;
+const TAIL_STEP = 0.009;
 /** On-screen sizes (px) of a comet's head and tail points and of a catcher's glow. */
-const HEAD_PX = 14;
-const TAIL_PX = 8;
-const CATCHER_PX = 44;
+const HEAD_PX = 22;
+const TAIL_PX = 13;
+const CATCHER_PX = 64;
 
 /** A path the heat follows: its curve, what it is, and how much power it carries relative to the largest of its kind. */
 export interface FlowPath {
@@ -59,7 +59,6 @@ function glowTexture(three: Three) {
 export function buildFlowArrows(three: Three, art: HeatfieldArtifact) {
   const { nTheta, nPhi } = art.grid;
   const lcfs = art.surfaces[art.surfaces.length - 1]!;
-  const axis = art.surfaces[0]!;
   const at = (s: typeof lcfs, j: number, i: number, out = 0) => {
     const k = j * nTheta + i;
     const r = s.R[k]! + out;
@@ -81,7 +80,7 @@ export function buildFlowArrows(three: Three, art: HeatfieldArtifact) {
   const headMaterial = new three.PointsMaterial({ size: HEAD_PX, ...px });
   const tailMaterial = new three.PointsMaterial({ size: TAIL_PX, ...px });
   const catcherMaterial = new three.PointsMaterial({ size: CATCHER_PX, ...px });
-  const guideMaterial = new three.LineBasicMaterial({ color: warm, opacity: 0.22, ...glowing });
+  const guideMaterial = new three.LineBasicMaterial({ color: warm, opacity: 0.4, ...glowing });
   const tipMaterial = new three.MeshBasicMaterial({ color: warm, opacity: 0.75, ...glowing });
 
   const group = new three.Group();
@@ -100,6 +99,23 @@ export function buildFlowArrows(three: Three, art: HeatfieldArtifact) {
   let key = '';
   let heads: import('three').Points | undefined;
   let tails: import('three').Points | undefined;
+
+  // The outboard edge of the LCFS, lifted 0.1 m: the road the streams run along.
+  const edgeRing = Array.from({ length: nPhi }, (_, j) => {
+    let best = 0;
+    for (let i = 1; i < nTheta; i++) if (lcfs.R[j * nTheta + i]! > lcfs.R[j * nTheta + best]!) best = i;
+    return at(lcfs, j, best, 0.1);
+  });
+  /** Edge-ring points from plane ja toward plane jb the short way, stopping one plane short of jb. */
+  const walk = (ja: number, jb: number) => {
+    let d = jb - ja;
+    if (d > nPhi / 2) d -= nPhi;
+    if (d < -nPhi / 2) d += nPhi;
+    const s = Math.sign(d);
+    const pts = [];
+    for (let i = 0; i < Math.abs(d); i++) pts.push(edgeRing[(((ja + s * i) % nPhi) + nPhi) % nPhi]!.clone());
+    return pts;
+  };
 
   /** The arc of ring points from φ_a to φ_b the short way round, a little short of both plates. */
   const arc = (a: number, b: number) => {
@@ -138,17 +154,35 @@ export function buildFlowArrows(three: Three, art: HeatfieldArtifact) {
     empty(catchers);
     paths = [];
     const most = Math.max(...shares);
-    if (most > MIN_MW)
-      shares.forEach((share, k) => {
+    // Streams: heat that crosses the LCFS runs along the field, round the torus, to the nearest divertor. Each divertor
+    // drains the stretch of edge halfway to its neighbours, so comets run along the plasma's outer edge from both sides
+    // and drop onto the plate. More comets where more power lands. Both sides carry the same weight: the model's sectors
+    // are symmetric about each divertor. Drawn on the outboard edge for visibility (the strike lines sit at θ_d).
+    if (most > MIN_MW) {
+      const order = model.phiK.map((phi, k) => [phi, k] as const).sort((a, b) => a[0] - b[0]);
+      order.forEach(([phi, k], idx) => {
+        const share = shares[k]!;
         if (!(share > MIN_MW)) return;
-        const j = planeOf(model.phiK[k]!);
-        const start = at(axis, j, 0);
-        const end = plateAt(model, k);
-        // A gentle bow, so the stream reads as a flow, not a spoke.
-        const mid = start.clone().lerp(end, 0.5).add(new three.Vector3(0, 0, 0.25));
         const w = share / most;
-        paths.push({ name: `core to D${k + 1}`, kind: 'stream', curve: new three.CatmullRomCurve3([start, mid, end]), weight: w, comets: 2 + Math.round(3 * w) });
+        const prev = order[(idx + order.length - 1) % order.length]![0];
+        const next = order[(idx + 1) % order.length]![0];
+        const half = (a: number, b: number) => {
+          let d = b - a;
+          while (d <= 0) d += 2 * Math.PI;
+          return a + d / 2;
+        };
+        const sides: [string, number][] = [
+          [`edge to D${k + 1} (from D${order[(idx + order.length - 1) % order.length]![1] + 1} side)`, half(prev, phi)],
+          [`edge to D${k + 1} (from D${order[(idx + 1) % order.length]![1] + 1} side)`, half(phi, next)],
+        ];
+        for (const [name, from] of sides) {
+          const pts = walk(planeOf(from), planeOf(phi));
+          if (pts.length < 2) continue;
+          pts.push(plateAt(model, k));
+          paths.push({ name, kind: 'stream', curve: new three.CatmullRomCurve3(pts), weight: w, comets: 1 + Math.round(2 * w) });
+        }
       });
+    }
     const flows = largestFlows(powerTransfer(model, sim.state.n, sim.coils), MIN_MW);
     const widest = flows.length ? flows[0]![2] : 1;
     flows.forEach(([a, b, v], index) => {

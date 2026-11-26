@@ -563,3 +563,9 @@ panel). Also fixed here, regressions from D-038 found while wiring this: the exp
 - **Plain-words key:** a four-line "How the heat moves" key under the 3D view tells the same story.
 - **Field lines:** they were already physical: the VMEC equilibrium's own field lines (the PEST tracer, checked against stella). One approximation is fixed: their coil colouring placed the model envelope at θ ≈ α + ι·φ, dropping λ. Each sample now reads h_k at its VMEC θ, found from its position, so a line takes the colour of the surface under it.
 - **Field-line limitation, stated:** the lines do not move when a coil switches on, because the model's coils modulate |B| and are not real coil currents. Showing that motion needs the W7-X coil geometry.
+**Addendum 3 (owner: "why can't I see the heat flow").**
+- **The problem:** at the default zoom the core-to-plate streams of addendum 2 were a few pixels long, hidden under the plate labels. With every coil sweeping together, no transfer showed either.
+- **Streams now run along the edge.** They follow the LCFS's outer edge round the torus into each divertor from both sides: heat that crosses the LCFS follows the field to the nearest plate, and each divertor drains the edge halfway to its neighbours.
+  - There are 1–3 well-spaced comets per side, more where the share is larger.
+  - The path stays schematic: real field lines also wind round poloidally.
+- **Glows are bigger** (22 px heads), and the key's wording is updated to match.
