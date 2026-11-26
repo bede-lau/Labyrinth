@@ -1,10 +1,11 @@
-// The illustrative edge heat model of tasks/10-heat-field/MODEL.md (D-027), ported from the Python reference
-// (main/), step by step. Pure TypeScript on Float64Arrays: no DOM, no three, no React.
+// The edge heat model of tasks/10-heat-field/MODEL.md (version 3, D-032: two-point scrape-off layer, energy
+// conserved), ported from the Python reference (main/), step by step. Pure TypeScript on Float64Arrays: no DOM, no
+// three, no React.
 //
 // Every input is read from artifacts/heatfield.json exactly as written there (7 significant figures):
 // B_s = surfaces[last].B, ι = surfaces[last].iota, φ_k = diverters.items[k].phi, θ_d = diverters.thetaCentre and
 // every parameter = model.parameters[name].value. This file holds no constant of the model (H8; model.test.ts scans
-// it): the only numbers here are 0, 1, 2 and 0.5 of the formulas themselves.
+// it): the only numbers here are 0, 0.5, 1 and 2 of the formulas themselves (Spitzer's 7/2 is the parameter ν).
 //
 // The coils of step n are those of the coil-schedule entry with the largest fromStep ≤ n; they drive step n → n+1
 // and the diagnostics of the state after n steps (the reference's convention, written in model.discretization).
@@ -88,16 +89,20 @@ export interface HeatModel {
   step(state: ModelState, coils: Coils): ModelState;
   /** `steps` steps using the supplied control envelope, or fixed coils by default. */
   advance(state: ModelState, coils: Coils, steps: number, controlsAt?: (step: number) => AppliedControls): ModelState;
-  /** Step 10 for the state and coils at t_n: Q_k[i] (MW/m²) at k·nTheta + i. */
+  /** Step 9 for the state's time t_n and these coils: Q_k[i] (MW/m²) at k·nTheta + i. */
   stripLoads(state: ModelState, coils: Coils): Float64Array;
+  /** Steps 6–10 at t_n: each divertor's power share, peak target load and two-point temperatures. */
+  edge(n: number, coils: Coils): EdgeSolution;
+  /** Upstream temperature of every φ plane at t_n (keV): T_u[j] = Σ_k s_k[j]·T_u,k. */
+  upstream(n: number, coils: Coils): Float64Array;
   diagnostics(state: ModelState, coils: Coils): Diagnostics;
   /** Run from the initial condition with a coil schedule; diagnostics at each checkpoint step. */
   run(schedule: readonly CoilScheduleEntry[], checkpoints: readonly number[]): { checkpoints: Diagnostics[]; state: ModelState };
-  /** Heat-flow vector in angle space (MODEL.md, renderer only): F_φ and F_θ per cell. */
+  /** Conducted heat flow along the field lines in angle space (renderer only): F_φ and F_θ per cell. */
   heatFlow(state: ModelState, coils: Coils): { fPhi: Float64Array; fTheta: Float64Array };
   /** Cross-section fields at plane j (MODEL.md): T_xs and |B|_xs for surface m, θ index i at m·nTheta + i. */
   crossSection(state: ModelState, coils: Coils, j: number): { T: Float64Array; B: Float64Array; rho: Float64Array };
-  /** Δt·(2D_∥/dφ² + 2·max D⊥/dθ² + 1/τ_E + max Σ_k g_k/τ_div), over every coil state. */
+  /** Δt/τ_tile: the only explicit update (the edge is quasi-steady). */
   stabilityNumber(): number;
 }
 
@@ -106,8 +111,19 @@ export function paramsOf(art: HeatfieldArtifact): Params {
   return Object.fromEntries(Object.entries(art.model.parameters).map(([k, v]) => [k, v.value])) as Params;
 }
 
-/** Optional prescribed edge-reservoir temperature for exploratory heating scenarios (keV). */
-export function createModel(art: HeatfieldArtifact, heating?: (time: number) => Float64Array, coreTemperature?: (time: number) => number, pedestalTemperature?: (time: number) => number): HeatModel {
+/** Two-point solution of every divertor at one time: power share (MW), peak target load (MW/m²), T_u and T_t (keV). */
+export interface EdgeSolution {
+  shares: Float64Array;
+  qT: Float64Array;
+  Tu: Float64Array;
+  Tt: Float64Array;
+}
+
+/**
+ * The model of an artifact. `heating` (optional) gives the relative heating power density on every LCFS cell at a
+ * time (1 everywhere is the nominal P_heat); `coreTemperature` (optional) the axis temperature of the cross-section.
+ */
+export function createModel(art: HeatfieldArtifact, heating?: (time: number) => Float64Array, coreTemperature?: (time: number) => number): HeatModel {
   const nTheta = art.grid.nTheta;
   const nPhi = art.grid.nPhi;
   const nCells = nTheta * nPhi;
@@ -120,6 +136,7 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
   const nDiv = phiK.length;
   const probes = art.model.probes.map(([i, j]) => [i, j] as const);
   const Bs = Float64Array.from(lcfs.B);
+  const nu = p.conductionExponent;
 
   const dTheta = TWO_PI / nTheta;
   const dPhi = TWO_PI / nPhi;
@@ -145,20 +162,20 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     for (let j = 0; j < nPhi; j++) out[j] = gauss(wrap(phi[j]! - pk), p.sigmaPhi);
     return out;
   });
-  // Step 7: pitch in cells σ = ι·dφ/dθ, p = floor(σ), w = σ − p.
+  // Step 6: toroidal sectors s_k(φ_j) = G_k/Σ_m G_m, G_k = g(wrap(φ_j − φ_k), π/N_div).
+  const sector = phiK.map(() => new Float64Array(nPhi));
+  for (let j = 0; j < nPhi; j++) {
+    const G = phiK.map((pk) => gauss(wrap(phi[j]! - pk), Math.PI / nDiv));
+    let sum = G[0]!;
+    for (let k = 1; k < nDiv; k++) sum = sum + G[k]!;
+    for (let k = 0; k < nDiv; k++) sector[k]![j] = G[k]! / sum;
+  }
+  // Step 7: the divertor planes j_k = round(φ_k/dφ) mod nPhi.
+  const jK = phiK.map((pk) => ((Math.round(pk / dPhi) % nPhi) + nPhi) % nPhi);
+  // Field-line neighbours (pitch ι in cells) for the heat-flow vector.
   const sigmaCells = (iota * dPhi) / dTheta;
   const shift = Math.floor(sigmaCells);
   const w = sigmaCells - shift;
-  // Step 10: strip-load normalisation dφ/(√(2π)·σ_φ).
-  const stripFactor = dPhi / (Math.sqrt(TWO_PI) * p.sigmaPhi);
-  // Step 10, constant part (MODEL.md v2, D-031): sheath law with two-point pressure balance,
-  // (γ/2)·n_u·keV·c_s(T_t)·sin α / MW in MW m⁻² per keV of upstream temperature, c_s = √(2·T_t·keV/(m_i·amu)).
-  const soundSpeed = Math.sqrt((2 * p.Ttarget * p.keV) / (p.ionMass * p.amu));
-  const sheath = (((p.sheathGamma / 2) * p.nSep * p.keV * soundSpeed) * Math.sin(p.incidence)) / p.MW;
-  const dPhi2 = dPhi * dPhi;
-  const dTheta2 = dTheta * dTheta;
-
-  // Periodic neighbour tables: T[(j + dj) mod nPhi, (i + di) mod nTheta] for every cell.
   const mod = (a: number, b: number) => ((a % b) + b) % b;
   const take = (dj: number, di: number) => {
     const out = new Int32Array(nCells);
@@ -170,8 +187,6 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
   const plus1 = take(1, shift + 1);
   const minus0 = take(-1, -shift);
   const minus1 = take(-1, -shift - 1);
-  const east = take(0, 1);
-  const west = take(0, -1);
 
   const time = (n: number) => n * p.dt;
 
@@ -182,116 +197,179 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     return a;
   };
 
+  const fieldAt = (a: Float64Array, c: number) => {
+    let pert = a[0]! * h[0]![c]!;
+    for (let k = 1; k < nDiv; k++) pert = pert + a[k]! * h[k]![c]!;
+    return Bs[c]! * (1 + p.epsilon * pert);
+  };
   const fieldFromDrive = (a: Float64Array, out: Float64Array) => {
-    const eps = p.epsilon;
-    for (let c = 0; c < nCells; c++) {
-      let pert = a[0]! * h[0]![c]!;
-      for (let k = 1; k < nDiv; k++) pert = pert + a[k]! * h[k]![c]!;
-      out[c] = Bs[c]! * (1 + eps * pert);
-    }
+    for (let c = 0; c < nCells; c++) out[c] = fieldAt(a, c);
     return out;
   };
 
-  /** θ factor of every footprint at the strike lines of drive a: k·nTheta + i. */
-  const footprintTheta = (a: Float64Array) => {
-    const out = new Float64Array(nDiv * nTheta);
-    for (let k = 0; k < nDiv; k++) {
-      const ts = thetaD + p.sweepAmplitude * a[k]!;
-      for (let i = 0; i < nTheta; i++) out[k * nTheta + i] = gauss(wrap(theta[i]! - ts), p.sigmaTheta);
-    }
-    return out;
-  };
-
-  /** Step 10: Q_k[i] = Σ_j sheath·(B/B_0)·g_k·T · dφ/(√(2π)σ_φ). */
-  const loadsFrom = (T: Float64Array, B: Float64Array, gTh: Float64Array, out: Float64Array) => {
-    out.fill(0);
-    for (let k = 0; k < nDiv; k++) {
-      const gp = gPhi[k]!;
-      const base = k * nTheta;
+  /** Step 6: P_k = P_heat·(1 − f_rad)·mean_c(w[c]·s_k[c]) (MW); w ≡ 1 without a heating scenario. */
+  const uniformShares = Float64Array.from(sector, (s) => {
+    let sum = 0;
+    for (let j = 0; j < nPhi; j++) sum += s[j]!;
+    return (p.Pheat * (1 - p.fRad)) * (sum / nPhi);
+  });
+  const sharesAt = (t: number) => {
+    const weight = heating?.(t);
+    if (!weight) return uniformShares;
+    return Float64Array.from(sector, (s) => {
+      let sum = 0;
       for (let j = 0; j < nPhi; j++) {
-        const gpj = gp[j]!;
-        const row = j * nTheta;
-        for (let i = 0; i < nTheta; i++) {
-          const c = row + i;
-          const q = ((sheath * (B[c]! / p.B0)) * (gpj * gTh[base + i]!)) * T[c]!;
-          out[base + i] = out[base + i]! + q;
-        }
+        let row = 0;
+        for (let i = 0; i < nTheta; i++) row += weight[j * nTheta + i]!;
+        sum += s[j]! * row;
       }
+      return (p.Pheat * (1 - p.fRad)) * (sum / nCells);
+    });
+  };
+
+  /** Step 10: (T_u, T_t) in keV for a peak target load q_t (MW/m²). */
+  const twoPoint = (qt: number): [number, number] => {
+    const qPar = (qt * p.MW) / Math.sin(p.incidence);
+    if (!(qPar > 0)) return [0, 0];
+    const x = (nu * qPar * p.connectionLength) / p.kappa0;
+    let tu = Math.pow(x, 1 / nu);
+    let tt = 0;
+    for (let it = 0; it < p.twoPointIterations; it++) {
+      const c = (2 * qPar) / (p.sheathGamma * p.nSep * p.keV * tu);
+      tt = (p.ionMass * p.amu * c * c) / (2 * p.keV);
+      tu = Math.pow(Math.pow(tt, nu) + x, 1 / nu);
     }
-    for (let x = 0; x < out.length; x++) out[x] = out[x]! * stripFactor;
+    return [tu, tt];
+  };
+
+  /** Steps 1, 4, 6–10 at t_n for these coils (the last few are cached). */
+  const cache = new Map<string, { a: Float64Array; strike: Float64Array; edge: EdgeSolution }>();
+  const solve = (n: number, coils: Coils) => {
+    const key = n + ':' + Array.from({ length: nDiv }, (_, k) => coils[k] ?? 0).join(',');
+    const hit = cache.get(key);
+    if (hit) return hit;
+    const a = drive(coils, time(n));
+    const strike = new Float64Array(nDiv);
+    for (let k = 0; k < nDiv; k++) strike[k] = thetaD + p.sweepAmplitude * a[k]!;
+    const shares = sharesAt(time(n));
+    const qT = new Float64Array(nDiv);
+    const Tu = new Float64Array(nDiv);
+    const Tt = new Float64Array(nDiv);
+    for (let k = 0; k < nDiv; k++) {
+      // Step 7: |B| at the strike line on plane j_k, linear in θ between grid nodes.
+      const x = strike[k]! / dTheta;
+      const i0 = Math.floor(x);
+      const fr = x - i0;
+      const row = jK[k]! * nTheta;
+      const b = ((1 - fr) * fieldAt(a, row + mod(i0, nTheta)) + fr * fieldAt(a, row + mod(i0 + 1, nTheta))) / p.B0;
+      qT[k] = (shares[k]! * b) / p.wettedArea; // 8
+      [Tu[k], Tt[k]] = twoPoint(qT[k]!); // 10
+    }
+    const out = { a, strike, edge: { shares, qT, Tu, Tt } };
+    // A small bound (any will do; the grid's θ count avoids a numeric literal, H8): a step reads t_n and t_(n+1) only.
+    if (cache.size > nTheta) cache.clear();
+    cache.set(key, out);
     return out;
   };
 
-  // Scratch for the step.
-  const B = new Float64Array(nCells);
-  const dPerp = new Float64Array(nCells);
-  const loads = new Float64Array(nDiv * nTheta);
+  /** Step 9: Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ). */
+  const loadsInto = (s: ReturnType<typeof solve>, out: Float64Array) => {
+    for (let k = 0; k < nDiv; k++) {
+      const ts = s.strike[k]!;
+      const q = s.edge.qT[k]!;
+      for (let i = 0; i < nTheta; i++) out[k * nTheta + i] = q * gauss(wrap(theta[i]! - ts), p.sigmaTheta);
+    }
+    return out;
+  };
 
-  /** Steps 1–12 from (T, tiles) at step n into (Tn, tilesN). */
-  const stepInto = (n: number, T: Float64Array, tiles: Float64Array, coils: Coils, Tn: Float64Array, tilesN: Float64Array) => {
-    const reservoir = heating?.(time(n));
-    const a = drive(coils, time(n)); // 1
-    fieldFromDrive(a, B); // 2, 3
-    const gTh = footprintTheta(a); // 4, 5 (θ factor; the φ factor is gPhi)
-    for (let c = 0; c < nCells; c++) {
-      const r = p.B0 / B[c]!;
-      dPerp[c] = p.Dperp0 * (r * r); // 6
-    }
-    loadsFrom(T, B, gTh, loads); // 10
-    for (let x = 0; x < nDiv * nTheta; x++) {
-      tilesN[x] = tiles[x]! + (p.dt * (p.Tcool + p.tileGain * loads[x]! - tiles[x]!)) / p.tauTile; // 11
-    }
+  /** Upstream temperature of every φ plane: T_u[j] = Σ_k s_k[j]·T_u,k. */
+  const upstreamOf = (edge: EdgeSolution) => {
+    const out = new Float64Array(nPhi);
     for (let j = 0; j < nPhi; j++) {
-      const row = j * nTheta;
+      let t = sector[0]![j]! * edge.Tu[0]!;
+      for (let k = 1; k < nDiv; k++) t = t + sector[k]![j]! * edge.Tu[k]!;
+      out[j] = t;
+    }
+    return out;
+  };
+
+  /** Step 12: T[c] = (max(0, 1 − Σ_k g_k)·T_u[c]^ν + Σ_k g_k·T_t,k^ν)^(1/ν). */
+  const lcfsInto = (n: number, coils: Coils, out: Float64Array) => {
+    const s = solve(n, coils);
+    const up = upstreamOf(s.edge);
+    const gTh = new Float64Array(nDiv * nTheta);
+    for (let k = 0; k < nDiv; k++) {
+      for (let i = 0; i < nTheta; i++) gTh[k * nTheta + i] = gauss(wrap(theta[i]! - s.strike[k]!), p.sigmaTheta);
+    }
+    const coldNu = Float64Array.from(s.edge.Tt, (t) => Math.pow(t, nu));
+    for (let j = 0; j < nPhi; j++) {
+      const upNu = Math.pow(up[j]!, nu);
       for (let i = 0; i < nTheta; i++) {
-        const c = row + i;
-        const t0 = T[c]!;
-        const tp = (1 - w) * T[plus0[c]!]! + w * T[plus1[c]!]!; // 7
-        const tm = (1 - w) * T[minus0[c]!]! + w * T[minus1[c]!]!;
-        const par = (p.Dpar * (tp - 2 * t0 + tm)) / dPhi2;
-        const e = east[c]!;
-        const wv = west[c]!;
-        const dPlus = (dPerp[c]! + dPerp[e]!) / 2; // 8
-        const dMinus = (dPerp[c]! + dPerp[wv]!) / 2;
-        const cross = (dPlus * (T[e]! - t0) - dMinus * (t0 - T[wv]!)) / dTheta2;
-        const src = ((reservoir?.[c] ?? p.Tped) - t0) / p.tauE; // 9
-        const excess = (t0 - p.Ttarget) / p.tauDiv;
-        let sink = gPhi[0]![j]! * gTh[i]! * excess;
-        for (let k = 1; k < nDiv; k++) sink = sink + gPhi[k]![j]! * gTh[k * nTheta + i]! * excess;
-        Tn[c] = t0 + p.dt * (par + cross + src - sink); // 12
+        let g = gPhi[0]![j]! * gTh[i]!;
+        let gSum = g;
+        let cold = g * coldNu[0]!;
+        for (let k = 1; k < nDiv; k++) {
+          g = gPhi[k]![j]! * gTh[k * nTheta + i]!;
+          gSum = gSum + g;
+          cold = cold + g * coldNu[k]!;
+        }
+        out[j * nTheta + i] = Math.pow(Math.max(1 - gSum, 0) * upNu + cold, 1 / nu);
       }
+    }
+    return out;
+  };
+
+  const loads = new Float64Array(nDiv * nTheta);
+  /** Step 11: tiles at step n → n+1 from the loads at t_n. */
+  const tilesInto = (n: number, tiles: Float64Array, coils: Coils, tilesN: Float64Array) => {
+    loadsInto(solve(n, coils), loads);
+    for (let x = 0; x < nDiv * nTheta; x++) {
+      tilesN[x] = tiles[x]! + (p.dt * (p.Tcool + p.tileGain * loads[x]! - tiles[x]!)) / p.tauTile;
     }
   };
 
+  const off = new Array<number>(nDiv).fill(0);
+  /**
+   * A state whose LCFS map (step 12) is computed only when read: the edge is quasi-steady, so a forecast that reads
+   * only the tiles (the control loop's look-ahead) never pays for the map.
+   */
+  const stateAt = (n: number, coils: Coils, tiles: Float64Array): ModelState => {
+    const fixed = Array.from({ length: nDiv }, (_, k) => coils[k] ?? 0);
+    let T: Float64Array | undefined;
+    return {
+      n,
+      tiles,
+      get T() {
+        T ??= lcfsInto(n, fixed, new Float64Array(nCells));
+        return T;
+      },
+    };
+  };
   const initialState = (): ModelState => ({
     n: 0,
-    T: new Float64Array(nCells).fill(p.Tped),
+    T: lcfsInto(0, off, new Float64Array(nCells)),
     tiles: new Float64Array(nDiv * nTheta).fill(p.Tcool),
   });
 
   const step = (st: ModelState, coils: Coils): ModelState => {
-    const T = new Float64Array(nCells);
     const tiles = new Float64Array(nDiv * nTheta);
-    stepInto(st.n, st.T, st.tiles, coils, T, tiles);
-    return { n: st.n + 1, T, tiles };
+    tilesInto(st.n, st.tiles, coils, tiles);
+    return stateAt(st.n + 1, coils, tiles);
   };
 
   const advance = (st: ModelState, coils: Coils, steps: number, controlsAt?: (step: number) => AppliedControls): ModelState => {
     if (steps <= 0) return st;
-    let T = new Float64Array(nCells);
     let tiles = new Float64Array(nDiv * nTheta);
-    const first = controlsAt?.(st.n);
-    stepInto(st.n, st.T, st.tiles, first?.coils ?? coils, T, tiles);
-    if (steps === 1) return { n: st.n + 1, T, tiles };
-    let T2 = new Float64Array(nCells);
     let tiles2 = new Float64Array(nDiv * nTheta);
+    let last: Coils = controlsAt?.(st.n)?.coils ?? coils;
+    tilesInto(st.n, st.tiles, last, tiles);
     for (let s = 1; s < steps; s++) {
-      const applied = controlsAt?.(st.n + s);
-      stepInto(st.n + s, T, tiles, applied?.coils ?? coils, T2, tiles2);
-      [T, T2] = [T2, T];
+      last = controlsAt?.(st.n + s)?.coils ?? coils;
+      tilesInto(st.n + s, tiles, last, tiles2);
       [tiles, tiles2] = [tiles2, tiles];
     }
-    return { n: st.n + steps, T, tiles };
+    // The edge is quasi-steady: only the final state's LCFS temperature is needed (with the coils of its last step).
+    return stateAt(st.n + steps, last, tiles);
   };
 
   const field = (coils: Coils, n: number, out = new Float64Array(nCells)) => fieldFromDrive(drive(coils, time(n)), out);
@@ -301,10 +379,10 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     return a.map((ak) => thetaD + p.sweepAmplitude * ak);
   };
 
-  const stripLoads = (st: ModelState, coils: Coils) => {
-    const a = drive(coils, time(st.n));
-    return loadsFrom(st.T, fieldFromDrive(a, new Float64Array(nCells)), footprintTheta(a), new Float64Array(nDiv * nTheta));
-  };
+  const stripLoads = (st: ModelState, coils: Coils) => loadsInto(solve(st.n, coils), new Float64Array(nDiv * nTheta));
+
+  const edge = (n: number, coils: Coils): EdgeSolution => solve(n, coils).edge;
+  const upstream = (n: number, coils: Coils) => upstreamOf(solve(n, coils).edge);
 
   const maxPerDiverter = (arr: Float64Array) =>
     Array.from({ length: nDiv }, (_, k) => {
@@ -342,39 +420,39 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     }
   };
 
-  const heatFlow = (st: ModelState, coils: Coils) => {
-    const Bc = field(coils, st.n);
+  /** Conducted heat flow along the field lines (renderer only): F_φ = −T^(ν−1)·∂T/∂φ along ℓ, F_θ = ι·F_φ. */
+  const heatFlow = (st: ModelState, _coils: Coils) => {
     const fPhi = new Float64Array(nCells);
     const fTheta = new Float64Array(nCells);
     const T = st.T;
     for (let c = 0; c < nCells; c++) {
       const tp = (1 - w) * T[plus0[c]!]! + w * T[plus1[c]!]!;
       const tm = (1 - w) * T[minus0[c]!]! + w * T[minus1[c]!]!;
-      const fp = (-p.Dpar * (tp - tm)) / (2 * dPhi);
-      const r = p.B0 / Bc[c]!;
-      const dp = p.Dperp0 * (r * r);
+      const fp = (-Math.pow(T[c]!, nu - 1) * (tp - tm)) / (2 * dPhi);
       fPhi[c] = fp;
-      fTheta[c] = iota * fp - (dp * (T[east[c]!]! - T[west[c]!]!)) / (2 * dTheta);
+      fTheta[c] = iota * fp;
     }
     return { fPhi, fTheta };
   };
 
+  /** Cross-section at plane j: the core profile from the plane's upstream temperature to T_0 on the axis. */
   const crossSection = (st: ModelState, coils: Coils, j: number) => {
     const nSurf = surfaces.length;
-    const a = drive(coils, time(st.n));
+    const s = solve(st.n, coils);
+    const a = s.a;
     const Txs = new Float64Array(nSurf * nTheta);
     const Bxs = new Float64Array(nSurf * nTheta);
-    const rho = Float64Array.from(surfaces, (s) => s.rho);
-    const pedestal = pedestalTemperature?.(time(st.n)) ?? p.Tped;
+    const rho = Float64Array.from(surfaces, (sf) => sf.rho);
+    const edgeT = upstreamOf(s.edge)[j]!;
     const axisT = coreTemperature?.(time(st.n)) ?? p.Tcore0;
     for (let m = 0; m < nSurf; m++) {
       const rm = rho[m]!;
-      const core = pedestal + (axisT - pedestal) * (1 - rm * rm) ** 2;
+      const core = edgeT + (axisT - edgeT) * (1 - rm * rm) ** 2;
       const blend = Math.max(0, (rm - p.rhoBlend) / (1 - p.rhoBlend)) ** 2;
       const Bm = surfaces[m]!.B;
       for (let i = 0; i < nTheta; i++) {
         const c = j * nTheta + i;
-        Txs[m * nTheta + i] = core + blend * (st.T[c]! - pedestal);
+        Txs[m * nTheta + i] = core + blend * (st.T[c]! - edgeT);
         let pert = 0;
         for (let k = 0; k < nDiv; k++) pert += a[k]! * h[k]![c]!;
         Bxs[m * nTheta + i] = Bm[c]! * (1 + rm * rm * p.epsilon * pert);
@@ -383,24 +461,8 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     return { T: Txs, B: Bxs, rho };
   };
 
-  const stabilityNumber = () => {
-    let dMax = 0;
-    for (let c = 0; c < nCells; c++) {
-      let hs = 0;
-      for (let k = 0; k < nDiv; k++) hs += h[k]![c]!;
-      const bMin = Bs[c]! * (1 - p.epsilon * hs);
-      if (!(bMin > 0)) throw new Error('the coil perturbation drives |B| to zero');
-      const r = p.B0 / bMin;
-      dMax = Math.max(dMax, p.Dperp0 * r * r);
-    }
-    let gMax = 0;
-    for (let j = 0; j < nPhi; j++) {
-      let gs = 0;
-      for (let k = 0; k < nDiv; k++) gs += gPhi[k]![j]!;
-      gMax = Math.max(gMax, gs);
-    }
-    return p.dt * ((2 * p.Dpar) / dPhi2 + (2 * dMax) / dTheta2 + 1 / p.tauE + gMax / p.tauDiv);
-  };
+  /** Δt/τ_tile: the only explicit update (the edge is quasi-steady). */
+  const stabilityNumber = () => p.dt / p.tauTile;
 
   return {
     nTheta,
@@ -426,6 +488,8 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     step,
     advance,
     stripLoads,
+    edge,
+    upstream,
     diagnostics,
     run,
     heatFlow,

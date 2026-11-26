@@ -7,6 +7,38 @@
 
 ## Current state
 
+### 2026-11-26: heat model version 3 — two-point scrape-off layer, energy conserved (D-032)
+The owner asked for maximum physical accuracy and chose energy conservation. Version 2 could not conserve energy as
+built (its edge relaxed to a fixed T_ped, and a physical edge drains in microseconds, far below the 1 ms step). The
+owner chose the textbook two-point model and the operating point 6 MW heating, 30 % radiated, 0.10 m² per divertor;
+after that the owner asked the maintainer to decide without asking (memory: work autonomously).
+- **Model v3** (MODEL.md, `model.py`, `model.ts`, contract, artifact): fixed heating power → each divertor's toroidal
+  sector share less the radiated part → peak load = power × |B| compression at the strike line ÷ wetted area (energy
+  conserved by construction); two-point model per divertor (Spitzer conduction over 200 m, sheath γ 7, pressure
+  balance, 20 fixed-point iterations) → T_u ≈ 0.20–0.21 keV, T_t ≈ 0.025–0.033 keV. Edge quasi-steady; only the tiles
+  evolve. The LCFS map draws the two-point drop into each footprint (illustration, stated). Coils off at 3 s: D1 1260,
+  D2 1058, D3 1046, D4 1253 °C (12.9/10.8/10.7/12.9 MW/m²); all on: 527/443/429/525 °C.
+- **W7-X view scenario** (`heatedEdge.ts`): heating is now a relative power density; its power is 1.25× nominal
+  (7.5 MW mean, 6.6–8.4 MW modulated). At the nominal 6 MW the five targets peak at ~1110–1160 °C and the loop would
+  never act. Stated in the code as a display scenario.
+- **Performance:** the LCFS map is computed lazily (forecasts read only the tiles); the app now runs at about real time
+  (v2: ~0.27×) and the component loop tests take 20 s instead of ~2 min.
+- **Display:** colour range = start state's coldest–hottest (≈0.02–0.21 keV); cross-section edge reference = the
+  plane's upstream temperature; the stability notice is Δt/τ_tile.
+- **Checks (native):** renderer 49 files / 1,735 tests, `tsc` clean; backend `test_heatfield` 24/25 (the 25th is the
+  Windows path separator) and 109/112 overall (2 geometry tests fail natively with or without this work; 2 files need
+  POSIX); hand-switch staleness test still fails when the staleness checks are removed. Browser 2026-11-26: coils off
+  the W7-X view's tiles reach ~1200–1250 °C at ~12 MW/m², the loop switches all five coils on and they settle at
+  ~570–610 °C; no console errors besides the absent backend's 502s.
+- **Review 2026-11-26: APPROVED** on the second pass. First pass: two majors (the W7-X view's 1.25× heating was not
+  shown to users, now a computed "Heating scenario (model)" line + D-032 item 3; TASK.md H4 still listed v2 tests, now
+  rewritten) and ten minors (dead rotating heating pattern removed; TS sheath-balance check; strip-profile integral
+  stated; a convergence guard on the two-point solve — the sheath residual to 1e-6 at the operating loads, since past
+  ~50 MW/m² the iteration oscillates; ECRH wording; "chosen so two divertors pass the limit"; Python cache; comments).
+  Final native checks: renderer 49 files / 1,737 tests, `tsc` clean; backend `test_heatfield` 24/25 (Windows path).
+  Reviewer's optional note: the guard checks the artifact's 6 MW loads, not the view's 1.25× scenario (~15 MW/m²,
+  converged to machine precision up to ~30 MW/m²).
+
 ### 2026-11-25 (later): heat model version 2 — physics retune, heat transfers removed (D-031, NOT committed)
 The owner asked whether the model obeys physics, then chose: remove the heat transfers, and a physical retune.
 - **Model v2** (`tasks/10-heat-field/MODEL.md`, `main/…/heatfield/model.py`, `renderer/…/heatfield/model.ts`, contract):

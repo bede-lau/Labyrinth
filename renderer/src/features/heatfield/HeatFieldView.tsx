@@ -421,7 +421,7 @@ export function HeatFieldContent({ art, autoPlay }: HeatFieldContentProps) {
           {colorBy === 'temperature'
             ? tempBar(
                 ranges.lcfsT,
-                `Fixed range: ${formatNumber(ranges.lcfsT[0], 3)} keV (just below the coldest surface temperature at the start) to the pedestal temperature T_ped; anything colder takes the coldest colour.`,
+                `Fixed range: ${formatNumber(ranges.lcfsT[0], 3)} keV (just below the coldest surface temperature at the start, the two-point target temperature) to just above the hottest, the upstream temperature T_u; anything colder takes the coldest colour, anything hotter the hottest.`,
               )
             : fieldBar}
           <ul className="hf-key" aria-label="Scene key">

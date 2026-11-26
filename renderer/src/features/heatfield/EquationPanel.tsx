@@ -28,9 +28,9 @@ export interface EquationPanelProps {
   stability: number;
 }
 
-/** The explicit step keeps T in [T_t, T_ped] only while the stability number is at most 1. */
+/** The only explicit update, the tile relaxation, is monotone while Δt/τ_tile is at most 1 (the edge is quasi-steady). */
 export const isStable = (stability: number) => stability <= 1;
-export const UNSTABLE_TITLE = 'Explicit step unstable: T may leave [T_t, T_ped]';
+export const UNSTABLE_TITLE = 'Tile update unstable: Δt exceeds τ_tile';
 
 export function EquationPanel({ art, stability }: EquationPanelProps) {
   const [main, ...rest] = art.model.equations;
@@ -51,8 +51,8 @@ export function EquationPanel({ art, stability }: EquationPanelProps) {
       )}
       {!stable && (
         <Callout tone="warn" title={<SubscriptText text={UNSTABLE_TITLE} />}>
-          The stability number of this artifact is <span className="lab-num">{formatNumber(stability, 4)}</span>, above 1: an update
-          weight is negative, so the model temperatures, heat fluxes and tile temperatures in this view can be wrong.
+          Δt/τ<sub>tile</sub> of this artifact is <span className="lab-num">{formatNumber(stability, 4)}</span>, above 1: the tile
+          update overshoots, so the tile temperatures in this view can be wrong.
         </Callout>
       )}
       <details className="hf-details">
@@ -71,7 +71,7 @@ export function EquationPanel({ art, stability }: EquationPanelProps) {
         </dl>
         <div className="hf-table-wrap" role="region" aria-label="Model parameters" tabIndex={0}>
           <table className="hf-table hf-eq__params">
-            <caption className="hf-loop__caption">Parameters as written in artifacts/heatfield.json (chosen for illustration, not fitted)</caption>
+            <caption className="hf-loop__caption">Parameters as written in artifacts/heatfield.json (physics inputs at W7-X orders of magnitude; footprint, coil and tile parameters illustrative; none fitted)</caption>
             <thead>
               <tr>
                 <th scope="col">Symbol</th>
@@ -97,9 +97,9 @@ export function EquationPanel({ art, stability }: EquationPanelProps) {
           </table>
         </div>
         <p className="hf-small" data-testid="stability">
-          Stability (explicit step, every update weight non-negative): Δt·(2D<sub>∥</sub>/dφ² + 2·max D<sub>⊥</sub>/dθ² + 1/τ<sub>E</sub> + max
-          Σ g<sub>k</sub>/τ<sub>div</sub>) = <span className="lab-num">{formatNumber(stability, 4)}</span>{' '}
-          {stable ? '≤ 1, computed here from the artifact.' : '> 1, computed here from the artifact: the explicit step is unstable.'}
+          Stability (the edge is quasi-steady; the only explicit update is the tile relaxation): Δt/τ<sub>tile</sub> ={' '}
+          <span className="lab-num">{formatNumber(stability, 4)}</span>{' '}
+          {stable ? '≤ 1, computed here from the artifact.' : '> 1, computed here from the artifact: the tile update is unstable.'}
         </p>
         <h4 className="hf-eq__h">Discretisation</h4>
         <p className="hf-eq__prose">{art.model.discretization}</p>

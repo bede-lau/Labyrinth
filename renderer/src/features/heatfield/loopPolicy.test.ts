@@ -32,7 +32,7 @@ test('one diverter predicted hot switches every coil on; nothing is switched whi
 test('the forecast uses the coils as they are: a cool diverter with its coil on is not switched off before the minimum on-time', () => {
   // A model whose edge heating has gone away: the tiles idle far below the release temperature even with coils off.
   const art = saved();
-  const cool = new Float64Array(art.grid.nTheta * art.grid.nPhi).fill(0.3 * art.model.parameters.Tped.value);
+  const cool = new Float64Array(art.grid.nTheta * art.grid.nPhi).fill(0.3); // 30 % of the nominal heating power
   const model = createModel(art, () => cool);
   const sim = new Simulation(model, model.initialState(), 0);
   seconds(sim, 4);
@@ -116,7 +116,7 @@ test('a decision does not depend on how its work is chunked: a hot decision and 
   expect(hotWhole.coils).toEqual([1, 1, 1, 1, 1]);
   // Probe: coils on past the minimum on-time with the tiles cool, so the release look-ahead runs.
   const art = saved();
-  const coolDrive = new Float64Array(art.grid.nTheta * art.grid.nPhi).fill(0.3 * art.model.parameters.Tped.value);
+  const coolDrive = new Float64Array(art.grid.nTheta * art.grid.nPhi).fill(0.3); // 30 % of the nominal heating power
   const model = createModel(art, () => coolDrive);
   const cool = new Simulation(model, model.initialState(), 0);
   seconds(cool, 4);

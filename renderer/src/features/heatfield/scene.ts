@@ -897,9 +897,9 @@ export function writeColors(values: ArrayLike<number>, range: readonly [number, 
 /** Fixed colour ranges, labelled on the colour bars. */
 export interface ColourRanges {
   /**
-   * LCFS temperature (keV): from the coldest LCFS temperature of the spun-up start, rounded down to
-   * LCFS_T_STEP (never below T_t), to T_ped. The whole [T_t, T_ped] would paint the surface one red: at the
-   * start the LCFS spans only about 0.66–0.96 keV. Colder values take the coldest colour.
+   * LCFS temperature (keV): from the coldest to the hottest LCFS temperature of the spun-up start (the two-point
+   * target and upstream temperatures, ~0.025 and ~0.21 keV), rounded out to LCFS_T_STEP. Values outside take the
+   * end colours.
    */
   lcfsT: [number, number];
   /**
@@ -920,7 +920,10 @@ export function colourRanges(art: HeatfieldArtifact, model: HeatModel, startT: A
   const p = model.params;
   let tMin = Infinity;
   for (let c = 0; c < startT.length; c++) tMin = Math.min(tMin, startT[c]!);
-  const lcfsLo = Math.max(p.Ttarget, Math.floor(tMin / LCFS_T_STEP) * LCFS_T_STEP);
+  let tMax = -Infinity;
+  for (let c = 0; c < startT.length; c++) tMax = Math.max(tMax, startT[c]!);
+  const lcfsLo = Math.max(0, Math.floor(tMin / LCFS_T_STEP) * LCFS_T_STEP);
+  const lcfsHi = Math.max(lcfsLo + LCFS_T_STEP, Math.ceil(tMax / LCFS_T_STEP) * LCFS_T_STEP);
   let lo = Infinity;
   let hi = -Infinity;
   for (const s of art.surfaces) {
@@ -932,8 +935,7 @@ export function colourRanges(art: HeatfieldArtifact, model: HeatModel, startT: A
       hi = Math.max(hi, b * (1 + r2 * p.epsilon * hs));
     });
   }
-  const floor = lcfsLo < p.Tped ? lcfsLo : p.Ttarget;
-  return { lcfsT: [floor, p.Tped], sliceT: [floor < p.Tcore0 ? floor : p.Ttarget, p.Tcore0], B: [lo, hi] };
+  return { lcfsT: [lcfsLo, lcfsHi], sliceT: [lcfsLo < p.Tcore0 ? lcfsLo : 0, p.Tcore0], B: [lo, hi] };
 }
 
 // ---------------------------------------------------------------------------------------------

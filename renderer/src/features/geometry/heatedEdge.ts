@@ -1,4 +1,4 @@
-import { createModel } from '../heatfield/model';
+import { createModel, modelFor } from '../heatfield/model';
 import { colourRanges } from '../heatfield/scene';
 import { Simulation } from '../heatfield/sim';
 import type { Diverter, HeatfieldArtifact } from '../heatfield/types';
@@ -14,6 +14,8 @@ export function fiveTargetScenario(art: HeatfieldArtifact): HeatfieldArtifact {
 }
 
 const modulation = 0.72;
+/** How much of the core's stored-energy swing reaches the heating power crossing the LCFS. */
+const SUPPLY_SWING = 0.23;
 const omega = 2 * Math.PI / 5;
 const lossTime = 0.7;
 
@@ -26,63 +28,66 @@ function coreResponse(time: number) {
 
 export function heatedRanges(art: HeatfieldArtifact, sim: Simulation) {
   const ranges = colourRanges(art, sim.model, sim.start.T);
-  const {Tcore0, Tped} = sim.model.params;
-  ranges.sliceT[1] = Tped + (Tcore0 - Tped) * (1 + modulation / Math.hypot(1, omega * lossTime));
-  // Keep the operating window legible after ignition; colder cells use
-  // the low end of the edge palette while the core uses the full scale.
-  ranges.lcfsT = [0.6 * Tped, 1.4 * Tped];
+  const {Tcore0} = sim.model.params;
+  // The nominal edge (uniform heating at P_heat, coils off) sets the scale: the start-up state is still cold.
+  const nominal = modelFor(art).edge(0, art.diverters.items.map(() => 0));
+  const upstream = Math.max(...nominal.Tu);
+  ranges.sliceT[1] = Tcore0 * (1 + modulation / Math.hypot(1, omega * lossTime));
+  // Keep the operating window legible: the edge runs from its target to about 1.4x its upstream temperature
+  // (the heating modulation and the sector ramp move it); colder cells take the low end of the palette.
+  ranges.lcfsT = [0, 1.4 * upstream];
+  ranges.sliceT[0] = 0;
   return ranges;
 }
 
-// Illustrative periodic modulation of core-to-edge heating. The same deterministic source
-// drives transport, flux diagnostics and look-ahead. Amplitude and period are display scenarios.
+// Illustrative periodic modulation of the heating power and its toroidal distribution. The same deterministic source
+// drives the power shares, the load diagnostics and the look-ahead. Amplitude and period are display scenarios.
 function ramp(time: number, duration: number) {
   const u = Math.max(0, Math.min(1, time / duration));
   return u * u * (3 - 2 * u);
 }
 
 export function startupSimulation(art: HeatfieldArtifact) {
+  // Cold start: no heating before 0.4 s, so no power on the targets and no scrape-off-layer plasma.
   const model = heatedEdge(art);
-  const cold = model.initialState();
-  cold.T.fill(model.params.Ttarget);
-  return new Simulation(model, cold, 0.35);
+  return new Simulation(model, model.initialState(), 0.35);
 }
 
+/**
+ * Heating power of the plasma explorer's scenario relative to the model's nominal P_heat (6 MW): a high-power phase of
+ * 7.5 MW on average, modulated between about 6.6 and 8.4 MW (W7-X: ECRH up to ~8 MW, more with NBI). With five
+ * divertors sharing it, the nominal 6 MW would leave every tile just under the limit (~1060–1160 °C): the control loop
+ * would have nothing to do. A display scenario, chosen so the coils are needed, and shown as such in the view
+ * (`scenarioHeating`).
+ */
+export const SCENARIO_POWER = 1.25;
+
+/** The scenario's heating power once on (MW): its mean and the range the core modulation spans. */
+export function scenarioHeating(Pheat: number) {
+  const mean = SCENARIO_POWER * Pheat;
+  const swing = SUPPLY_SWING * modulation / Math.hypot(1, omega * lossTime);
+  return { mean, lo: mean * (1 - swing), hi: mean * (1 + swing), factor: SCENARIO_POWER };
+}
+
+/**
+ * The plasma explorer's scenario: the heating power density on every LCFS cell relative to the nominal P_heat. It
+ * ramps in from 0.4 s, first in the sector centred on D1, then everywhere; once on, its total is SCENARIO_POWER times
+ * the nominal, modulated (a core whose stored energy follows a periodic power, loss time 0.7 s). Only its toroidal
+ * distribution matters: each divertor takes its sector's power (MODEL.md step 6).
+ */
 export function heatedEdge(art: HeatfieldArtifact) {
   const { nTheta, nPhi } = art.grid;
-  const pedestal = art.model.parameters.Tped.value;
-  const floor = art.model.parameters.Ttarget.value;
-  const pedestalAt = (time: number) => floor + (pedestal - floor) * ramp(time - 0.4, 2);
-  // The first heating sector is centred on D1. The other sectors catch up
-  // smoothly before the periodic operating source takes over everywhere.
   const sector = Float64Array.from({length: nPhi}, (_, j) =>
     (1 + Math.cos(2 * Math.PI * j / nPhi - art.diverters.items[0]!.phi)) / 2);
-  const cosine = new Float64Array(nTheta * nPhi);
-  const sine = new Float64Array(cosine.length);
-  const target = new Float64Array(cosine.length);
-  for (let j = 0; j < nPhi; j++) {
-    for (let i = 0; i < nTheta; i++) {
-      const phase = 2 * Math.PI * (i / nTheta - 2 * j / nPhi);
-      cosine[j * nTheta + i] = Math.cos(phase);
-      sine[j * nTheta + i] = Math.sin(phase);
-    }
-  }
+  const weight = new Float64Array(nTheta * nPhi);
   return createModel(art, (time) => {
-    const phase = 2 * Math.PI * time / 4;
-    const a = 0.26 * Math.cos(phase);
-    const b = 0.26 * Math.sin(phase);
-    const supply = 1 + 0.23 * (coreResponse(time) - 1);
+    const supply = 1 + SUPPLY_SWING * (coreResponse(time) - 1);
     const edge = ramp(time - 0.4, 2);
     const spread = ramp(time - 2, 5);
     for (let j = 0; j < nPhi; j++) {
-      const gain = edge * (spread + (1 - spread) * sector[j]!);
-      for (let i = 0; i < nTheta; i++) {
-        const c = j * nTheta + i;
-        const warm = pedestal * (supply + a * cosine[c]! + b * sine[c]!);
-        target[c] = floor + gain * (warm - floor);
-      }
+      const gain = SCENARIO_POWER * edge * (spread + (1 - spread) * sector[j]!);
+      weight.fill(gain * supply, j * nTheta, (j + 1) * nTheta);
     }
-    return target;
-  }, time => floor + ramp(time, 1.3) *
-    (pedestal + (art.model.parameters.Tcore0.value - pedestal) * coreResponse(time) - floor), pedestalAt);
+    return weight;
+  }, time => ramp(time, 1.3) * art.model.parameters.Tcore0.value * coreResponse(time));
 }

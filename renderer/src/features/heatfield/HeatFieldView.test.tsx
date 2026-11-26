@@ -48,6 +48,14 @@ const ART = JSON.parse(RAW) as HeatfieldArtifact;
 const model = modelFor(ART);
 const start = spunUpState(model);
 const P = model.params;
+// The cross-section's edge reference: the upstream temperature of the φ plane (MODEL.md v3, two-point model).
+const UP = model.upstream(start.n, [0, 0, 0, 0]);
+/** A colour bar's accessible-name start for a range, as the view formats it (3 decimals). */
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const barName = (title: string, lo: number, hi: number) =>
+  new RegExp(
+    '^' + escapeRe(`Colour bar: ${title} in keV from ${formatNumber(lo, 3)} (coldest end in yellow) to ${formatNumber(hi, 3)}`),
+  );
 const OFF = [0, 0, 0, 0];
 const IDS = ['D1', 'D2', 'D3', 'D4'];
 const coldOff = ART.model.golden.scenarios[0]!.checkpoints.find((c) => c.step === 3000)!;
@@ -153,12 +161,13 @@ test('H9 the scene starts from the spun-up state, colours by temperature or |B| 
   expect(Array.from(s.sim.state.T)).toEqual(Array.from(start.T));
   expect(s.sim.coils).toEqual(OFF);
   expect([s.colorBy, s.showLines, s.showArrows]).toEqual(['temperature', true, false]);
-  // Fixed temperature range: the coldest start value rounded down to 0.005 keV, to T_ped.
-  expect(s.ranges.lcfsT[1]).toBe(P.Tped);
-  expect(formatNumber(s.ranges.lcfsT[0], 3)).toBe('0.070');
+  // Fixed temperature range: the start's coldest and hottest values rounded out to 0.005 keV.
+  expect(s.ranges.lcfsT[1]).toBeGreaterThanOrEqual(Math.max(...start.T));
+  expect(s.ranges.lcfsT[1]).toBeLessThan(Math.max(...start.T) + 0.005);
+  expect(s.ranges.lcfsT[0]).toBeLessThanOrEqual(Math.min(...start.T));
 
   const scene = panel('W7-X last closed flux surface: model temperature and |B|');
-  const tempBar = within(scene).getByRole('img', { name: /^Colour bar: Temperature in keV from 0\.070 \(coldest end in yellow\) to 0\.100 \(hottest end in red\)/ });
+  const tempBar = within(scene).getByRole('img', { name: barName('Temperature', ...s.ranges.lcfsT) });
   expect(tempBar).toHaveAccessibleName(/anything colder takes the coldest colour/);
   const tempHead = tempBar.closest('.hf-colorbar')!;
   expect(tempHead).toHaveTextContent('Temperature (keV)');
@@ -215,9 +224,9 @@ test('H10 hovering the 3D surface or a cross-section cell shows temperature (keV
   const sbox = screen.getByTestId('slice-readout');
   const Txs = (m: number, i: number) => {
     const rho = ART.surfaces[m]!.rho;
-    const core = P.Tped + (P.Tcore0 - P.Tped) * (1 - rho * rho) ** 2;
+    const core = UP[0]! + (P.Tcore0 - UP[0]!) * (1 - rho * rho) ** 2;
     const w = Math.max(0, (rho - P.rhoBlend) / (1 - P.rhoBlend)) ** 2;
-    return core + w * (start.T[i]! - P.Tped);
+    return core + w * (start.T[i]! - UP[0]!);
   };
   const meanT = (Txs(7, 12) + Txs(7, 13) + Txs(8, 12) + Txs(8, 13)) / 4;
   const B = (m: number, i: number) => ART.surfaces[m]!.B[i]!;
@@ -303,9 +312,9 @@ test('H10 without a mouse: the slice is one focusable group whose arrow keys mov
   expect(group).toHaveFocus();
   const Txs = (m: number, i: number) => {
     const rho = ART.surfaces[m]!.rho;
-    const core = P.Tped + (P.Tcore0 - P.Tped) * (1 - rho * rho) ** 2;
+    const core = UP[0]! + (P.Tcore0 - UP[0]!) * (1 - rho * rho) ** 2;
     const w = Math.max(0, (rho - P.rhoBlend) / (1 - P.rhoBlend)) ** 2;
-    return core + w * (start.T[i]! - P.Tped);
+    return core + w * (start.T[i]! - UP[0]!);
   };
   const cellT = (m: number, i: number) => (Txs(m, i) + Txs(m, (i + 1) % 48) + Txs(m + 1, i) + Txs(m + 1, (i + 1) % 48)) / 4;
   const B = (m: number, i: number) => ART.surfaces[m]!.B[i % 48]!;
@@ -431,7 +440,7 @@ test('H11 the toroidal-angle slider (5° steps) and Go to D1–D4 choose the sli
   const rgb = (h: string) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16));
   const dist = (a: number[], b: number[]) => Math.max(...a.map((v, k) => Math.abs(v - b[k]!)));
   const heat = themes.light.scene.heat;
-  const core = (rho: number) => P.Tped + (P.Tcore0 - P.Tped) * (1 - rho * rho) ** 2;
+  const core = (rho: number) => UP[0]! + (P.Tcore0 - UP[0]!) * (1 - rho * rho) ** 2;
   const [sLo, sHi] = lastScene().ranges.sliceT;
   expect(sHi).toBe(P.Tcore0);
   const tAxis = ((core(0) + core(ART.surfaces[1]!.rho)) / 2 - sLo) / (sHi - sLo);
@@ -457,22 +466,22 @@ test('H11 the slice temperature bar starts at the data floor; the cold footprint
   expect(ranges.sliceT[0]).toBe(ranges.lcfsT[0]);
   expect(ranges.sliceT[0]).toBeLessThanOrEqual(tMin);
   expect(ranges.sliceT[0]).toBeGreaterThan(tMin - 0.005);
-  expect(ranges.sliceT[0]).toBeGreaterThan(P.Ttarget);
   expect(ranges.sliceT[1]).toBe(P.Tcore0);
   const xsPanel = panel('Cross-section at φ = 0° (D1)');
-  const bar = within(xsPanel).getByRole('img', {
-    name: /^Colour bar: Temperature in keV from 0\.070 \(coldest end in yellow\) to 3\.000 \(hottest end in red\)/,
-  });
+  const bar = within(xsPanel).getByRole('img', { name: barName('Temperature', ...ranges.sliceT) });
   expect(bar).toHaveAccessibleName(/anything colder takes the coldest colour/);
-  expect(bar).toHaveTextContent('0.070 · coldest');
+  expect(bar).toHaveTextContent(`${formatNumber(ranges.sliceT[0], 3)} · coldest`);
 
   // Outer-ring cells (ρ 0.875–1) at plane j from MODEL.md's cross-section formula, independently, and their ramp position.
   const [lo, hi] = ranges.sliceT;
+  // Each state's upstream temperature per φ plane (the cross-section's edge reference).
+  const upstreamOf = new Map<Float64Array, Float64Array>([[start.T, UP]]);
   const node = (T: Float64Array, j: number, m: number, i: number) => {
     const rho = ART.surfaces[m]!.rho;
-    const core = P.Tped + (P.Tcore0 - P.Tped) * (1 - rho * rho) ** 2;
+    const up = upstreamOf.get(T)![j]!;
+    const core = up + (P.Tcore0 - up) * (1 - rho * rho) ** 2;
     const w = Math.max(0, (rho - P.rhoBlend) / (1 - P.rhoBlend)) ** 2;
-    return core + w * (T[j * 48 + (i % 48)]! - P.Tped);
+    return core + w * (T[j * 48 + (i % 48)]! - up);
   };
   const cellT = (T: Float64Array, j: number, i: number) => (node(T, j, 7, i) + node(T, j, 7, i + 1) + node(T, j, 8, i) + node(T, j, 8, i + 1)) / 4;
   const ramp = (v: number) => (v - lo) / (hi - lo);
@@ -513,7 +522,7 @@ test('H11 the slice temperature bar starts at the data floor; the cold footprint
   for (const i of under) expect(Math.min(...away.map((k) => dE(edgeHex(i), edgeHex(k)))), `strip ${i}`).toBeGreaterThanOrEqual(12);
   expect(Math.min(...away.map((k) => dE(cellHex(12), cellHex(k))))).toBeLessThan(12);
   // Its colour bar says what it shows.
-  expect(within(xsPanel).getByRole('img', { name: /^Colour bar: Edge \(LCFS\), same scale as the 3D view in keV from 0\.070 \(coldest end in yellow\) to 0\.100/ })).toBeInTheDocument();
+  expect(within(xsPanel).getByRole('img', { name: barName('Edge (LCFS), same scale as the 3D view', ...ranges.lcfsT) })).toBeInTheDocument();
   const footprintEdge = edgeHex(12);
 
   // Moving the slider off the diverter (φ 45°) the cold patch is gone: the same cell is warmer and drawn warmer, and
@@ -530,7 +539,9 @@ test('H11 the slice temperature bar starts at the data floor; the cold footprint
   await user.click(screen.getByRole('button', { name: 'Go to D1' }));
   await user.click(screen.getByRole('button', { name: 'Field adjustment D1' }));
   for (let k = 0; k < 5; k++) await user.click(screen.getByRole('button', { name: 'Advance 0.1 s' }));
-  const swept = model.advance(start, [1, 0, 0, 0], 500).T;
+  const sweptState = model.advance(start, [1, 0, 0, 0], 500);
+  const swept = sweptState.T;
+  upstreamOf.set(swept, model.upstream(sweptState.n, [1, 0, 0, 0]));
   const ring = Array.from({ length: 48 }, (_, i) => cellT(swept, 0, i));
   const coldest = ring.indexOf(Math.min(...ring));
   expect(coldest).toBe(14);
@@ -810,10 +821,10 @@ test('H16 the equation, the parameter table and the honesty notes are shown; eve
     expect(dt, e.id).toBeDefined();
     expect(dt.textContent).toBe(e.text.replace(/_/g, ''));
   }
-  // Parameter table: symbol, value, unit and meaning of all 29 parameters, from the artifact.
+  // Parameter table: symbol, value, unit and meaning of all 30 parameters, from the artifact.
   const params = screen.getByRole('table', { name: /Parameters as written in artifacts\/heatfield.json/ });
   const rows = within(params).getAllByRole('row').slice(1);
-  expect(rows).toHaveLength(29);
+  expect(rows).toHaveLength(30);
   for (const [name, p] of Object.entries(ART.model.parameters)) {
     const row = params.querySelector<HTMLElement>(`tr[data-parameter="${name}"]`)!;
     expect(row.querySelector('th')!.textContent).toBe(p.symbol.replace('_', ''));
@@ -855,20 +866,20 @@ test('H16 the equations and notes typeset every X_abc as a subscript, and the go
   for (const el of document.querySelectorAll('.hf-eq__math, .hf-eq__meaning, .hf-eq__list dd, .hf-colorbar__note')) {
     expect(el.textContent, el.className).not.toContain('_');
   }
-  expect([...math.querySelectorAll('sub')].map((s) => s.textContent)).toEqual(['∥', '⊥', 'ped', 'E', 'k', 'k', 't', 'div']);
+  expect([...math.querySelectorAll('sub')].map((s) => s.textContent)).toEqual(['k', 'heat', 'rad', 'k', 'k', 'k', 'm', 'm', 'k', 'k', 'div']);
   const field = [...document.querySelectorAll('dt.hf-eq__math')].find((d) => d.getAttribute('aria-label')?.startsWith('B = '))!;
   expect([...field.querySelectorAll('sub')].map((s) => s.textContent)).toEqual(['VMEC', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'cφ', 'd', 'cθ']);
   const strike = [...document.querySelectorAll('dt.hf-eq__math')].find((d) => d.getAttribute('aria-label')?.startsWith('θ_s,k'))!;
   expect(strike.querySelector('sub')).toHaveTextContent(/^s,k$/);
-  // The colour-bar notes: T_ped and T_0.
+  // The colour-bar notes: T_u and T_0.
   const notes = [...document.querySelectorAll('.hf-colorbar__note')];
-  expect(notes.some((n) => [...n.querySelectorAll('sub')].some((s) => s.textContent === 'ped'))).toBe(true);
+  expect(notes.some((n) => [...n.querySelectorAll('sub')].some((s) => s.textContent === 'u'))).toBe(true);
   expect(notes.some((n) => [...n.querySelectorAll('sub')].some((s) => s.textContent === '0'))).toBe(true);
   // The label is said once: the meaning under the equation starts with its own words.
   const label = 'Governing equation (used to predict how the heat moves)';
   expect(ART.model.equations[0]!.meaning.startsWith(label)).toBe(true);
   expect(governing.textContent!.split(label)).toHaveLength(2);
-  expect(governing.querySelector('.hf-eq__meaning')).toHaveTextContent(/^The LCFS temperature T diffuses along the field line/);
+  expect(governing.querySelector('.hf-eq__meaning')).toHaveTextContent(/^Energy conservation\. The heating power that is not radiated/);
 });
 
 test('H16 the stability line says ≤ 1 only when the computed number is at most 1; above 1 it says so and warns (HF3-5)', () => {
@@ -879,24 +890,25 @@ test('H16 the stability line says ≤ 1 only when the computed number is at most
 
   render(<EquationPanel art={ART} stability={1.2} />);
   const line = screen.getByTestId('stability');
-  expect(line).toHaveTextContent('= 1.2000 > 1, computed here from the artifact: the explicit step is unstable.');
+  expect(line).toHaveTextContent('= 1.2000 > 1, computed here from the artifact: the tile update is unstable.');
   expect(line).not.toHaveTextContent('≤ 1');
-  const warn = screen.getByRole('note', { name: /Explicit step unstable: T may leave \[Tt, Tped\]/ });
+  const warn = screen.getByRole('note', { name: /Tile update unstable: Δt exceeds τtile/ });
   expect(warn).toHaveAttribute('data-tone', 'warn');
   expect(warn).toHaveTextContent('1.2000');
   // Outside the collapsed disclosure, so it is seen without opening it.
   expect(warn.closest('details')).toBeNull();
 });
 
-test('H16 an artifact whose explicit step is unstable is flagged at the top of the view (HF3-5)', () => {
-  // A doubled step (and no spin-up, so the unstable step has no time to blow the state up before the view draws it).
+test('H16 an artifact whose tile update is unstable is flagged at the top of the view (HF3-5)', () => {
+  // A tile time constant below the step (and no spin-up, so the unstable update has no time to blow the tiles up
+  // before the view draws them).
   const fast = structuredClone(ART);
-  fast.model.parameters.dt.value = ART.model.parameters.dt.value * 2;
+  fast.model.parameters.tauTile.value = ART.model.parameters.dt.value / 2;
   fast.model.parameters.spinup.value = 0;
   const k = modelFor(fast).stabilityNumber();
   expect(k).toBeGreaterThan(1);
   render(<HeatFieldContent art={fast} autoPlay={false} />);
-  const notes = screen.getAllByRole('note', { name: /Explicit step unstable/ });
+  const notes = screen.getAllByRole('note', { name: /Tile update unstable/ });
   expect(notes.length).toBeGreaterThanOrEqual(1);
   expect(notes[0]).toHaveTextContent(formatNumber(k, 4));
   expect(screen.getByTestId('stability')).toHaveTextContent(`= ${formatNumber(k, 4)} > 1`);

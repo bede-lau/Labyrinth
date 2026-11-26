@@ -1,6 +1,6 @@
 // H9 / H10 with the real Three.js library: only WebGLRenderer is replaced (jsdom has no WebGL context); every
 // geometry, material, colour, raycast and group is built by real three from the committed artifact.
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as THREE from 'three';
@@ -465,14 +465,15 @@ test('H9 applyFrame colours the LCFS by temperature (red hottest, yellow coldest
   const array = attr.array;
   applyFrame(c, geom, frame());
   const v0 = attr.version;
-  // Temperature over [coldest start value rounded down to 0.05 keV, T_ped]: each vertex is its value's colour on
+  // Temperature over the start's [coldest, hottest] rounded out to LCFS_T_STEP: each vertex is its value's colour on
   // the heat ramp (to one LUT step).
   const [lo, hi] = ranges.lcfsT;
   const tMin = Math.min(...start.T);
-  expect(hi).toBe(ART.model.parameters.Tped.value);
+  const tMax = Math.max(...start.T);
   expect(lo).toBeLessThanOrEqual(tMin);
   expect(lo).toBeGreaterThan(tMin - LCFS_T_STEP);
-  expect(lo).toBeGreaterThanOrEqual(ART.model.parameters.Ttarget.value);
+  expect(hi).toBeGreaterThanOrEqual(tMax);
+  expect(hi).toBeLessThan(tMax + LCFS_T_STEP);
   let hot = 0;
   let cold = 0;
   for (let v = 0; v < N; v++) {
@@ -745,6 +746,9 @@ test('H9 HeatScene mounts through three, redraws on every model change without r
   const content = scene.children[0] as THREE.Group;
   const surface = content.getObjectByName('lcfs') as THREE.Mesh;
   const colors = surface.geometry.getAttribute('color');
+  // The edge is quasi-steady (MODEL.md v3): with the coils unchanged the map does not change, so sweep D1's strike
+  // line; the switch itself redraws, the map follows with the next step.
+  act(() => sim.setCoil(0, true));
   const before = Array.from(colors.array);
 
   // A model step redraws at once, recolouring the same geometry.

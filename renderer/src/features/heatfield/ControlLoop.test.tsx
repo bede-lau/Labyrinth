@@ -82,7 +82,7 @@ test.each([17, 68])('heated five-target scenario at %i steps a frame (1x, 4x): n
 /** A model whose edge heating has gone away: with the coils on, everything is cool, and the coils may go off. */
 function coolingDown(responseS: number) {
   const art = saved();
-  const coolDrive = new Float64Array(art.grid.nTheta * art.grid.nPhi).fill(0.3 * art.model.parameters.Tped.value);
+  const coolDrive = new Float64Array(art.grid.nTheta * art.grid.nPhi).fill(0.3); // 30 % of the nominal heating power
   const model = createModel(art, () => coolDrive);
   const sim = new Simulation(model, model.initialState(), responseS);
   sim.advance(4000);

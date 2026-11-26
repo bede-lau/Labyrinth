@@ -63,7 +63,7 @@ test('H8 every input comes from the artifact: grid, |B|, ι, θ_d, φ_k and ever
   expect(model.probes).toEqual(ART.model.probes);
   for (const name of PARAMETER_NAMES) expect(P[name]).toBe(ART.model.parameters[name].value);
   expect(paramsOf(ART).tileGain).toBe(100);
-  expect(paramsOf(ART).nSep).toBe(6e19); // the tuned high-power case (D-031)
+  expect(paramsOf(ART).Pheat).toBe(6); // the high-power operating point (D-032)
 
   // A changed parameter in the artifact changes the result: nothing is cached in the code.
   const hotter = structuredClone(ART);
@@ -89,13 +89,13 @@ test('H8 model.ts holds no duplicated model constant: its only numeric literals 
   for (const v of [165, 1200, 0.03, 0.3, 0.06, 0.12, 2.5, 0.02, 0.001, 3000, 48, 72]) expect(literals).not.toContain(v);
 });
 
-test('H8 with no sink and no coils a uniform T_ped stays exactly uniform; the step is deterministic', () => {
-  const noSink = structuredClone(ART);
-  noSink.model.parameters.tauDiv.value = Number.POSITIVE_INFINITY;
-  const m = createModel(noSink);
+test('H8 with no heating there is no plasma and no load; the step is deterministic', () => {
+  const unheated = structuredClone(ART);
+  unheated.model.parameters.Pheat.value = 0;
+  const m = createModel(unheated);
   const st = m.advance(m.initialState(), OFF, 50);
-  expect(new Set(st.T).size).toBe(1); // exactly uniform
-  expect(st.T[0]).toBeCloseTo(P.Tped, 12);
+  expect(st.T.every((v) => v === 0)).toBe(true);
+  expect(st.tiles.every((v) => v === P.Tcool)).toBe(true);
   // Same inputs, same bits.
   const x = model.advance(model.initialState(), [1, 0, 1, 0], 300);
   const y = model.advance(model.initialState(), [1, 0, 1, 0], 300);
@@ -103,25 +103,48 @@ test('H8 with no sink and no coils a uniform T_ped stays exactly uniform; the st
   expect(Buffer.from(x.tiles.buffer).equals(Buffer.from(y.tiles.buffer))).toBe(true);
   // step() and advance() agree, and neither changes its input.
   const s0 = model.initialState();
+  const copy = Float64Array.from(s0.T);
   const one = model.step(s0, OFF);
   expect(one.n).toBe(1);
   expect(Array.from(model.advance(s0, OFF, 1).T)).toEqual(Array.from(one.T));
-  expect(s0.T.every((v) => v === P.Tped)).toBe(true);
+  expect(Array.from(model.advance(s0, OFF, 1).tiles)).toEqual(Array.from(one.tiles));
+  expect(Array.from(s0.T)).toEqual(Array.from(copy));
 });
 
-test('H8 T stays within [T_t, T_ped] and the stability condition holds (≤ 1, maximum over every coil state)', () => {
+test('H8 energy is conserved: the power on the wetted areas is the heating power less the radiated part', () => {
+  for (const coils of [OFF, ALL_ON]) {
+    for (const n of [0, 77, 250]) {
+      const e = model.edge(n, coils);
+      expect(e.shares.reduce((a, b) => a + b, 0)).toBeCloseTo(P.Pheat * (1 - P.fRad), 9);
+      // The two-point solution: Spitzer conduction T_u^ν − T_t^ν = ν q_∥ L/κ_0, and T_t < T_u.
+      for (let k = 0; k < 4; k++) {
+        const qPar = (e.qT[k]! * P.MW) / Math.sin(P.incidence);
+        const nu = P.conductionExponent;
+        expect(relErr(e.Tu[k]! ** nu - e.Tt[k]! ** nu, (nu * qPar * P.connectionLength) / P.kappa0)).toBeLessThan(1e-9);
+        // The sheath with pressure balance (the iteration's other half; the line above holds whatever T_t is):
+        // q_∥ = γ·n_t·e·T_t·c_s(T_t), n_t = n_u·T_u/(2·T_t), c_s = √(2·T_t·keV/(m_i·amu)).
+        const nT = (P.nSep * e.Tu[k]!) / (2 * e.Tt[k]!);
+        const cS = Math.sqrt((2 * e.Tt[k]! * P.keV) / (P.ionMass * P.amu));
+        expect(relErr(P.sheathGamma * nT * e.Tt[k]! * P.keV * cS, qPar)).toBeLessThan(1e-6);
+        expect(e.Tt[k]).toBeLessThan(e.Tu[k]!);
+      }
+    }
+  }
+});
+
+test('H8 T stays between the target and upstream temperatures; the only explicit update (the tiles) is stable', () => {
   const k = model.stabilityNumber();
-  expect(k).toBeGreaterThan(0.5);
-  expect(k).toBeLessThanOrEqual(1);
-  expect(k).toBeCloseTo(0.7355, 3); // the value model.discretization states
-  expect(ART.model.discretization).toContain('0.7355');
+  expect(k).toBe(P.dt / P.tauTile);
+  expect(ART.model.discretization).toContain('here 0.0010');
   const sched = ART.model.golden.scenarios.find((s) => s.id === 'switch-at-1s')!.coilSchedule;
   let st = model.initialState();
   for (let n = 0; n < 1600; n += 100) {
-    st = model.advance(st, coilsAt(sched, n), 100);
+    const coils = coilsAt(sched, n);
+    st = model.advance(st, coils, 100);
+    const e = model.edge(st.n, coils);
     for (const v of st.T) {
-      expect(v).toBeGreaterThanOrEqual(P.Ttarget);
-      expect(v).toBeLessThanOrEqual(P.Tped);
+      expect(v).toBeGreaterThanOrEqual(Math.min(...e.Tt) * (1 - 1e-12));
+      expect(v).toBeLessThanOrEqual(Math.max(...e.Tu) * (1 + 1e-12));
     }
   }
 });
@@ -187,7 +210,7 @@ test('H8 heat-flow vector and cross-section fields follow MODEL.md', () => {
   const st = spunUpState(model);
   const { fPhi, fTheta } = model.heatFlow(st, OFF);
   // Uniform temperature carries no heat flow.
-  const flat = model.heatFlow(model.initialState(), OFF);
+  const flat = model.heatFlow({ n: 0, T: new Float64Array(model.nCells).fill(0.1), tiles: st.tiles }, OFF);
   expect(flat.fPhi.every((v) => v === 0) && flat.fTheta.every((v) => v === 0)).toBe(true);
   expect(fPhi.some((v) => Math.abs(v) > 1e-3)).toBe(true);
   // Heat flows towards the cold D1 footprint (φ = 0, θ = θ_d): just before it in φ, F_φ > 0; just after, F_φ < 0.
@@ -207,7 +230,11 @@ test('H8 heat-flow vector and cross-section fields follow MODEL.md', () => {
     expect(xs.T[i]).toBeCloseTo(P.Tcore0, 12);
     expect(xs.B[i]).toBe(ART.surfaces[0]!.B[i]); // ρ² = 0: no perturbation on the axis
   }
-  // Inside ρ_b the core profile alone.
+  // Inside ρ_b the core profile alone, from the plane's upstream temperature (a blend of the divertors' T_u) to T_0.
   const m = ART.surfaces.findIndex((s) => s.rho === 0.5);
-  expect(xs.T[m * nT]).toBeCloseTo(P.Tped + (P.Tcore0 - P.Tped) * (1 - 0.25) ** 2, 12);
+  const c = (1 - 0.25) ** 2;
+  const edgeT = (xs.T[m * nT]! - P.Tcore0 * c) / (1 - c);
+  const e = model.edge(st.n, ALL_ON);
+  expect(edgeT).toBeGreaterThanOrEqual(Math.min(...e.Tu) * (1 - 1e-9));
+  expect(edgeT).toBeLessThanOrEqual(Math.max(...e.Tu) * (1 + 1e-9));
 });

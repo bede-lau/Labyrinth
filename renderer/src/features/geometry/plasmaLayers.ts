@@ -179,8 +179,7 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
       heatRange.value.set(...frame.ranges.lcfsT);
       const xs = frame.model.crossSection(frame.sim.state, frame.sim.coils, j);
       if (core.visible) {
-        const energy = three.MathUtils.clamp((xs.T[0]! - frame.model.params.Ttarget) /
-          (frame.model.params.Tcore0 - frame.model.params.Ttarget), 0, 1);
+        const energy = three.MathUtils.clamp(xs.T[0]! / frame.model.params.Tcore0, 0, 1);
         const gain = energy * (1 - fill);
         glow[0]!.opacity = gain;
         glow[1]!.opacity = 0.45 * gain;

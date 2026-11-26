@@ -6,7 +6,7 @@ import { spunUpState } from '../heatfield/model';
 import { Simulation } from '../heatfield/sim';
 import type { HeatfieldArtifact } from '../heatfield/types';
 import { createParticleTracks } from './particleTracks';
-import { fiveTargetScenario, heatedEdge, heatedRanges, startupSimulation } from './heatedEdge';
+import { fiveTargetScenario, heatedEdge, heatedRanges, scenarioHeating, SCENARIO_POWER, startupSimulation } from './heatedEdge';
 
 test('ongoing prescribed heating changes edge temperature and flux with feedback off, and forecast matches replay', () => {
   const art: HeatfieldArtifact = JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/heatfield.json'), 'utf8'));
@@ -19,7 +19,7 @@ test('ongoing prescribed heating changes edge temperature and flux with feedback
   sim.advance(500);
   expect(sim.coils).toEqual([0, 0, 0, 0]);
   expect(sim.diagnostics()).toEqual(prediction);
-  expect(Math.max(...sim.state.T.map((t, i) => Math.abs(t - initial.T[i]!)))).toBeGreaterThan(0.01 * model.params.Tped);
+  expect(Math.max(...sim.state.T.map((t, i) => Math.abs(t - initial.T[i]!)))).toBeGreaterThan(1e-3); // keV: the modulated heating moves the edge
   expect(Math.max(...prediction.peakHeatFlux.map((v, i) => Math.abs(v - initialFlux[i]!)))).toBeGreaterThan(0.01);
   expect(Math.min(...sim.state.T)).toBeGreaterThan(0);
 });
@@ -139,18 +139,17 @@ test('each hundredth-speed slider setting advances exactly one second of wall ti
 test('cold startup heats the core before the edge, then feedback relieves a hot target', () => {
   const saved = JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/heatfield.json'), 'utf8'));
   const sim = startupSimulation(fiveTargetScenario(saved));
-  const {Ttarget, Tcool, tileLimit, dt} = sim.model.params;
+  const {Tcool, tileLimit, dt} = sim.model.params;
   const core = () => sim.model.crossSection(sim.state, sim.coils, 0).T[0]!;
   expect(sim.time).toBe(0);
-  expect(core()).toBeCloseTo(Ttarget);
+  expect(core()).toBe(0);
   expect(sim.peakTileC(0)).toBe(Tcool);
   sim.advance(Math.round(0.3 / dt));
-  expect(core()).toBeGreaterThan(Ttarget);
-  expect(Math.max(...sim.state.T)).toBeCloseTo(Ttarget);
-  // The edge is still at the target temperature, but the sheath law already deposits heat from it (q ∝ n_u·T):
-  // the tile is warming, far from the limit.
-  expect(sim.peakTileC(0)).toBeGreaterThan(Tcool);
-  expect(sim.peakTileC(0)).toBeLessThan(Tcool + 0.15 * (tileLimit - Tcool));
+  // The core is warming; no heating has crossed the LCFS yet (it starts at 0.4 s), so there is no scrape-off-layer
+  // plasma and, by energy conservation, no load: the tiles are still at the coolant temperature.
+  expect(core()).toBeGreaterThan(0);
+  expect(Math.max(...sim.state.T)).toBe(0);
+  expect(sim.peakTileC(0)).toBe(Tcool);
   let peaks = sim.coils.map((_, k) => sim.peakTileC(k));
   while (Math.max(...peaks) < tileLimit && sim.time < 12) {
     sim.advance(100);
@@ -163,4 +162,23 @@ test('cold startup heats the core before the edge, then feedback relieves a hot 
   sim.advance(600);
   // The strike-line sweep spreads the load: the hot target ends cooler than without its coil.
   expect(sim.peakTileC(from)).toBeLessThan(unregulated.peakTileC[from]!);
+});
+
+test('the scenario heating is SCENARIO_POWER times the nominal power, and the model shares exactly that', () => {
+  const saved: HeatfieldArtifact = JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/heatfield.json'), 'utf8'));
+  const art = fiveTargetScenario(saved);
+  const { Pheat, fRad } = saved.model.parameters;
+  const h = scenarioHeating(Pheat.value);
+  expect(h.factor).toBe(SCENARIO_POWER);
+  expect(h.mean).toBeCloseTo(SCENARIO_POWER * Pheat.value, 12);
+  expect(h.lo).toBeGreaterThan(0.85 * h.mean);
+  expect(h.hi).toBeLessThan(1.15 * h.mean);
+  // Fully on (after the sector ramp), the divertors share the scenario power less the radiated part, within its range.
+  const model = heatedEdge(art);
+  for (const t of [8, 9.3, 11.1]) {
+    const e = model.edge(Math.round(t / model.params.dt), [0, 0, 0, 0, 0]);
+    const total = e.shares.reduce((a, b) => a + b, 0) / (1 - fRad.value);
+    expect(total).toBeGreaterThanOrEqual(h.lo * (1 - 1e-9));
+    expect(total).toBeLessThanOrEqual(h.hi * (1 + 1e-9));
+  }
 });

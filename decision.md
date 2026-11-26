@@ -397,3 +397,35 @@ stellarator divertor can do. The owner chose: remove the transfers; a physical r
 its manifest digest updated. Tasks 08, 09 and 10 are reopened until re-verified. The artifact was rebuilt natively on
 Windows with the pinned requirements; the unchanged model rebuilt byte-identically there first, so the build is the
 reference build, but `verify.sh` (WSL, D-020) has not run on it.
+
+## D-032 · Heat model version 3: two-point scrape-off layer, energy conserved (owner, 2026-11-25/26)
+**Context.** The owner's goal is a model "as physics accurate as possible" and chose energy conservation as the next
+gap to close. Checking it showed that version 2 could not conserve energy as built: its edge temperature relaxed to a
+fixed T_ped (no heat flows once it is reached) and a physical edge layer drains on microsecond time scales, far below
+the 1 ms step, so honest rates would need ~1000× smaller steps. Options put to the owner: the two-point model
+(quasi-steady edge), a quasi-steady 2D map, or explicit tiny steps. The owner chose the two-point model and then the
+operating point 6 MW heating, 30 % radiated, 0.10 m² wetted area per divertor. From then on the owner asked the
+maintainer to decide without asking.
+**Decision.**
+1. MODEL.md version 3. A fixed heating power P_heat crosses the LCFS; each divertor takes its toroidal sector's share
+   less the radiated fraction; the peak target load is that power, compressed with |B| at the strike line, over the
+   wetted area. Energy is conserved by construction. Each divertor's scrape-off layer is the two-point model: Spitzer
+   conduction (κ_0 = 2000 W m⁻¹ eV⁻⁷ᐟ², ν = 7/2) over a 200 m connection length, sheath (γ = 7) and pressure balance
+   with n_u = 4e19 m⁻³ and α = 2°, solved by a fixed 20-iteration fixed point. The edge is quasi-steady; only the
+   tiles evolve. The LCFS map draws the two-point drop into each footprint (an illustration, not a 2D transport
+   solution); the cross-section's edge reference is the plane's upstream temperature.
+2. Removed parameters: Tped, tauE, Dpar, Dperp0, tauDiv, Ttarget. Added: Pheat, fRad, wettedArea, connectionLength,
+   kappa0, conductionExponent, twoPointIterations (Spitzer's exponent and the iteration count are data, so neither
+   implementation holds a numeric constant, H8). Contract `heatfield.schema.json` updated.
+3. The W7-X view's heating scenario (`heatedEdge.ts`) becomes a relative heating power density (same start-up ramp,
+   heating sector and core modulation as before; the rotating θ pattern is dropped, since only the toroidal
+   distribution reaches the divertors). Its power is SCENARIO_POWER = 1.25 × P_heat: 7.5 MW mean, 6.6–8.4 MW. At the
+   nominal 6 MW its five divertors peak at ~1110–1160 °C and the control loop would never act; the maintainer chose
+   the factor so the coils are needed. The view states it in a line computed from the code ("Heating scenario
+   (model): …; chosen so the field coils are needed."). The colour ranges come from the start state's coldest and
+   hottest values; the stability notice is the tile update's Δt/τ_tile.
+4. Known and stated: no volume losses other than one radiated fraction, no detachment, electrons-only conduction,
+   T_e = T_i at the sheath; four schematic divertors carry about 2.5× a real unit's power; footprint, coil and tile
+   parameters illustrative; lumped tile.
+**Consequences.** Artifact and goldens regenerated natively (as in D-031); tasks 08, 09 and 10 stay reopened until
+re-verified; `verify.sh` is not run (the owner chose to skip WSL).

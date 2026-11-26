@@ -20,47 +20,52 @@ SCHEMA = "heatfield.schema.json"
 RUNTIME = "not recorded (artifact is byte-deterministic; no wall-clock values are stored)"
 MODEL_SPEC = "tasks/10-heat-field/MODEL.md"
 
-MODEL_NAME = "Reduced edge heat model with a sheath heat-flux law (MODEL.md version 2)"
-MODEL_VERSION = 2
+MODEL_NAME = "Two-point scrape-off-layer model with energy conservation (MODEL.md version 3)"
+MODEL_VERSION = 3
 SUMMARY = (
-    "Temperature on the last closed flux surface (LCFS) of the real W7-X VMEC equilibrium from an illustrative reduced "
-    "model: diffusion along the field lines (pitch ι) and across them in θ with D⊥ ∝ (B_0/B)², relaxation towards a "
-    "LCFS temperature the core supplies (0.1 keV), exhaust at four schematic diverter footprints, and control coils that "
-    "perturb |B| and sweep each strike line. The heat flux onto each diverter follows the sheath heat-transmission law "
-    "with two-point pressure balance and heats a lumped tile strip. The edge temperatures and sheath-law inputs are "
-    "physical orders of magnitude, tuned to a high-power case at the top of their ranges (peak load above the 10 MW/m² target design load with every "
-    "coil off); the transport, footprint, coil and tile parameters remain illustrative. Not fitted, not a simulation of "
-    "W7-X, and every number it gives is labelled model."
+    "Edge heat model on the last closed flux surface (LCFS) of the real W7-X VMEC equilibrium. A fixed heating power "
+    "(6 MW, 30 % radiated) crosses the LCFS and leaves through four schematic divertors: each takes the power of its "
+    "toroidal sector, compressed by |B| at its strike line, onto its wetted target area, so the power on the targets is "
+    "exactly the heating power less the radiated part. The textbook two-point model (Spitzer parallel conduction along "
+    "the field lines, sheath at the target, pressure balance) gives each divertor's upstream and target temperature, "
+    "and the LCFS map draws that temperature drop into each footprint. Control coils perturb |B| and sweep each strike "
+    "line, spreading the load over the tile strip. The heating, transport and sheath inputs are W7-X orders of "
+    "magnitude; the footprint, coil-sweep and tile parameters remain illustrative. The operating point is a high-power "
+    "case (with every coil off the peak load passes the 10 MW/m² target design load at the two divertors with the "
+    "higher |B|). Not fitted, not a simulation of W7-X, and every number it gives is labelled model."
 )
 EQUATIONS = [
-    {"id": "heat",
-     "text": "∂T/∂t = D_∥ ∂²T/∂ℓ² + ∂/∂θ(D_⊥(B) ∂T/∂θ) + (T_ped − T)/τ_E − Σ_k g_k(θ, φ, t)·(T − T_t)/τ_div",
-     "meaning": "Governing equation (used to predict how the heat moves): the LCFS temperature T diffuses along the field "
-                "line and across it, relaxes towards the pedestal temperature the core supplies, and is exhausted at the "
-                "four diverter footprints."},
-    {"id": "parallel",
-     "text": "∂/∂ℓ = ∂/∂φ + ι ∂/∂θ",
-     "meaning": "Derivative along the field line: one toroidal radian advances ι poloidal radians (rotational transform of "
-                "the LCFS; the VMEC stream function λ is neglected)."},
-    {"id": "cross-field",
-     "text": "D_⊥(B) = D_⊥0·(B_0/B)²",
-     "meaning": "Cross-field diffusivity: a stronger field confines the heat better, so changing |B| changes where the "
-                "heat flows."},
+    {"id": "power",
+     "text": "P_k = P_heat·(1 − f_rad)·mean(s_k),  s_k(φ) = G_k / Σ_m G_m,  G_k = g(φ − φ_k, π/N_div)",
+     "meaning": "Governing equation (used to predict how the heat moves): energy conservation. The heating power that "
+                "is not radiated leaves through the divertors, each taking the share of its toroidal sector; the "
+                "two-point model below turns each share into the target load and the edge temperatures."},
+    {"id": "target-load",
+     "text": "q_t,k = P_k·(B_k/B_0)/A_wet,  Q_k(θ) = q_t,k·g(θ − θ_s,k(t), σ_θ)",
+     "meaning": "Peak heat flux on target k (MW/m²): its power on the wetted area, compressed with |B| at the strike "
+                "line (a flux tube's cross-section shrinks as 1/B); spread along the tile strip around the strike line."},
+    {"id": "two-point",
+     "text": "q_∥ = q_t/sin α,  T_u^ν = T_t^ν + ν·q_∥·L_c/κ_0  (ν = 7/2),  q_∥ = γ·n_t·e·T_t·c_s(T_t),  2·n_t·T_t = n_u·T_u",
+     "meaning": "The two-point model of the scrape-off layer: Spitzer conduction along the connection length L_c sets the "
+                "upstream temperature T_u, the sheath at the target sets the target temperature T_t, and pressure is "
+                "balanced along the field line (c_s = √(2eT_t/m_i))."},
+    {"id": "lcfs-map",
+     "text": "T(θ, φ)^ν = (1 − Σ_k g_k)·T_u(φ)^ν + Σ_k g_k·T_t,k^ν,  T_u(φ) = Σ_k s_k(φ)·T_u,k",
+     "meaning": "The LCFS map: upstream temperature away from the divertors and the target temperature at the centre of "
+                "each footprint, interpolated in T^ν as along a conducting field line (an illustration of where the "
+                "two-point drop lies, not a 2D transport solution)."},
     {"id": "field",
      "text": "B = B_VMEC·(1 + ε Σ_k a_k(t) h_k(θ, φ)),  a_k(t) = c_k cos(2πft),  h_k = g(φ − φ_k, σ_cφ)·g(θ − θ_d, σ_cθ)",
      "meaning": "|B| of the VMEC equilibrium with the illustrative perturbation of control coil k at diverter k "
                 "(c_k = 1 while its toggle is on); h_k is the coil's envelope."},
     {"id": "strike-line",
      "text": "θ_s,k(t) = θ_d + A_s·a_k(t)",
-     "meaning": "A coil that is on sweeps its diverter's strike line up and down the target at frequency f."},
+     "meaning": "A coil that is on sweeps its diverter's strike line up and down the target at frequency f, spreading "
+                "the load (strike-point sweeping)."},
     {"id": "footprint",
      "text": "g_k(θ, φ, t) = g(φ − φ_k, σ_φ)·g(θ − θ_s,k(t), σ_θ),  g(x, σ) = exp(−x²/(2σ²))",
-     "meaning": "Gaussian footprint of diverter k centred on its strike line (angles wrapped into [−π, π))."},
-    {"id": "deposition",
-     "text": "q_k = (γ/2)·n_u·e·T·c_s(T_t)·sin α·(B/B_0)·g_k,  c_s = √(2eT_t/m_i),  Q_k(θ) = ∫ q_k dφ/(√(2π)·σ_φ)",
-     "meaning": "Heat flux onto diverter k (MW/m²): the sheath heat-transmission law γ·n_t·e·T_t·c_s with two-point "
-                "pressure balance n_t·T_t = n_u·T/2 (T the upstream LCFS temperature), projected onto the target at the "
-                "field-line incidence angle α and compressed with |B|; and its load along the target strip."},
+     "meaning": "Gaussian footprint of diverter k on the LCFS map, centred on its strike line (angles wrapped into "
+                "[−π, π))."},
     {"id": "tiles",
      "text": "τ_tile dT_tile,k/dt = T_cool + K·Q_k − T_tile,k",
      "meaning": "Lumped tile surface temperature of diverter k: relaxes to the coolant temperature plus a rise "
@@ -70,34 +75,28 @@ EQUATIONS = [
 
 def discretization(stability: float) -> str:
     return (
-        "Explicit (forward Euler) finite differences on the LCFS grid of `grid` (nTheta θ × nPhi φ; every index periodic, "
-        "i mod nTheta and j mod nPhi; cell c = j·nTheta + i), θ_i = 2πi/nTheta, φ_j = 2πj/nPhi, dθ = 2π/nTheta, dφ = 2π/nPhi. "
-        "Inputs exactly as written in this artifact: B_s = surfaces[last].B (LCFS |B|, T), ι = surfaces[last].iota, "
-        "φ_k = diverters.items[k].phi, θ_d = diverters.thetaCentre, every parameter = model.parameters[name].value. "
-        "wrap(x) = x − 2π·floor(x/(2π) + 0.5); g(x, σ) = exp(−x²/(2σ²)). State: T[c] (keV), initially T_ped everywhere; "
-        "tile strips Tt_k[i] (°C, along θ at φ_k), initially T_cool; t_n = n·Δt with n counted from the initial condition. "
-        "The coils c_k of step n are those of the coil-schedule entry with the largest fromStep ≤ n. "
-        "One step n → n+1, every right-hand side at the state of t_n: "
-        "(1) a_k = c_k·cos(2πf·t_n); "
-        "(2) h_k[c] = g(wrap(φ_j − φ_k), σ_cφ)·g(wrap(θ_i − θ_d), σ_cθ); "
-        "(3) B[c] = B_s[c]·(1 + ε·Σ_k a_k·h_k[c]); "
-        "(4) θ_s,k = θ_d + A_s·a_k; "
+        "LCFS grid of `grid` (nTheta θ × nPhi φ; every index periodic, i mod nTheta and j mod nPhi; cell c = j·nTheta + i), "
+        "θ_i = 2πi/nTheta, φ_j = 2πj/nPhi, dθ = 2π/nTheta, dφ = 2π/nPhi. Inputs exactly as written in this artifact: "
+        "B_s = surfaces[last].B (LCFS |B|, T), φ_k = diverters.items[k].phi, θ_d = diverters.thetaCentre, every parameter "
+        "= model.parameters[name].value. wrap(x) = x − 2π·floor(x/(2π) + 0.5); g(x, σ) = exp(−x²/(2σ²)). t_n = n·Δt with n "
+        "counted from the initial condition; the coils c_k of step n are those of the coil-schedule entry with the "
+        "largest fromStep ≤ n. The edge is quasi-steady (its time scales, microseconds, are far below Δt): at t_n and for "
+        "coils c: (1) a_k = c_k·cos(2πf·t_n); (2) h_k[c] = g(wrap(φ_j − φ_k), σ_cφ)·g(wrap(θ_i − θ_d), σ_cθ); "
+        "(3) B[c] = B_s[c]·(1 + ε·Σ_k a_k·h_k[c]); (4) θ_s,k = θ_d + A_s·a_k; "
         "(5) g_k[c] = g(wrap(φ_j − φ_k), σ_φ)·g(wrap(θ_i − θ_s,k), σ_θ); "
-        "(6) D⊥[c] = D_⊥0·(B_0/B[c])²; "
-        "(7) σ = ι·dφ/dθ (cells), p = floor(σ), w = σ − p; T₊[i,j] = (1−w)·T[i+p, j+1] + w·T[i+p+1, j+1], "
-        "T₋[i,j] = (1−w)·T[i−p, j−1] + w·T[i−p−1, j−1]; P = D_∥·(T₊ − 2T + T₋)/dφ² (λ neglected); "
-        "(8) D⁺ = (D⊥[i,j] + D⊥[i+1,j])/2, D⁻ = (D⊥[i,j] + D⊥[i−1,j])/2, "
-        "X = (D⁺·(T[i+1,j] − T[i,j]) − D⁻·(T[i,j] − T[i−1,j]))/dθ²; "
-        "(9) S = (T_ped − T)/τ_E, L = Σ_k g_k·(T − T_t)/τ_div; "
-        "(10) q_k = (γ/2)·n_u·keV·c_s·sin α/MW·(B/B_0)·g_k·T with c_s = √(2·T_t·keV/(m_i·amu)) (MW/m²), Q_k[i] = Σ_j q_k[i,j]·dφ/(√(2π)·σ_φ); "
-        "(11) Tt_k[i] ← Tt_k[i] + Δt·(T_cool + K·Q_k[i] − Tt_k[i])/τ_tile; "
-        "(12) T ← T + Δt·(P + X + S − L). "
+        "(6) s_k[j] = G_k[j]/Σ_m G_m[j], G_k[j] = g(wrap(φ_j − φ_k), π/N_div), P_k = P_heat·(1 − f_rad)·mean_c s_k (MW); "
+        "(7) j_k = round(φ_k/dφ) mod nPhi, x = θ_s,k/dθ, i₀ = floor(x), w = x − i₀, "
+        "B_k = (1 − w)·B[j_k, i₀] + w·B[j_k, i₀+1], b_k = B_k/B_0; (8) q_t,k = P_k·b_k/A_wet (MW/m²); "
+        "(9) Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ); (10) q_∥ = q_t,k·MW/sin α (W/m²; none: T_u = T_t = 0), "
+        "X = ν·q_∥·L_c/κ_0, T_u = X^(1/ν), then N_2pt times: c = 2·q_∥/(γ·n_u·keV·T_u), T_t = m_i·amu·c²/(2·keV), "
+        "T_u = (T_t^ν + X)^(1/ν) (keV). One step n → n+1: (11) Tt_k[i] ← Tt_k[i] + Δt·(T_cool + K·Q_k[i] − Tt_k[i])/τ_tile "
+        "with Q_k at t_n and the coils of step n; (12) the new state's LCFS temperature at t_(n+1) with the same coils, "
+        "T_u[c] = Σ_k s_k[j]·T_u,k, T[c] = (max(0, 1 − Σ_k g_k[c])·T_u[c]^ν + Σ_k g_k[c]·T_t,k^ν)^(1/ν). The initial state: "
+        "tiles T_cool, T from (12) at t_0 with every coil off. "
         "Diagnostics of the state after n steps (golden checkpoints): t = n·Δt; probesT = T at each model.probes [i, j]; "
-        "meanT = arithmetic mean of T over all cells; peakTileC[k] = max_i Tt_k[i]; peakHeatFlux[k] = max_i Q_k[i] with "
-        "Q_k evaluated from that state and the coils of step n at t_n (steps 1–5 and 10). "
-        "Stability: every update weight is non-negative (the step is monotone, so T stays between T_t and T_ped) when "
-        "Δt·(2D_∥/dφ² + 2·max D⊥/dθ² + 1/τ_E + max Σ_k g_k/τ_div) ≤ 1, the maximum taken over every coil state "
-        f"(|B| lowest where every a_k = −1); for these parameters it is {stability:.4f}."
+        "meanT = arithmetic mean of T over all cells; peakTileC[k] = max_i Tt_k[i]; peakHeatFlux[k] = max_i Q_k[i] at t_n "
+        "with the coils of step n. Stability: the only explicit update is the tile relaxation, monotone when "
+        f"Δt/τ_tile ≤ 1; here {stability:.4f}."
     )
 
 
@@ -128,26 +127,32 @@ def limitations(reg: dict, params: dict) -> str:
     if changed and kept:
         tuned += "; " + ", ".join(f"{n} kept at {params[n]:g}" for n in kept)
     return (
-        "Reduced model, not a simulation of W7-X: the edge temperatures and sheath-law inputs (T_ped, T_t, γ, n_u, α, m_i) "
-        "are physical orders of magnitude; the transport, footprint, coil and tile parameters (D_∥, D_⊥0, τ_E, τ_div, σ_φ, "
-        "σ_θ, ε, the sweep, K, τ_tile) remain illustrative. The parameters are not fitted to measurements, and the model is not verified against measurements or a W7-X simulation (this repo holds no "
-        "measured or simulated W7-X temperature, divertor-load or coil-response data). The geometry and |B| are real "
-        "(VMEC wout_w7x_kjm.nc); temperatures, heat fluxes and tile temperatures are model output. The four diverters are "
-        "schematic positions from the owner's sketch; W7-X has ten island-divertor units. The control-coil response is not "
-        "validated: ε, the sweep amplitude, frequency and envelope are illustrative (the PRD keeps a validated coil "
-        "response, state transfer across equilibria and matched divertor and core-energy measurements for a later "
-        "milestone). The parallel derivative follows the field-line pitch ι in VMEC θ with the stream function λ "
-        "neglected, and cross-field transport is diffusion in θ only. The prediction is this reduced model run ahead from "
-        "the current state, not the GENE-X spatial-parallel run (D-027 §6). "
-        "The heat flux follows the sheath law with γ, the separatrix density n_u, the target temperature T_t and the "
-        "incidence angle α as stated; the sheath, the two-point balance and the lumped tile are textbook simplifications. "
-        "The deposited heat flux is not energy-coupled to the plasma's exhaust term (τ_div sets where and how fast the "
-        "edge cools; the sheath law sets the load), so the model does not conserve energy between plasma and target. "
-        "n_u is held fixed whatever the plasma state, so even a cold edge (T = T_t) deposits (γ/2)·n_u·e·T_t·c_s·sin α "
-        "and the tiles warm a little before the edge heats. "
-        f"Tuning (MODEL.md, only nSep and incidence may change, within their stated ranges): {tuned}. These are the top of "
-        "both ranges: at the starting values no diverter reaches the tile limit, so this is a high-power case whose "
-        "coils-off peak load exceeds the 10 MW/m² W7-X target design load. With every coil off, at "
+        "Reduced model, not a simulation of W7-X. The heating power, radiated fraction, wetted area, connection length, "
+        "Spitzer coefficient, sheath coefficient, separatrix density and incidence angle are W7-X orders of magnitude; "
+        "the footprint widths, the coil perturbation and sweep, and the tile gain and time constant remain illustrative. "
+        "The parameters are not fitted to measurements, and the model is not verified against measurements or a W7-X "
+        "simulation (this repo holds no measured or simulated W7-X temperature, divertor-load or coil-response data). "
+        "The geometry and |B| are real (VMEC wout_w7x_kjm.nc); temperatures, heat fluxes and tile temperatures are model "
+        "output. Energy is conserved by construction: the power on the targets is the heating power less the radiated "
+        "fraction; the wetted width is taken to shrink as 1/B with the compression, but the drawn strip profile keeps "
+        "its width σ_θ, so its integral is not the divertor's power (only its peak is used for the tiles). "
+        "The two-point model is a textbook simplification: no volume losses along the field line other than "
+        "the single radiated fraction, no momentum or particle losses (no detachment), electrons only in the conduction "
+        "and T_e = T_i at the sheath; the iteration is run a fixed number of times, converged while the scrape-off layer "
+        "is conduction-limited (the build checks the sheath balance to 1e-6 at the operating loads; loads beyond "
+        "~50 MW/m² would not converge). The power is shared between the four "
+        "divertors by toroidal sector; W7-X has ten island-divertor units, so each schematic divertor here carries "
+        "about 2.5 times the power of a real one. The LCFS map only illustrates where the two-point temperature drop "
+        "lies: it is not a 2D transport solution, and heat does not spread across the surface in time (the edge is "
+        "quasi-steady; only the tiles evolve). The control-coil response is not validated: ε, the sweep amplitude, "
+        "frequency and envelope are illustrative (the PRD keeps a validated coil response, state transfer across "
+        "equilibria and matched divertor and core-energy measurements for a later milestone). The tile is lumped (no "
+        "conduction through its depth). The prediction is this model run ahead from the current state, not the GENE-X "
+        "spatial-parallel run (D-027 §6). "
+        f"Operating point (MODEL.md, Pheat and wettedArea within their stated ranges, chosen so that two divertors "
+        f"pass the tile limit): {tuned}. It is a high-power case: "
+        "at 5 MW or with a larger wetted area no diverter reaches the tile limit; the two divertors whose strike lines "
+        "sit at the higher |B| (field compression ~1.23 against ~1.02) pass it. With every coil off, at "
         f"{model.REGIME_STEP * params['dt']:g} s (the view's starting state) the peak tile temperatures are "
         f"{_tiles(reg['off'])}: {', '.join(above) or 'none'} above the illustrative {limit:g} °C tile limit and "
         f"{', '.join(below) or 'none'} below it. With every coil on from 0 s they are {_tiles(reg['on'])} at the same "
@@ -227,8 +232,8 @@ def build() -> dict:
             t_end=t_end,
             sources=[wout_src, source(f"Model specification {MODEL_SPEC} (version {MODEL_VERSION}, D-027)", MODEL_SPEC)],
             outcome="not-applicable",
-            details=("Reduced model, not a W7-X simulation: edge temperatures and sheath-law inputs are physical orders "
-                     "of magnitude, the other parameters illustrative; parameters not fitted to measurements, and not verified against measurements or a simulation of W7-X (none exist in this "
+            details=("Reduced model, not a W7-X simulation: physics inputs are W7-X orders of magnitude, footprint, "
+                     "coil and tile parameters illustrative; parameters not fitted to measurements, and not verified against measurements or a simulation of W7-X (none exist in this "
                      "repo). Its only check is internal: the renderer's TypeScript port is checked against the golden "
                      f"checkpoints of this Python reference to relativeTolerance {model.RELATIVE_TOLERANCE:g}."),
             runtime=RUNTIME,
