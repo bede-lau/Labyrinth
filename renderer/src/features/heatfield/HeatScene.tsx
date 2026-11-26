@@ -35,7 +35,7 @@ import {
   sliceLabelTargets,
   sliceTube,
   writeColors,
-  heatFraction,
+  temperatureFraction,
   rgbToHex,
   type ColorBy,
   type ColourRanges,
@@ -308,7 +308,7 @@ export interface FrameInput {
 /** Recolour / reposition in place (BufferAttribute.needsUpdate); nothing is rebuilt. */
 export function applyFrame(content: SceneContent, geom: HeatSceneGeometry, f: FrameInput): void {
   const surfaceArr = content.surfaceColors.array as Float32Array;
-  if (f.colorBy === 'temperature') writeColors(f.T, f.ranges.lcfsT, rampLut('temperature', f.theme), surfaceArr, true);
+  if (f.colorBy === 'temperature') writeColors(f.T, f.ranges.lcfsT, rampLut('temperature', f.theme), surfaceArr, f.ranges.lcfsT[0] > 0);
   else writeColors(f.B, f.ranges.B, rampLut('field', f.theme), surfaceArr);
   content.surfaceColors.needsUpdate = true;
   // The plates show where the plasma is cold: the target temperature T_t,k on the same scale (version 7); by |B| they
@@ -318,7 +318,7 @@ export function applyFrame(content: SceneContent, geom: HeatSceneGeometry, f: Fr
     const k = mesh.userData.diverter as number | undefined;
     if (k === undefined) return;
     const t = f.colorBy === 'temperature' ? f.targetT?.[k] : undefined;
-    const colour = t === undefined ? fillColour : rgbToHex(heatColor(heatFraction(t, f.ranges.lcfsT), f.theme));
+    const colour = t === undefined ? fillColour : rgbToHex(heatColor(temperatureFraction(t, f.ranges.lcfsT), f.theme));
     ((mesh as unknown as { material: { color: { set(c: string): void } } }).material).color.set(colour);
   });
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { rampColor } from '../../design/sceneTheme';
 import { plasmaMaterials } from '../../design/tokens';
-import { heatFraction, rgbToHex } from '../heatfield/scene';
+import { linearFraction, rgbToHex } from '../heatfield/scene';
 import { cellMean } from '../heatfield/slice';
 import type { Simulation } from '../heatfield/sim';
 import type { HeatfieldArtifact } from '../heatfield/types';
@@ -51,7 +51,7 @@ export function SectionHeat({ frame, layout }: { frame: SectionFrame; layout: In
       const { T } = sim.model.crossSection(sim.state, sim.coils, plane);
       for (let k = 0; k < nodes.length; k++) {
         const value = cellMean(T, Math.floor(k / n), k % n, n);
-        const t = heatFraction(value, range);
+        const t = linearFraction(value, range);
         const bin = Math.round(t * 255);
         if (bin !== painted[k]) {
           (nodes[k] as SVGElement).style.color = palette[bin]!;

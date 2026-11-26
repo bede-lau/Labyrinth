@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { rampColor } from '../../design/sceneTheme';
 import { plasmaMaterials } from '../../design/tokens';
-import { heatFraction, rgbToHex } from '../heatfield/scene';
+import { linearFraction, rgbToHex } from '../heatfield/scene';
 import type { Simulation } from '../heatfield/sim';
 import { cellMean, sliceLayout } from '../heatfield/slice';
 import type { HeatfieldArtifact } from '../heatfield/types';
@@ -25,7 +25,7 @@ export function CoreSlice({ art, sim, plane, range }: {
       ctx.lineWidth = 0.55;
       layout.cells.forEach((c, i) => {
         const value = cellMean(values, c.m, c.i, art.grid.nTheta);
-        const t = heatFraction(value, range);
+        const t = linearFraction(value, range);
         ctx.fillStyle = ctx.strokeStyle = lut[Math.round(t * 255)]!;
         ctx.fill(paths[i]!);
         ctx.stroke(paths[i]!);

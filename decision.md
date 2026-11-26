@@ -521,10 +521,11 @@ MODEL.md profile) and the edge temperature from the two-point law T_u ∝ P^(1/�
 W7-X explorer's ramp had 6 stops (navy → cyan → yellow → crimson) interpolated in sRGB; Heat & field's had 9 stops from
 yellow to red. Both scales were labelled in keV.
 **Decision.** (1) The explorer's temperature ramp (`plasmaMaterials.temperature`, used by the 3D edge, the core slice,
-the cross-section and the strike monitor) is ColorBrewer RdYlBu reversed, 11 stops: dark blue → light blue → pale
-yellow → orange → dark red. A first version used 17 Turbo samples; the owner rejected its green ("blue to red, no green").
-The divertor target's warm band keeps the old yellow as its own token (`targetWarm`). The ramp is diverging (pale middle,
-dark ends), so it is read by hue through its colour bar; it has no colour-blind gate. (2) Heat & field's `scene.heat`
+the cross-section and the strike monitor) is 17 samples of the Turbo map: blue → cyan → green → yellow → orange → red.
+On the way the owner tried RdYlBu (blue → pale yellow → red) and blue → violet → red, then chose the full spectrum back
+("red to yellow to green to blue", the coldest blue on the edge; see the D-039 addendum for the linear scale). The divertor
+target's warm band keeps the old yellow as its own token (`targetWarm`). Turbo is not monotonic in lightness (both ends
+are dark), so it is read by hue through its colour bar; it has no colour-blind gate. (2) Heat & field's `scene.heat`
 widens D-027 to 11 stops, yellow → orange → red → crimson → magenta → plum, taken at equal CIEDE2000 arc length (step sizes vary by
 < 20 %, the ramps.test.ts gate) with lightness still falling. It still clears every ramps.test.ts gate: 14.3 / 15.8 ΔE00 from the |B| ramp, every step visible under
 protanopia and deuteranopia. (3) Every temperature colour bar reads in megakelvin (1 keV / k_B = 11.6045 MK, CODATA 2018)
@@ -541,9 +542,24 @@ from the model's own shares (MODEL.md v6). ΣΔP = 0. The flow from loser k to g
 a proportional attribution (not unique) for several. Every row sums to the loss and every column to the gain. The explorer shows it twice:
 - a "Power between divertors" panel (`PowerFlow.tsx`): a top view of the torus with arrows round the edge, and a
   ledger of power and change per divertor;
-- magenta 3D arrows round the outboard side of the torus (`flowArrows.ts`), as thick as the MW moved.
+- (superseded by addendum 2) magenta 3D arrows round the outboard side of the torus (`flowArrows.ts`), as thick as the MW moved.
 Both are labelled model, and both say that the path is schematic.
 **Consequences.** No new physics and no new parameters; the artifact and the Python reference are unchanged. Which
 divertor receives the power follows the model's illustrative coil response, not traced W7-X field lines (stated in the
 panel). Also fixed here, regressions from D-038 found while wiring this: the explorer's edge shader still assumed a
 6-stop palette, and the core glow picked stops 3 and 4 by index (now by place on the ramp).
+**Addendum (owner, 2026-11-26: "red to blue", "make it very obvious how the heat is flowing").**
+- **Temperature ramp:** after trying blue → violet → red, the owner chose the full spectrum back: 17 Turbo stops, blue → cyan → green → yellow → red. The arrows are magenta again (superseded by addendum 2: gold heat comets).
+- **Linear scale:** the explorer reads it on a LINEAR scale from 0 to the hottest core. On the old log scale the edge (~2 MK) fell mid-ramp, which is why it looked yellow; on the linear scale the edge is blue and the core red.
+- **Core-to-divertor streams:** the 3D view adds white streams from the core to every divertor, each as thick as that divertor's share. Beads run outward along them.
+- **Transfer arrows:** these are thicker. Both the streams and the arrows draw over the plasma (no depth test), so they are never hidden.
+- **What stays schematic:** the streams' path; the heat crosses the LCFS everywhere and follows field lines to the plates.
+**Addendum 2 (owner, 2026-11-26: "make the heat flow pleasing, so a five-year-old can follow it"; "are the field lines physical?").**
+- **Heat comets:** heat is shown one way only, as glowing gold comets: soft additive glows, a fixed size on screen, fading tails, faint guide lines.
+  - They fly from the core to each divertor, more of them where more power lands.
+  - They run round the ring from a coil's divertor to the others, with a soft arrowhead.
+  - Each divertor plate ("catcher") glows as brightly as the power it catches.
+  - The thick tubes and the magenta are gone.
+- **Plain-words key:** a four-line "How the heat moves" key under the 3D view tells the same story.
+- **Field lines:** they were already physical: the VMEC equilibrium's own field lines (the PEST tracer, checked against stella). One approximation is fixed: their coil colouring placed the model envelope at θ ≈ α + ι·φ, dropping λ. Each sample now reads h_k at its VMEC θ, found from its position, so a line takes the colour of the surface under it.
+- **Field-line limitation, stated:** the lines do not move when a coil switches on, because the model's coils modulate |B| and are not real coil currents. Showing that motion needs the W7-X coil geometry.

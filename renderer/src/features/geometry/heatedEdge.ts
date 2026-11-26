@@ -1,5 +1,5 @@
 import { createModel, paramsOf } from '../heatfield/model';
-import { colourRanges, T_FLOOR } from '../heatfield/scene';
+import { colourRanges } from '../heatfield/scene';
 import { Simulation } from '../heatfield/sim';
 import type { Diverter, HeatfieldArtifact } from '../heatfield/types';
 
@@ -79,10 +79,11 @@ export function heatedRanges(art: HeatfieldArtifact, sim: Simulation) {
   const ranges = colourRanges(art, sim.model, sim.start.T);
   const core = scenarioCoreEnergy(art);
   const h = scenarioHeating(art);
-  // One shared logarithmic scale for the edge and the core slice: T_FLOOR to the hottest core the scenario reaches.
+  // One shared LINEAR scale for the edge and the core slice (D-038): 0 to the hottest core the scenario reaches, so the
+  // cold edge reads blue and the hot core red.
   const hot = core.steadyCore(h.hi);
-  ranges.lcfsT = [T_FLOOR, hot];
-  ranges.sliceT = [T_FLOOR, hot];
+  ranges.lcfsT = [0, hot];
+  ranges.sliceT = [0, hot];
   return ranges;
 }
 

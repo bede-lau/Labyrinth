@@ -405,17 +405,56 @@ export interface LineGeometry {
   points: Float32Array;
   /** VMEC |B| per sample (T). */
   B: Float64Array;
-  /** Coil envelope h_k at each sample (k·n + s), θ ≈ α + ι·φ (λ neglected, as in the model). */
+  /** Coil envelope h_k at each sample (k·n + s): the model's h_k at the sample's VMEC θ and φ. */
   h: Float64Array;
 }
 
-/** The traced LCFS field lines, with the coil envelopes at their samples for the perturbed |B|. */
+/**
+ * The VMEC poloidal angle θ of a point (R, Z) on surface `s` at toroidal angle φ: the nearest grid node, refined by
+ * golden-section search on the interpolated surface. The traced lines carry PEST θ* = α + ι·φ; VMEC θ differs from it by
+ * λ (θ* = θ + λ), and the model's coil envelopes live on the VMEC θ grid.
+ */
+export function vmecTheta(s: HeatSurface, nTheta: number, nPhi: number, R: number, Z: number, phi: number): number {
+  const d = (t: number) => {
+    const [r, z] = sampleRZ(s, nTheta, nPhi, t, phi);
+    return (r - R) ** 2 + (z - Z) ** 2;
+  };
+  const step = (2 * Math.PI) / nTheta;
+  let best = 0;
+  for (let i = 1; i < nTheta; i++) if (d(i * step) < d(best * step)) best = i;
+  let lo = (best - 1) * step;
+  let hi = (best + 1) * step;
+  const gr = (Math.sqrt(5) - 1) / 2;
+  for (let it = 0; it < 60; it++) {
+    const a = hi - gr * (hi - lo);
+    const b = lo + gr * (hi - lo);
+    if (d(a) < d(b)) hi = b;
+    else lo = a;
+  }
+  return (lo + hi) / 2;
+}
+
+/** A cell-grid field (flat c = j·nTheta + i) at (θ, φ), bilinear and periodic in both angles. */
+function sampleGrid(values: ArrayLike<number>, nTheta: number, nPhi: number, theta: number, phi: number): number {
+  const u = mod(theta / ((2 * Math.PI) / nTheta), nTheta);
+  const v = mod(phi / ((2 * Math.PI) / nPhi), nPhi);
+  const i0 = Math.floor(u);
+  const j0 = Math.floor(v);
+  const fu = u - i0;
+  const fv = v - j0;
+  const at = (j: number, i: number) => values[gridIndex(j, i, nPhi, nTheta)]!;
+  return (1 - fv) * ((1 - fu) * at(j0, i0) + fu * at(j0, i0 + 1)) + fv * ((1 - fu) * at(j0 + 1, i0) + fu * at(j0 + 1, i0 + 1));
+}
+
+/**
+ * The traced LCFS field lines, with the coil envelopes at their samples for the perturbed |B|. The envelope is the
+ * model's own h_k read at each sample's VMEC θ (found from its position), so a line takes the same colour as the
+ * surface under it; the lines themselves are the VMEC equilibrium's and do not move with the coils.
+ */
 export function fieldLineGeometry(art: HeatfieldArtifact, model: HeatModel): LineGeometry[] {
   const { nTheta, nPhi } = art.grid;
   const axis = art.surfaces[0]!;
-  const p = model.params;
-  const wrap = (x: number) => x - 2 * Math.PI * Math.floor(x / (2 * Math.PI) + 0.5);
-  const g = (x: number, s: number) => Math.exp(-(x * x) / (2 * s * s));
+  const lcfs = art.surfaces[art.surfaces.length - 1]!;
   return art.fieldLines.map((f) => {
     const n = f.phi.length;
     const points = new Float32Array(n * 3);
@@ -428,10 +467,8 @@ export function fieldLineGeometry(art: HeatfieldArtifact, model: HeatModel): Lin
       const R = Math.hypot(x, y);
       const o = outward(axis, nTheta, nPhi, R, z, Math.atan2(y, x));
       points.set([x + LINE_LIFT * o[0], y + LINE_LIFT * o[1], z + LINE_LIFT * o[2]], s * 3);
-      const theta = f.alpha + model.iota * ph;
-      model.phiK.forEach((pk, k) => {
-        h[k * n + s] = g(wrap(ph - pk), p.sigmaCoilPhi) * g(wrap(theta - model.thetaD), p.sigmaCoilTheta);
-      });
+      const theta = vmecTheta(lcfs, nTheta, nPhi, R, z, ph);
+      for (let k = 0; k < model.nDiverters; k++) h[k * n + s] = sampleGrid(model.h[k]!, nTheta, nPhi, theta, ph);
     }
     return { alpha: f.alpha, points, B: Float64Array.from(f.B), h };
   });
@@ -879,12 +916,12 @@ export function rampLut(kind: ColorBy, theme: ThemeName): Float32Array {
   return lut;
 }
 
-/** Normalise each value over `range` (clamped) and write its LUT colour into `out` (3 per value). */
 /**
- * Lowest temperature on the shared temperature scale (keV): 20 eV, below every target temperature of the model. Within a
- * view every temperature map (the 3D edge and the cross-sections; the explorer's surface and slice) uses ONE
- * logarithmic scale from here to that view's hottest core, so a temperature has one colour across its maps; logarithmic because the model
- * spans two decades (targets ~0.03 keV, edge ~0.2 keV, core ~3 keV).
+ * Lowest temperature on Heat & field's shared temperature scale (keV): 20 eV, below every target temperature of the model.
+ * In that view every temperature map (the 3D edge and the cross-sections) uses ONE logarithmic scale from here to the
+ * hottest core, so a temperature has one colour across its maps; logarithmic because the model spans two decades (targets
+ * ~0.03 keV, edge ~0.2 keV, core ~3 keV). The W7-X explorer instead reads its maps on a LINEAR scale from 0 (D-038
+ * addendum), so its cold edge is blue and its core red; a range starting at 0 means linear.
  */
 export const T_FLOOR = 0.02;
 
@@ -895,6 +932,38 @@ export function heatFraction(v: number, range: readonly number[]): number {
   if (!(hi > lo && lo > 0)) return 0.5;
   const t = Math.log(Math.max(v, lo) / lo) / Math.log(hi / lo);
   return t <= 0 ? 0 : t >= 1 ? 1 : t;
+}
+
+/** Position (0–1) of a temperature on its colour range: logarithmic when lo > 0 (Heat & field), linear from lo = 0 (the explorer). */
+export function temperatureFraction(v: number, range: readonly number[]): number {
+  return range[0]! > 0 ? heatFraction(v, range) : linearFraction(v, range);
+}
+
+/** Position (0–1) of a temperature on a LINEAR scale [lo, hi] (the W7-X explorer, D-038), clamped; 0.5 for an empty range. */
+export function linearFraction(v: number, range: readonly number[]): number {
+  const lo = range[0]!;
+  const hi = range[1]!;
+  if (!(hi > lo)) return 0.5;
+  const t = (v - lo) / (hi - lo);
+  return t <= 0 ? 0 : t >= 1 ? 1 : t;
+}
+
+/**
+ * Ticks for a LINEAR colour bar over [lo, hi]: multiples of the smallest 1-2-5 step at least a fifth of the span (so
+ * at most five), each with its position `at` (0–1) along the bar; ticks within 6 % of an end are dropped so they never
+ * crowd the end labels (a range can be left with only one).
+ */
+export function linearTicks(lo: number, hi: number): { value: number; at: number }[] {
+  if (!(hi > lo)) return [];
+  const raw = (hi - lo) / 5;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map((m) => m * mag).find((s) => s >= raw)!;
+  const out: { value: number; at: number }[] = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
+    const at = (v - lo) / (hi - lo);
+    if (at >= 0.06 && at <= 0.94) out.push({ value: Number(v.toPrecision(6)), at });
+  }
+  return out;
 }
 
 /** Kelvin per keV: 1 keV / k_B = 1.160 451 812 × 10^7 K (CODATA 2018). The model works in keV; the colour bars read in kelvin. */
@@ -940,10 +1009,10 @@ export function writeColors(values: ArrayLike<number>, range: readonly [number, 
 /** Fixed colour ranges, labelled on the colour bars. */
 export interface ColourRanges {
   /**
-   * LCFS temperature (keV) and cross-section temperature (keV): the SAME logarithmic scale, T_FLOOR (20 eV) to the
-   * core temperature T_0, so a temperature has one colour everywhere (the edge at ~0.2 keV is the same colour on the
-   * 3D surface and at the rim of the slice). Logarithmic so the targets (~0.03 keV), the edge and the core (3 keV)
-   * stay apart; colder values take the coldest colour. Colour with `heatFraction` / `writeColors(…, true)`.
+   * LCFS temperature (keV) and cross-section temperature (keV): the SAME scale, so a temperature has one colour
+   * everywhere (the edge is the same colour on the 3D surface and at the rim of the slice). In Heat & field it is
+   * logarithmic, T_FLOOR (20 eV) to T_0, so the targets, the edge and the core stay apart (`heatFraction` /
+   * `writeColors(…, true)`); the W7-X explorer passes [0, T_core], read linearly (`temperatureFraction` picks by lo).
    */
   lcfsT: [number, number];
   sliceT: [number, number];

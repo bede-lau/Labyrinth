@@ -80,7 +80,7 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
     shader.fragmentShader = `varying float vEdgeT; uniform bool showEdgeHeat; uniform vec2 edgeRange; uniform vec3 edgePalette[${last + 1}];\n` +
       shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
       if (showEdgeHeat) {
-        float t = ${last}.0 * clamp(log(max(vEdgeT,edgeRange.x)/edgeRange.x)/log(edgeRange.y/edgeRange.x),0.0,1.0);
+        float t = ${last}.0 * clamp((vEdgeT - edgeRange.x)/(edgeRange.y - edgeRange.x),0.0,1.0);
         int i = min(${last - 1},int(floor(t)));
         diffuseColor.rgb = mix(edgePalette[i],edgePalette[i+1],t-float(i));
       }`);
@@ -193,7 +193,7 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
         glow[1]!.color.set(HEAT_STOPS[Math.round(0.6 * (HEAT_STOPS.length - 1))]!);
         glow[2]!.color.set(HEAT_STOPS[Math.round(0.8 * (HEAT_STOPS.length - 1))]!);
       }
-      writeColors(xs.T, frame.ranges.sliceT, heat, color.array as Float32Array, true);
+      writeColors(xs.T, frame.ranges.sliceT, heat, color.array as Float32Array);
       color.needsUpdate = true;
     }
     flow.update(frame.sim, layers.heat && time > 0);

@@ -10,9 +10,12 @@
 ### 2026-11-26: W7-X view — power moved between divertors (D-039)
 - New "Power between divertors" panel and 3D arrows: each divertor's share and its change against coils-off, and who
   sends to whom (`transfer.ts`, exact for one coil, conserved). The D-038 explorer shader/glow palette regressions are fixed.
+- 3D: glowing gold heat comets (core → divertors, divertor → divertor when a coil acts), glowing catchers, and a
+  plain-words "How the heat moves" key. Field-line coil colouring now uses the VMEC θ (λ included). Explorer
+  temperature ramp: Turbo (blue → green → yellow → red) on a linear 0–T_core scale (edge coldest blue, core red).
 
 ### 2026-11-26: temperature maps with more hues, in kelvin (D-038)
-- Explorer temperature ramp: 11-stop blue → red (RdYlBu reversed, no green; was 6 stops). Heat & field: 11 stops, yellow → magenta (was 9,
+- Explorer temperature ramp: 17-stop Turbo, blue → green → yellow → red (was 6 stops). Heat & field: 11 stops, yellow → magenta (was 9,
   yellow → red). Every temperature colour bar reads in MK with 1-2-5 log ticks (`LogTicks.tsx`); read-outs give keV and MK.
 
 ### 2026-11-26: README for external reviewers

@@ -417,3 +417,11 @@
 .geo-flow__table th, .geo-flow__table td { padding: .15rem .5rem; text-align: right; border-bottom: 1px solid var(--lab-color-border); }
 .geo-flow__table th[scope=row], .geo-flow__table thead th:first-child { text-align: left; }
 .geo-flow__note { margin: .5rem 0 0; font-size: .75rem; color: var(--lab-color-text-subtle); }
+
+/* "How the heat moves" (D-039): the story of the 3D heat comets in plain words, each with the mark it explains. */
+.heat-story { list-style: none; margin: .25rem 0 0; padding: .6rem .8rem; display: grid; gap: .35rem; font-size: .82rem; line-height: 1.35;
+  color: var(--lab-color-text); background: var(--lab-color-surface-sunken); border: 1px solid var(--lab-color-border); border-radius: var(--lab-radius-md); }
+.heat-story li { display: grid; grid-template-columns: 1.4rem 1fr; align-items: center; gap: .5rem; }
+.heat-story__icon { width: 1.1rem; height: 1.1rem; border-radius: 50%; justify-self: center; }
+.heat-story__icon--comet { width: 1.3rem; height: .45rem; border-radius: .3rem; }
+.heat-story__icon--push { border-radius: 0; width: 1.2rem; height: .8rem; clip-path: polygon(0 35%, 60% 35%, 60% 0, 100% 50%, 60% 100%, 60% 65%, 0 65%); }

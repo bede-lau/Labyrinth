@@ -215,12 +215,12 @@ export function GeometryContent({ g, assignmentsAnchor }: { g: GeometryArtifact;
                 </div>
                 {ranges && (
                   <div className="plasma-scale">
-                    <span>{toMK(ranges.sliceT[0]).toFixed(2)}</span>
+                    <span>{toMK(ranges.sliceT[0]).toFixed(0)}</span>
                     <span className="plasma-scale__bar">
                       <i style={{ background: 'linear-gradient(to right,' + plasmaMaterials.temperature.join(',') + ')' }} />
-                      <LogTicks lo={toMK(ranges.sliceT[0])} hi={toMK(ranges.sliceT[1])} />
+                      <LogTicks lo={toMK(ranges.sliceT[0])} hi={toMK(ranges.sliceT[1])} scale="linear" />
                     </span>
-                    <span>{toMK(ranges.sliceT[1]).toFixed(1)} MK, log scale</span>
+                    <span>{toMK(ranges.sliceT[1]).toFixed(1)} MK</span>
                   </div>
                 )}
               </div>

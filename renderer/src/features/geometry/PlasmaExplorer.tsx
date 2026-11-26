@@ -3,6 +3,7 @@ import { Icon, type ThemeName } from '../../design';
 import { ControlLoop, type LoopDecision } from '../heatfield/ControlLoop';
 import { HeatScene, type HeatSceneProps, type HoverPoint } from '../heatfield/HeatScene';
 import { usePlayback, usePrefersReducedMotion } from '../heatfield/playback';
+import { plasmaMaterials } from '../../design/tokens';
 import { LogTicks } from '../heatfield/LogTicks';
 import { PowerFlow } from './PowerFlow';
 import { ARROWS, buildSceneGeometry, toMK } from '../heatfield/scene';
@@ -43,13 +44,22 @@ const sceneLayers: { id: keyof Layers; label: string; icon: string }[] = [
 ];
 const initial: Layers = { heat: true, particles: true, lines: false, hardware: false };
 
-/** A temperature scale: the model's range (keV) read in megakelvin, logarithmic, with 1-2-5 ticks under the bar. */
+/** A temperature scale: the model's range (keV) read in megakelvin, linear (D-038), with ticks under the bar. */
 function Scale({ label, range, gradient }: { label: string; range: readonly number[]; gradient: string }) {
   const lo = toMK(range[0]!), hi = toMK(range[1]!);
   return <div className="plasma-scale"><span>{label}</span>
-    <span className="plasma-scale__bar"><i style={{ background: gradient }} /><LogTicks lo={lo} hi={hi} /></span>
-    <span>{lo.toFixed(2)}–{hi.toFixed(1)} MK, log scale</span></div>;
+    <span className="plasma-scale__bar"><i style={{ background: gradient }} /><LogTicks lo={lo} hi={hi} scale="linear" /></span>
+    <span>{lo.toFixed(0)}–{hi.toFixed(1)} MK</span></div>;
 }
+
+/** The heat story's icons, drawn in the scene's own colours (tokens): the ramp's ends, and the heat comets' glow. */
+const T = plasmaMaterials.temperature;
+const storyIcons = {
+  core: { background: `radial-gradient(circle, ${T[T.length - 2]} 30%, ${T[Math.round(0.6 * (T.length - 1))]} 60%, ${T[1]} 100%)` },
+  comet: { background: `linear-gradient(to right, transparent, ${plasmaMaterials.heatGlow} 70%, ${plasmaMaterials.heatGlowCore})` },
+  catcher: { background: `radial-gradient(circle, ${plasmaMaterials.heatGlowCore} 0%, ${plasmaMaterials.heatGlow} 35%, transparent 70%)` },
+  push: { background: plasmaMaterials.heatGlow },
+};
 
 function SurfaceReading({hit, sim, plane}: {hit: HoverPoint; sim: Simulation; plane: number}) {
   const output = useRef<HTMLOutputElement>(null);
@@ -123,7 +133,7 @@ export function PlasmaExplorer({ onPowerOff, tracks, followed, feedback, onFeedb
   return <div className="plasma-explorer" data-feedback={feedback}>
     <div className="plasma-layers" role="group" aria-label="Scene layers">
       {sceneLayers.map(({ id, label, icon }) => (
-        <button type="button" key={id} title={id === 'hardware' ? 'Vessel and coils with a tokamak solenoid comparison' : undefined} aria-pressed={layers[id]}
+        <button type="button" key={id} title={id === 'hardware' ? 'Vessel and coils with a tokamak solenoid comparison' : id === 'lines' ? "The equilibrium's own field lines; a coil changes their colour (|B|), not their path" : undefined} aria-pressed={layers[id]}
           onClick={() => {
             if (id === 'lines') manualLines.current = !layers.lines;
             setLayers(current => ({ ...current, [id]: !current[id] }));
@@ -141,6 +151,14 @@ export function PlasmaExplorer({ onPowerOff, tracks, followed, feedback, onFeedb
       onHover={setHit}
       overlay={<>{hit && <SurfaceReading hit={hit} plane={slice} sim={sim}/>}{powered && layers.heat && <CoreSlice art={art} sim={sim} plane={slice} range={ranges.sliceT} />}</>}
       label={label + '. Illustrative plasma heat and optional reactor hardware'} />
+    {powered && layers.heat && (
+      <ol className="heat-story" aria-label="How the heat moves">
+        <li><span className="heat-story__icon" style={storyIcons.core} aria-hidden="true" />The middle of the plasma is the hottest part (red). The edge is the coolest (blue).</li>
+        <li><span className="heat-story__icon heat-story__icon--comet" style={storyIcons.comet} aria-hidden="true" />Glowing dots are heat. They fly out from the hot middle to the {art.diverters.items.length} catchers, {art.diverters.items[0]!.id} to {art.diverters.items.at(-1)!.id} (the divertors).</li>
+        <li><span className="heat-story__icon" style={storyIcons.catcher} aria-hidden="true" />A catcher glows brighter when it catches more heat.</li>
+        <li><span className="heat-story__icon heat-story__icon--push" style={storyIcons.push} aria-hidden="true" />If a catcher gets too hot, its magnet switches on and pushes heat round the ring to the others (dots with an arrow).</li>
+      </ol>
+    )}
     <div className="reactor-controls">
       <button type="button" className="reactor-power" data-on={powered} onClick={() => {
         if (powered) { onPowerOff(); return; }
