@@ -574,6 +574,11 @@ export const plasmaMaterials = {
   heatGlow: '#ffa94d',
   /** The bright head of a heat comet. */
   heatGlowCore: '#ffd88a',
+  /**
+   * Change in the edge field the coils make (ΔB/B₀), weaker -> no change -> stronger: purple -> grey -> orange (a diverging
+   * map; it replaces the temperature colours on the surface while the field-change layer is on, with its own colour bar).
+   */
+  fieldChange: ['#5e3c99', '#a596cc', '#8f959a', '#f3b277', '#d95f02'],
   /** The warm band of a divertor target (the old ramp's yellow, kept when the ramp widened). */
   targetWarm: '#f4c75c',
   tracer: '#fff4ca',

@@ -8,6 +8,7 @@ import type { Group, MeshBasicMaterial } from 'three';
 import { buildContent as buildTubes } from './FluxScene';
 import { buildTargets } from './divertorTargets';
 import { buildFlowArrows } from './flowArrows';
+import { fieldChangeCells, fieldChangeRange } from './fieldChange';
 import { buildReactorHardware } from './reactorHardware';
 import type { SceneModel } from './model';
 import type { HeatSceneProps, SceneContent } from '../heatfield/HeatScene';
@@ -18,9 +19,19 @@ type Three = typeof import('three');
 export const HEAT_STOPS = plasmaMaterials.temperature;
 export interface Layers {
   heat: boolean;
+  /** The coils' change in the edge field, ΔB/B₀, on the surface (replaces the temperature colours while on). */
+  field: boolean;
   hardware: boolean;
   particles: boolean;
   lines: boolean;
+}
+
+/** Toggle one scene layer. The heat map and the field change both colour the surface, so turning one on turns the other off. */
+export function toggleLayer(current: Layers, id: keyof Layers): Layers {
+  const next = { ...current, [id]: !current[id] };
+  if (id === 'field' && next.field) next.heat = false;
+  if (id === 'heat' && next.heat) next.field = false;
+  return next;
 }
 
 function heatPalette(three: Three) {
@@ -67,22 +78,38 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
   const temperature = new three.Float32BufferAttribute(new Float32Array(nTheta*nPhi),1);
   temperature.setUsage(three.DynamicDrawUsage);
   shell.setAttribute('edgeTemperature', temperature);
+  // The coils' change in the edge field, ΔB/B₀ per cell, for the field-change layer (a diverging map, ±ε).
+  const fieldChange = new three.Float32BufferAttribute(new Float32Array(nTheta*nPhi),1);
+  fieldChange.setUsage(three.DynamicDrawUsage);
+  shell.setAttribute('edgeFieldChange', fieldChange);
+  const FIELD_STOPS = plasmaMaterials.fieldChange;
+  const fieldMode = {value: false};
+  const fieldRange = {value: 0.03};
   const heatMode = {value: false};
   const heatRange = {value: new three.Vector2()};
   material.onBeforeCompile = shader => {
     shader.uniforms.showEdgeHeat = heatMode;
     shader.uniforms.edgeRange = heatRange;
     shader.uniforms.edgePalette = {value: HEAT_STOPS.map(stop => new three.Color(stop))};
-    shader.vertexShader = 'attribute float edgeTemperature; varying float vEdgeT;\n' + shader.vertexShader.replace(
-      '#include <begin_vertex>', '#include <begin_vertex>\nvEdgeT = edgeTemperature;');
-    // The palette's size comes from HEAT_STOPS, so the ramp can change length (D-038).
+    shader.uniforms.showFieldChange = fieldMode;
+    shader.uniforms.fieldRange = fieldRange;
+    shader.uniforms.fieldPalette = {value: FIELD_STOPS.map(stop => new three.Color(stop))};
+    shader.vertexShader = 'attribute float edgeTemperature; attribute float edgeFieldChange; varying float vEdgeT; varying float vEdgeDB;\n' + shader.vertexShader.replace(
+      '#include <begin_vertex>', '#include <begin_vertex>\nvEdgeT = edgeTemperature;\nvEdgeDB = edgeFieldChange;');
+    // The palettes' sizes come from the token lists, so a ramp can change length (D-038).
     const last = HEAT_STOPS.length - 1;
-    shader.fragmentShader = `varying float vEdgeT; uniform bool showEdgeHeat; uniform vec2 edgeRange; uniform vec3 edgePalette[${last + 1}];\n` +
+    const lastF = FIELD_STOPS.length - 1;
+    shader.fragmentShader = `varying float vEdgeT; varying float vEdgeDB; uniform bool showEdgeHeat; uniform bool showFieldChange; uniform float fieldRange; uniform vec2 edgeRange; uniform vec3 edgePalette[${last + 1}]; uniform vec3 fieldPalette[${lastF + 1}];\n` +
       shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
       if (showEdgeHeat) {
         float t = ${last}.0 * clamp((vEdgeT - edgeRange.x)/(edgeRange.y - edgeRange.x),0.0,1.0);
         int i = min(${last - 1},int(floor(t)));
         diffuseColor.rgb = mix(edgePalette[i],edgePalette[i+1],t-float(i));
+      }
+      if (showFieldChange) {
+        float u = ${lastF}.0 * clamp(0.5 + 0.5 * vEdgeDB / fieldRange, 0.0, 1.0);
+        int f = min(${lastF - 1},int(floor(u)));
+        diffuseColor.rgb = mix(fieldPalette[f],fieldPalette[f+1],u-float(f));
       }`);
   };
   material.transparent = true;
@@ -153,8 +180,8 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
     }
     const time = frame.sim.time;
     const fill = three.MathUtils.smoothstep(time, 0.45, 3.6);
-    material.opacity = 0.12 + 0.82 * fill;
-    content.surface.visible = layers.heat;
+    material.opacity = layers.field ? 0.94 : 0.12 + 0.82 * fill;
+    content.surface.visible = layers.heat || layers.field;
     cap.visible = layers.heat && time > 0;
     core.visible = layers.heat && time > 0 && fill < 1;
     sample.children[0]!.visible = !layers.heat;
@@ -177,7 +204,13 @@ export function mountPlasmaLayers(three: Three, content: SceneContent, art: Heat
       shell.setDrawRange(j * nTheta * 6, Math.round(nPhi * 0.72) * nTheta * 6);
       lastPlane = j;
     }
-    heatMode.value = layers.heat;
+    heatMode.value = layers.heat && !layers.field; // exclusive in the UI; field wins if both are ever set
+    fieldMode.value = layers.field;
+    if (layers.field) {
+      fieldChangeCells(frame.sim, fieldChange.array as Float32Array);
+      fieldChange.needsUpdate = true;
+      fieldRange.value = fieldChangeRange(frame.sim)[1];
+    }
     if (layers.heat) {
       temperature.array.set(frame.sim.state.T);
       temperature.needsUpdate = true;

@@ -7,6 +7,10 @@
 
 ## Current state
 
+### 2026-11-26: W7-X view — field change on the 3D surface (D-040)
+- New "Field change" layer: ΔB/B₀ on the LCFS (purple weaker, grey none, orange stronger; tidy auto range), with a colour
+  bar and a plain-words line. Same numbers as the "Magnetic field change" card (tested).
+
 ### 2026-11-26: W7-X view — power moved between divertors (D-039)
 - New "Power between divertors" panel and 3D arrows: each divertor's share and its change against coils-off, and who
   sends to whom (`transfer.ts`, exact for one coil, conserved). The D-038 explorer shader/glow palette regressions are fixed.

@@ -6,6 +6,7 @@ import { usePlayback, usePrefersReducedMotion } from '../heatfield/playback';
 import { plasmaMaterials } from '../../design/tokens';
 import { LogTicks } from '../heatfield/LogTicks';
 import { PowerFlow } from './PowerFlow';
+import { fieldChangeRange } from './fieldChange';
 import { ARROWS, buildSceneGeometry, toMK } from '../heatfield/scene';
 import { Simulation } from '../heatfield/sim';
 import type { HeatfieldArtifact } from '../heatfield/types';
@@ -16,7 +17,7 @@ import { heatedRanges, scenarioHeating } from './heatedEdge';
 import type { ParticleTracks } from './particleTracks';
 import { CoreSlice } from './CoreSlice';
 import type { SceneModel } from './model';
-import { HEAT_STOPS, mountPlasmaLayers, type Layers } from './plasmaLayers';
+import { HEAT_STOPS, mountPlasmaLayers, toggleLayer, type Layers } from './plasmaLayers';
 
 interface Props {
   onPowerOff: () => void;
@@ -39,10 +40,11 @@ interface Props {
 const sceneLayers: { id: keyof Layers; label: string; icon: string }[] = [
   { id: 'heat', label: 'Heat map', icon: 'M12 3c1 4 6 6 6 11a6 6 0 0 1-12 0c0-2 1-4 3-6 0 3 1 4 2 4 2-3 2-6 1-9Z M12 15c-1 1-2 2-2 3a2 2 0 0 0 4 0c0-1-1-2-2-3Z' },
   { id: 'particles', label: 'Plasma particles', icon: 'M6 12a2 2 0 1 0 4 0 2 2 0 1 0-4 0 M14 6a2 2 0 1 0 4 0 2 2 0 1 0-4 0 M13 18a2 2 0 1 0 4 0 2 2 0 1 0-4 0' },
+  { id: 'field', label: 'Field change', icon: 'M4 12h3l2-6 3 12 3-9 2 3h3 M12 3v2 M12 19v2' },
   { id: 'lines', label: 'Magnetic field lines', icon: 'M3 10c3 0 3-5 8-5s5 5 10 5 M3 14c3 0 3-5 8-5s5 5 10 5 M3 18c3 0 3-5 8-5s5 5 10 5' },
   { id: 'hardware', label: 'W7-X hardware', icon: 'M3 12c0-4 4-7 9-7s9 3 9 7-4 7-9 7-9-3-9-7Z M8 12c0-2 2-3 4-3s4 1 4 3-2 3-4 3-4-1-4-3Z M6 7l3 3m6 4 3 3m0-10-3 3m-6 4-3 3' },
 ];
-const initial: Layers = { heat: true, particles: true, lines: false, hardware: false };
+const initial: Layers = { heat: true, field: false, particles: true, lines: false, hardware: false };
 
 /** A temperature scale: the model's range (keV) read in megakelvin, linear (D-038), with ticks under the bar. */
 function Scale({ label, range, gradient }: { label: string; range: readonly number[]; gradient: string }) {
@@ -59,7 +61,24 @@ const storyIcons = {
   comet: { background: `linear-gradient(to right, transparent, ${plasmaMaterials.heatGlow} 70%, ${plasmaMaterials.heatGlowCore})` },
   catcher: { background: `radial-gradient(circle, ${plasmaMaterials.heatGlowCore} 0%, ${plasmaMaterials.heatGlow} 35%, transparent 70%)` },
   push: { background: plasmaMaterials.heatGlow },
+  field: { background: `linear-gradient(to right, ${plasmaMaterials.fieldChange.join(', ')})` },
 };
+
+/** The field-change colour bar: ΔB/B_VMEC from −ε (weaker, purple) through 0 (grey) to +ε (stronger, orange), in percent. */
+function FieldScale({ sim }: { sim: Simulation }) {
+  const [bound, setBound] = useState(() => fieldChangeRange(sim)[1]);
+  useEffect(() => {
+    const update = () => setBound(fieldChangeRange(sim)[1]);
+    update();
+    return sim.subscribe(update);
+  }, [sim]);
+  const hi = bound;
+  const gradient = 'linear-gradient(to right,' + plasmaMaterials.fieldChange.join(',') + ')';
+  return <div className="plasma-scale" data-testid="field-scale"><span>Field change</span>
+    <span className="plasma-scale__bar"><i style={{ background: gradient }} />
+      <span className="lab-logticks lab-num" aria-hidden="true"><span style={{ left: '0%', transform: 'none' }}>weaker</span><span style={{ left: '50%' }}>0</span><span style={{ left: '100%', transform: 'translateX(-100%)' }}>stronger</span></span></span>
+    <span>−{(100 * hi).toFixed(1)}% to +{(100 * hi).toFixed(1)}% ΔB/B<sub>VMEC</sub> (model)</span></div>;
+}
 
 function SurfaceReading({hit, sim, plane}: {hit: HoverPoint; sim: Simulation; plane: number}) {
   const output = useRef<HTMLOutputElement>(null);
@@ -133,10 +152,10 @@ export function PlasmaExplorer({ onPowerOff, tracks, followed, feedback, onFeedb
   return <div className="plasma-explorer" data-feedback={feedback}>
     <div className="plasma-layers" role="group" aria-label="Scene layers">
       {sceneLayers.map(({ id, label, icon }) => (
-        <button type="button" key={id} title={id === 'hardware' ? 'Vessel and coils with a tokamak solenoid comparison' : id === 'lines' ? "The equilibrium's own field lines; a coil changes their colour (|B|), not their path" : undefined} aria-pressed={layers[id]}
+        <button type="button" key={id} title={id === 'hardware' ? 'Vessel and coils with a tokamak solenoid comparison' : id === 'lines' ? "The equilibrium's own field lines; a coil changes their colour (|B|), not their path" : id === 'field' ? 'Where the coils make the edge field weaker (purple) or stronger (orange)' : undefined} aria-pressed={layers[id]}
           onClick={() => {
             if (id === 'lines') manualLines.current = !layers.lines;
-            setLayers(current => ({ ...current, [id]: !current[id] }));
+            setLayers(current => toggleLayer(current, id));
           }}>
           <svg className="plasma-layers__icon" viewBox="0 0 24 24" aria-hidden="true"><path d={icon} /></svg>
           <span>{label}</span>
@@ -151,6 +170,13 @@ export function PlasmaExplorer({ onPowerOff, tracks, followed, feedback, onFeedb
       onHover={setHit}
       overlay={<>{hit && <SurfaceReading hit={hit} plane={slice} sim={sim}/>}{powered && layers.heat && <CoreSlice art={art} sim={sim} plane={slice} range={ranges.sliceT} />}</>}
       label={label + '. Illustrative plasma heat and optional reactor hardware'} />
+    {layers.field && (
+      <p className="heat-story" data-testid="field-story">
+        <span className="heat-story__icon" style={storyIcons.field} aria-hidden="true" />
+        Field change (model, illustrative coil response): where a divertor's magnet (coil) is on, the edge field gets a little weaker (purple) or stronger
+        (orange) than the equilibrium's. The coils swing back and forth, so the patches pulse; grey means no change.
+      </p>
+    )}
     {powered && layers.heat && (
       <ol className="heat-story" aria-label="How the heat moves">
         <li><span className="heat-story__icon" style={storyIcons.core} aria-hidden="true" />The middle of the plasma is the hottest part (red). The edge is the coolest (blue).</li>
@@ -207,6 +233,7 @@ export function PlasmaExplorer({ onPowerOff, tracks, followed, feedback, onFeedb
             onClick={() => setPlates(v => v.map((on, i) => i === k ? !on : on))}><span>{id} <svg className="plate-warning" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 10 18H2Z"/><path d="M12 8v5m0 3v1"/></svg></span> <output hidden={!temperaturesVisible} ref={el => { temperatures.current[k] = el; }} aria-label={id + ' peak tile temperature'} aria-live="off" /></button>)}
         </div>
         <div className="plasma-scales">
+          {layers.field && <FieldScale sim={sim} />}
           {layers.heat && <Scale label="Edge heat" range={ranges.lcfsT} gradient={heatGradient} />}
           {layers.heat && <Scale label="Core slice" range={ranges.sliceT} gradient={heatGradient} />}
         </div>

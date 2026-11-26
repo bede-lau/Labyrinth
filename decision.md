@@ -569,3 +569,21 @@ panel). Also fixed here, regressions from D-038 found while wiring this: the exp
   - There are 1–3 well-spaced comets per side, more where the share is larger.
   - The path stays schematic: real field lines also wind round poloidally.
 - **Glows are bigger** (22 px heads), and the key's wording is updated to match.
+
+## D-040 · W7-X view: the coils' field change on the 3D surface (maintainer, 2026-11-26)
+**Context.** The owner asked to see the change in the magnetic field on the display itself, not only in the
+"Magnetic field change" card.
+
+**Decision.** A "Field change" layer colours the LCFS by ΔB/B_VMEC = (B − B_VMEC)/B_VMEC per cell (`fieldChange.ts`). These
+are the model's own |B| with the coil drive, the same numbers the card plots along the strike line (tested).
+- **Colours:** a diverging map, purple (weaker) → neutral grey (no change) → orange (stronger), token
+  `plasmaMaterials.fieldChange`. While the layer is on, this map replaces the temperature colours on the surface.
+- **Scale:** symmetric, the smallest tidy bound (0.1 %, 0.2 %, 0.5 %, 1 %, 2 %, 5 %, 10 %) at or above the largest change
+  the coils that are on can make, ε·max Σ c_k h_k. It is fitted to the applied coils, not to the instantaneous drive, so
+  it holds steady while the coils hold and the patches visibly pulse. The bar and the paragraph say "model".
+- **Key:** a plain-words line says that the patches pulse because the coil drive oscillates.
+- **One map at a time:** the heat map and the field change both colour the surface, so turning one on turns the other
+  off (`toggleLayer`, tested). The owner asked for this: the two overlapped.
+
+**Consequences.** The change is the model's illustrative coil perturbation (ε, Gaussian envelopes around each divertor),
+not a field from real coil currents; the field lines still do not move (D-039 addendum 2).

@@ -25,7 +25,7 @@ test('five numbered tracers follow the live readout and the sectional solenoid f
   const content = buildContent(THREE,geom,'light');
   const tube = geometry.tubes.find(t=>t.id==='bean')!;
   const response = createTubeField(art,sim,tube,geometry.surface.rho);
-  const layers = {heat:true,hardware:true,particles:true,lines:false};
+  const layers = {heat:true,field:false,hardware:true,particles:true,lines:false};
   const tracks = createParticleTracks(art,sim);
   const update = mountPlasmaLayers(THREE,content,art,buildSceneModel(geometry,'bean','light'),response,'light',tracks,()=>layers);
   const frame:HeatSceneProps = {model,sim,geom,ranges:colourRanges(art,model,sim.state.T),theme:'light',
