@@ -457,3 +457,16 @@ two tuned numbers with no material behind them.
    radiation); the heat sink is a resistance without heat capacity; the material fits are approximate.
 **Consequences.** Artifact and goldens regenerated natively; tasks 08, 09 and 10 stay reopened until re-verified;
 `verify.sh` not run (WSL skipped by the owner).
+
+## D-034 · Heat model version 5: the target strip deposits exactly its divertor's power (maintainer, 2026-11-26)
+**Context.** Versions 3–4 conserved energy up to the target load q_t but drew the strip profile with a fixed width σ_θ,
+so the strip's integral was not the divertor's power (a stated caveat). The owner asked for most of the model to become
+physical.
+**Decision.** Step 9 becomes Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ/b_k): a flux tube's cross-section shrinks as 1/B, so
+the footprint narrows with the compression b_k. With each radian of strip A_wet/(√(2π)·σ_θ) of target area, the strip
+deposits exactly P_k (tested to the θ grid's sum accuracy, ~4e-5). No parameter changes. Coils off at 3 s is unchanged
+(the peak load is the same); all coils on from 0 s: D1 499, D2 443, D3 425, D4 497 °C (narrower strips are spread better
+by the sweep). Remaining illustrative inputs, stated in the artifact: footprint widths σ_θ, σ_φ; the coil perturbation
+ε, sweep amplitude, frequency and envelopes (no validated coil response, PRD later milestone); the LCFS map and the
+cross-section core profile (illustrations).
+**Consequences.** Artifact regenerated natively; verify.sh not run (WSL skipped).

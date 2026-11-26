@@ -7,6 +7,11 @@
 
 ## Current state
 
+### 2026-11-26: heat model version 5 — the strip deposits exactly its power (D-034)
+- Step 9: the strip narrows as 1/B (σ_θ/b_k), so each divertor's strip deposits exactly its power; all coils on now
+  499/443/425/497 °C, coils off unchanged. Checks (native): renderer 1,739 tests, `tsc` clean; backend 25/26 (Windows path).
+  Review: APPROVED on the second pass (first: stale target-load equation, grid-sampled peak caveat, doc labels).
+
 ### 2026-11-26: heat model version 4 — conducting CFC tiles (D-033)
 The owner asked for the physical tile next and for most of the model to become physical, deciding without asking.
 - **Tile v4** (MODEL.md step 11, `model.py`, `model.ts`, contract, artifact): 6 finite-volume cells through 6 mm of

@@ -279,3 +279,17 @@ test('H8 the CFC tile conducts heat into the water and conserves energy every st
   // the steady surface rises with the load, and a hotter limit needs more load
   expect(one.steadySurface(12)).toBeGreaterThan(one.steadySurface(10));
 });
+
+test('H8 each strip deposits exactly its divertor power: it narrows as 1/B (MODEL.md step 9, version 5)', () => {
+  const areaPerRadian = P.wettedArea / (Math.sqrt(2 * Math.PI) * P.sigmaTheta);
+  for (const coils of [OFF, [1, 1, 1, 1]]) {
+    const st = model.advance(model.initialState(), coils, 137);
+    const q = model.stripLoads(st, coils);
+    const { shares } = model.edge(st.n, coils);
+    for (let k = 0; k < model.nDiverters; k++) {
+      let sum = 0;
+      for (let i = 0; i < model.nTheta; i++) sum += q[k * model.nTheta + i]!;
+      expect(Math.abs((sum * model.dTheta * areaPerRadian) / shares[k]! - 1)).toBeLessThan(1e-4);
+    }
+  }
+});

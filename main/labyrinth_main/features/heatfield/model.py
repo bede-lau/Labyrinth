@@ -238,10 +238,12 @@ class Model:
         """Step 8: peak target heat flux q_t,k = P_k b_k / A_wet (MW/m^2)."""
         return shares * b / self.inp.params["wettedArea"]
 
-    def strip_loads(self, q_t: np.ndarray, a: np.ndarray) -> np.ndarray:
-        """Step 9: Q_k[i] = q_t,k * g(wrap(theta_i - theta_s,k), sigma_theta) (MW/m^2); (4, nTheta)."""
+    def strip_loads(self, q_t: np.ndarray, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+        """Step 9: Q_k[i] = q_t,k * g(wrap(theta_i - theta_s,k), sigma_theta / b_k) (MW/m^2); (4, nTheta). The flux tube
+        narrows as 1/B, so the strip deposits exactly P_k: sum_i Q_k[i] dtheta * A_wet / (sqrt(2 pi) sigma_theta)."""
         ts = self.strike_lines(a)
-        return np.stack([q_t[k] * gauss(wrap(self.theta - ts[k]), self.inp.params["sigmaTheta"]) for k in range(N_DIVERTERS)])
+        s = self.inp.params["sigmaTheta"]
+        return np.stack([q_t[k] * gauss(wrap(self.theta - ts[k]), s / b[k]) for k in range(N_DIVERTERS)])
 
     def two_point(self, q_t: float) -> tuple[float, float]:
         """Step 10: (T_u, T_t) in keV from the peak target load q_t (MW/m^2): q_par = q_t MW / sin(alpha),
@@ -269,9 +271,10 @@ class Model:
             return hit
         a = self.coil_drive(coils, self.time(n))
         B = self.field(a)
-        q_t = self.target_loads(self.power_shares(), self.compression(B, a))
+        b = self.compression(B, a)
+        q_t = self.target_loads(self.power_shares(), b)
         tp = [self.two_point(float(q)) for q in q_t]
-        out = {"a": a, "B": B, "q_t": q_t, "Tu": np.array([u for u, _ in tp]), "Tt": np.array([t for _, t in tp])}
+        out = {"a": a, "B": B, "b": b, "q_t": q_t, "Tu": np.array([u for u, _ in tp]), "Tt": np.array([t for _, t in tp])}
         if len(self._cache) > 64:
             self._cache.clear()
         self._cache[key] = out
@@ -307,7 +310,7 @@ class Model:
         """One step n -> n+1: tiles from the loads at t_n (step 11); T of the new state at t_(n+1) (step 12)."""
         p = self.inp.params
         sol = self.solve(st.n, coils)
-        loads = self.strip_loads(sol["q_t"], sol["a"])
+        loads = self.strip_loads(sol["q_t"], sol["a"], sol["b"])
         slab, tiles = self.conduct(st.slab, loads)  # 11
         return State(st.n + 1, self.lcfs_temperature(st.n + 1, coils), tiles, slab)
 
@@ -353,7 +356,7 @@ class Model:
     def heat_flux_loads(self, st: State, coils: Sequence[int]) -> np.ndarray:
         """Q_k[i] from the coils at the state's time t_n (steps 1-9); (4, nTheta)."""
         sol = self.solve(st.n, coils)
-        return self.strip_loads(sol["q_t"], sol["a"])
+        return self.strip_loads(sol["q_t"], sol["a"], sol["b"])
 
     def diagnostics(self, st: State, coils: Sequence[int]) -> dict:
         return {

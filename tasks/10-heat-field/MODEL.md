@@ -1,4 +1,4 @@
-# Edge heat model, version 4: two-point scrape-off layer, energy conserved, conducting CFC tiles (D-027, D-031–D-033)
+# Edge heat model, version 5: two-point scrape-off layer, energy conserved, conducting CFC tiles (D-027, D-031–D-034)
 
 **What this is.** A reduced model of the owner's loop (heat map → predicted heat load → change the magnetic field →
 new heat map) on the **real** W7-X geometry and |B| of `wout_w7x_kjm.nc`. Version 3 (D-032) replaces version 2's 2D
@@ -104,8 +104,8 @@ Let `wrap(x) = x − 2π·floor(x/(2π) + 0.5)` and `g(x, σ) = exp(−x²/(2σ�
 7. Field compression at the strike line: j_k = round(φ_k/dφ) mod nPhi; x = θ_s,k/dθ, i₀ = floor(x), w = x − i₀;
    b_k = ((1 − w)·B[j_k, i₀] + w·B[j_k, i₀+1])/B_0 (indices mod nTheta).
 8. Peak target load: q_t,k = P_k·b_k/A_wet (MW/m²): a flux tube's cross-section shrinks as 1/B.
-9. Strip load: Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ) (MW/m²). The profile keeps its width σ_θ, so its integral is
-   not the divertor's power; its peak is the wetted-area load.
+9. Strip load: Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ/b_k) (MW/m²). The flux tube narrows as 1/B, so with each
+   radian of strip A_wet/(√(2π)·σ_θ) of target area the strip deposits exactly P_k (version 5, D-034).
 10. Two-point model (T in keV): q_∥ = q_t,k·MW/sin α (W/m²; if q_∥ ≤ 0 then T_u = T_t = 0); X = ν·q_∥·L_c/κ_0;
     T_u = X^(1/ν); then N_2pt times: c = 2q_∥/(γ·n_u·keV·T_u), T_t = m_i·amu·c²/(2·keV), T_u = (T_t^ν + X)^(1/ν).
     This solves Spitzer conduction T_u^ν = T_t^ν + ν q_∥ L_c/κ_0 (ν = 7/2), the sheath q_∥ = γ n_t e T_t c_s(T_t),
@@ -122,7 +122,7 @@ Let `wrap(x) = x − 2π·floor(x/(2π) + 0.5)` and `g(x, σ) = exp(−x²/(2σ�
     sink plus water film a thermal resistance R_sink at the back; energy is conserved cell by cell.
 12. The new state's LCFS map at t_(n+1) with the same coils: T_u[c] = Σ_k s_k[j]·T_u,k;
     T[c] = (max(0, 1 − Σ_k g_k[c])·T_u[c]^ν + Σ_k g_k[c]·T_t,k^ν)^(1/ν): upstream away from the divertors, the target
-    temperature at each footprint centre, interpolated in T^ν as along a conducting field line. This map only shows
+    temperature at each footprint centre, interpolated in T^ν as along a conducting field line. The footprint g_k keeps the width σ_θ (the strip of step 9 narrows; the map is an illustration). This map only shows
     where the two-point drop lies; it is not a 2D transport solution.
 
 Stability: the only explicit update is step 11, monotone when Δt·G_max/(ρ·c_ref·dz) ≤ 1 with G_max the larger of an
@@ -137,7 +137,9 @@ balance to 1e-6 at the operating loads (loads beyond ~50 MW/m² would not conver
 
 - `meanT` = arithmetic mean of T over all cells.
 - `peakTileC[k]` = max_i Tt_k[i] (the surface temperature).
-- `peakHeatFlux[k]` = max_i Q_k[i] at t_n with the coils of step n (steps 1–9).
+- `peakHeatFlux[k]` = max_i Q_k[i] at t_n with the coils of step n (steps 1–9). The narrowed strip (σ_θ/b_k ≈ 0.1 rad)
+  is finer than dθ ≈ 0.13 rad, so while a strike line sits between nodes this grid-sampled peak reads up to ~20 % below
+  q_t,k; the deposited power is unaffected.
 - Heat-flow vector (renderer only, not golden): conduction along the field lines, F_φ = −T^(ν−1)·(T₊ − T₋)/(2dφ) with
   T± the field-line neighbours (pitch ι), F_θ = ι·F_φ, in angle space; mapped to 3D with the grid tangents.
 
@@ -167,10 +169,10 @@ within its stated range. Requirements, checked by tests and recorded in `model.l
   `tileLimit` at step 3000.
 - The stability condition above holds.
 
-Outcome (D-033): `Pheat` 7.5 MW, `fRad` 0.3, `wettedArea` 0.1 m². The field compression at the strike lines is ~1.23
+Outcome (D-033/D-034): `Pheat` 7.5 MW, `fRad` 0.3, `wettedArea` 0.1 m². The field compression at the strike lines is ~1.23
 at D1 and D4 and ~1.02 at D2 and D3, so with every coil off at 3 s the peak loads are 16.2, 13.5, 13.4, 16.1 MW/m²
 (above the 10 MW/m² design load of the W7-X targets) and the tile surfaces D1 1346, D2 1089, D3 1074, D4 1337 °C; all
-coils on from 0 s: D1 549, D2 451, D3 427, D4 545 °C. The two-point model gives T_u ≈ 0.21–0.22 keV upstream and
+coils on from 0 s: D1 499, D2 443, D3 425, D4 497 °C (version 5's narrower strip; version 4: 549/451/427/545). The two-point model gives T_u ≈ 0.21–0.22 keV upstream and
 T_t ≈ 0.034–0.045 keV at the targets. At 6 MW (D1 1035 °C) or with a larger wetted area no diverter reaches the limit,
 so this is a high-power case, and the model says so. The tile values follow the W7-X target elements: NB31 CFC ~6 mm
 thick on a CuCrZr heat sink, 30 °C inlet water, designed for 10 MW/m². R_sink is an effective lumped value, not

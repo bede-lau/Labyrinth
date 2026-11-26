@@ -1,4 +1,4 @@
-// The edge heat model of tasks/10-heat-field/MODEL.md (version 4, D-033: two-point scrape-off layer, energy
+// The edge heat model of tasks/10-heat-field/MODEL.md (version 5, D-034: two-point scrape-off layer, energy
 // conserved, CFC tiles conducting through their depth), ported from the Python reference (main/), step by step. Pure TypeScript on Float64Arrays: no DOM, no
 // three, no React.
 //
@@ -253,7 +253,7 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
   };
 
   /** Steps 1, 4, 6–10 at t_n for these coils (the last few are cached). */
-  const cache = new Map<string, { a: Float64Array; strike: Float64Array; edge: EdgeSolution }>();
+  const cache = new Map<string, { a: Float64Array; strike: Float64Array; b: Float64Array; edge: EdgeSolution }>();
   const solve = (n: number, coils: Coils) => {
     const key = n + ':' + Array.from({ length: nDiv }, (_, k) => coils[k] ?? 0).join(',');
     const hit = cache.get(key);
@@ -265,6 +265,7 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     const qT = new Float64Array(nDiv);
     const Tu = new Float64Array(nDiv);
     const Tt = new Float64Array(nDiv);
+    const bK = new Float64Array(nDiv);
     for (let k = 0; k < nDiv; k++) {
       // Step 7: |B| at the strike line on plane j_k, linear in θ between grid nodes.
       const x = strike[k]! / dTheta;
@@ -272,22 +273,24 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
       const fr = x - i0;
       const row = jK[k]! * nTheta;
       const b = ((1 - fr) * fieldAt(a, row + mod(i0, nTheta)) + fr * fieldAt(a, row + mod(i0 + 1, nTheta))) / p.B0;
+      bK[k] = b;
       qT[k] = (shares[k]! * b) / p.wettedArea; // 8
       [Tu[k], Tt[k]] = twoPoint(qT[k]!); // 10
     }
-    const out = { a, strike, edge: { shares, qT, Tu, Tt } };
+    const out = { a, strike, b: bK, edge: { shares, qT, Tu, Tt } };
     // A small bound (any will do; the grid's θ count avoids a numeric literal, H8): a step reads t_n and t_(n+1) only.
     if (cache.size > nTheta) cache.clear();
     cache.set(key, out);
     return out;
   };
 
-  /** Step 9: Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ). */
+  /** Step 9: Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ/b_k): the flux tube narrows as 1/B, the strip deposits P_k. */
   const loadsInto = (s: ReturnType<typeof solve>, out: Float64Array) => {
     for (let k = 0; k < nDiv; k++) {
       const ts = s.strike[k]!;
       const q = s.edge.qT[k]!;
-      for (let i = 0; i < nTheta; i++) out[k * nTheta + i] = q * gauss(wrap(theta[i]! - ts), p.sigmaTheta);
+      const width = p.sigmaTheta / s.b[k]!;
+      for (let i = 0; i < nTheta; i++) out[k * nTheta + i] = q * gauss(wrap(theta[i]! - ts), width);
     }
     return out;
   };

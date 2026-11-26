@@ -260,7 +260,7 @@ def test_H3_four_schematic_diverters_at_quarter_turns():
 
 
 # ---- H4: the reference model ----------------------------------------------------------------------------------------
-MODEL_MD_TABLE = {  # tasks/10-heat-field/MODEL.md "Parameters", version 4 (Pheat and wettedArea set the operating point)
+MODEL_MD_TABLE = {  # tasks/10-heat-field/MODEL.md "Parameters", version 5 (Pheat and wettedArea set the operating point)
     "Tcore0": (3.0, "keV"), "rhoBlend": (0.7, "–"), "B0": (2.5, "T"), "sigmaPhi": (0.06, "rad"),
     "sigmaTheta": (0.12, "rad"), "sweepAmplitude": (0.30, "rad"), "sweepFrequency": (2.0, "Hz"), "epsilon": (0.03, "–"),
     "sigmaCoilPhi": (0.20, "rad"), "sigmaCoilTheta": (0.60, "rad"), "Pheat": (7.5, "MW"), "fRad": (0.3, "–"),
@@ -351,11 +351,12 @@ def _literal_step(inp: model.Inputs, slab: np.ndarray, n: int, coils) -> tuple[n
                 c = 2 * q_par / (p["sheathGamma"] * p["nSep"] * p["keV"] * tu)
                 tt = p["ionMass"] * p["amu"] * c * c / (2 * p["keV"])
                 tu = (tt ** nu + X) ** (1 / nu)
-            out.append((ts[k], q_t, tu, tt))
+            out.append((ts[k], q_t, tu, tt, b))
         return out
 
     now = solve(n)
-    Q = np.array([[now[k][1] * g(wrap(th[i] - now[k][0]), p["sigmaTheta"]) for i in range(n_t)] for k in range(4)])  # 9
+    Q = np.array([[now[k][1] * g(wrap(th[i] - now[k][0]), p["sigmaTheta"] / now[k][4]) for i in range(n_t)]
+                  for k in range(4)])  # 9
     n_z = int(p["tileCells"])
     dz = p["tileThickness"] / n_z
 
@@ -452,6 +453,11 @@ def test_H4_energy_is_conserved_power_in_equals_power_on_the_targets():
             b = m.compression(sol["B"], sol["a"])
             # what lands on the wetted area (de-compressed to B_0) is exactly the divertor's power
             np.testing.assert_allclose(sol["q_t"] * p["wettedArea"] / b, shares, rtol=1e-12)
+            # the strip deposits exactly that power: it narrows as 1/B, each radian of strip is A_wet/(sqrt(2pi) s_theta)
+            Q = m.strip_loads(sol["q_t"], sol["a"], sol["b"])
+            area_per_rad = p["wettedArea"] / (math.sqrt(TAU) * p["sigmaTheta"])
+            # (a grid sum of the Gaussian: ~4e-5 off its integral at the narrowest width, sigma_theta/1.23 < dtheta)
+            np.testing.assert_allclose(Q.sum(axis=1) * m.dtheta * area_per_rad, shares, rtol=1e-4)
     # no heating, no load and no plasma: the tiles stay at the coolant temperature
     cold = model.Model(inp.with_params(Pheat=0.0))
     _, st = model.run(cold, model.ALL_OFF, [200])
@@ -639,7 +645,7 @@ def test_H5_regime_requirements_hold():
 
 def test_H5_model_text_states_what_the_model_is():
     m = built()["model"]
-    assert m["version"] == 4 and m["name"] and m["summary"]
+    assert m["version"] == 5 and m["name"] and m["summary"]
     ids = [e["id"] for e in m["equations"]]
     assert ids == ["power", "target-load", "two-point", "lcfs-map", "field", "strike-line", "footprint", "tiles"]
     assert all(e["text"] and e["meaning"] for e in m["equations"])

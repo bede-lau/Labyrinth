@@ -20,8 +20,8 @@ SCHEMA = "heatfield.schema.json"
 RUNTIME = "not recorded (artifact is byte-deterministic; no wall-clock values are stored)"
 MODEL_SPEC = "tasks/10-heat-field/MODEL.md"
 
-MODEL_NAME = "Two-point scrape-off layer and conducting CFC tiles, energy conserved (MODEL.md version 4)"
-MODEL_VERSION = 4
+MODEL_NAME = "Two-point scrape-off layer and conducting CFC tiles, energy conserved (MODEL.md version 5)"
+MODEL_VERSION = 5
 SUMMARY = (
     "Edge heat model on the last closed flux surface (LCFS) of the real W7-X VMEC equilibrium. A fixed heating power "
     "(7.5 MW, 30 % radiated) crosses the LCFS and leaves through four schematic divertors: each takes the power of its "
@@ -43,9 +43,10 @@ EQUATIONS = [
                 "is not radiated leaves through the divertors, each taking the share of its toroidal sector; the "
                 "two-point model below turns each share into the target load and the edge temperatures."},
     {"id": "target-load",
-     "text": "q_t,k = P_k·(B_k/B_0)/A_wet,  Q_k(θ) = q_t,k·g(θ − θ_s,k(t), σ_θ)",
+     "text": "q_t,k = P_k·(B_k/B_0)/A_wet,  Q_k(θ) = q_t,k·g(θ − θ_s,k(t), σ_θ/b_k),  b_k = B_k/B_0",
      "meaning": "Peak heat flux on target k (MW/m²): its power on the wetted area, compressed with |B| at the strike "
-                "line (a flux tube's cross-section shrinks as 1/B); spread along the tile strip around the strike line."},
+                "line (a flux tube's cross-section shrinks as 1/B); spread along the tile strip around the strike line, "
+                "narrowed as 1/B, so the strip deposits exactly P_k."},
     {"id": "two-point",
      "text": "q_∥ = q_t/sin α,  T_u^ν = T_t^ν + ν·q_∥·L_c/κ_0  (ν = 7/2),  q_∥ = γ·n_t·e·T_t·c_s(T_t),  2·n_t·T_t = n_u·T_u",
      "meaning": "The two-point model of the scrape-off layer: Spitzer conduction along the connection length L_c sets the "
@@ -90,7 +91,7 @@ def discretization(stability: float) -> str:
         "(6) s_k[j] = G_k[j]/Σ_m G_m[j], G_k[j] = g(wrap(φ_j − φ_k), π/N_div), P_k = P_heat·(1 − f_rad)·mean_c s_k (MW); "
         "(7) j_k = round(φ_k/dφ) mod nPhi, x = θ_s,k/dθ, i₀ = floor(x), w = x − i₀, "
         "B_k = (1 − w)·B[j_k, i₀] + w·B[j_k, i₀+1], b_k = B_k/B_0; (8) q_t,k = P_k·b_k/A_wet (MW/m²); "
-        "(9) Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ); (10) q_∥ = q_t,k·MW/sin α (W/m²; none: T_u = T_t = 0), "
+        "(9) Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ/b_k); (10) q_∥ = q_t,k·MW/sin α (W/m²; none: T_u = T_t = 0), "
         "X = ν·q_∥·L_c/κ_0, T_u = X^(1/ν), then N_2pt times: c = 2·q_∥/(γ·n_u·keV·T_u), T_t = m_i·amu·c²/(2·keV), "
         "T_u = (T_t^ν + X)^(1/ν) (keV). One step n → n+1: (11) every strip cell k, i holds N_z tile cells "
         "S[z] (°C, z = 0 at the surface), dz = d/N_z, k(T) = k_ref/(1 + (T − T_ref)/T_k), "
@@ -144,9 +145,10 @@ def limitations(reg: dict, params: dict) -> str:
         "simulation (this repo holds no measured or simulated W7-X temperature, divertor-load or coil-response data). "
         "The geometry and |B| are real (VMEC wout_w7x_kjm.nc); temperatures, heat fluxes and tile temperatures are model "
         "output. Energy is conserved by construction: the power on the targets is the heating power less the radiated "
-        "fraction; the wetted width is taken to shrink as 1/B with the compression, but the drawn strip profile keeps "
-        "its width σ_θ, so its integral is not the divertor's power (its peak is the wetted-area load; every θ cell "
-        "of the strip heats its own tile column). "
+        "fraction, and the target strip narrows as 1/B with the compression so that it deposits exactly its divertor's "
+        "power (each radian of strip is A_wet/(√(2π)·σ_θ) of target area). The narrowed strip (σ_θ/b_k ≈ 0.1 rad) is "
+        "finer than the θ grid (0.13 rad): while a strike line sits between nodes the sampled peak heat flux reads up "
+        "to ~20 % below q_t (the deposited power is unaffected). The LCFS footprint keeps the width σ_θ (illustration). "
         "The two-point model is a textbook simplification: no volume losses along the field line other than "
         "the single radiated fraction, no momentum or particle losses (no detachment), electrons only in the conduction "
         "and T_e = T_i at the sheath; the iteration is run a fixed number of times, converged while the scrape-off layer "
