@@ -54,11 +54,10 @@ export function startupSimulation(art: HeatfieldArtifact) {
 }
 
 /**
- * Heating power of the plasma explorer's scenario relative to the model's nominal P_heat (6 MW): a high-power phase of
- * 7.5 MW on average, modulated between about 6.6 and 8.4 MW (W7-X: ECRH up to ~8 MW, more with NBI). With five
- * divertors sharing it, the nominal 6 MW would leave every tile just under the limit (~1060–1160 °C): the control loop
- * would have nothing to do. A display scenario, chosen so the coils are needed, and shown as such in the view
- * (`scenarioHeating`).
+ * Heating power of the plasma explorer's scenario relative to the model's nominal P_heat (7.5 MW): a high-power phase of
+ * 9.4 MW on average, modulated between about 8.2 and 10.5 MW, above W7-X's ~8 MW of ECRH (it needs NBI as well). With
+ * five divertors sharing it, the nominal 7.5 MW would leave every tile under the limit: the control loop would have
+ * nothing to do. A display scenario, chosen so the coils are needed, and shown as such in the view (`scenarioHeating`).
  */
 export const SCENARIO_POWER = 1.25;
 

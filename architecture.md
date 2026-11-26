@@ -65,9 +65,10 @@ independent reference in one view. Replay costs $0; live GX is gated behind qual
 * **Forecast.** Persistence (previous window) vs frozen (initialisation window) on 50-unit windows; `errorStats` (D-026): MSE, RMSE,
   min–max of the squared errors and of the signed errors (predicted − actual) per forecaster, shown with the predicted-vs-actual chart.
 * **Heat & field (D-027, `tasks/10-heat-field/MODEL.md`).** Real: R, Z, |B| (T) on ρ = 0…1 (9 surfaces) × 48 θ × 72 φ from the same VMEC reader,
-  eight LCFS field lines from the same tracer. Illustrative (provenance kind `model`, not a W7-X simulation): an explicit edge heat model on the
-  LCFS (diffusion along the field-line pitch and across with D⊥ ∝ (B0/B)², relaxation to a pedestal, Gaussian sinks at four schematic diverters,
-  a coil perturbation that sweeps the strike line, lumped tile temperatures). The Python model is the reference and writes golden checkpoints;
+  eight LCFS field lines from the same tracer. Illustrative (provenance kind `model`, not a W7-X simulation): an edge heat model on the
+  LCFS (MODEL.md v4: fixed heating power shared by four schematic diverters with energy conserved, a two-point scrape-off layer per diverter,
+  |B| compression at the strike line, a coil perturbation that sweeps the strike line, 1D heat conduction through 6 mm CFC tiles into a
+  water-cooled heat sink). The Python model is the reference and writes golden checkpoints;
   the renderer runs a TypeScript port (interactive) that reads every input from the artifact and must reproduce the golden values.
 * **Budget.** PRD figures recomputed in exact decimals (`pricing.py` is the single source of PRD constants); PRD ranges are
   `claimedRange` fixtures, never midpoints; `guardPlan` is priced by calling the live budget guard itself (D-023).

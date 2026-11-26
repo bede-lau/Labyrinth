@@ -1,5 +1,5 @@
-// The edge heat model of tasks/10-heat-field/MODEL.md (version 3, D-032: two-point scrape-off layer, energy
-// conserved), ported from the Python reference (main/), step by step. Pure TypeScript on Float64Arrays: no DOM, no
+// The edge heat model of tasks/10-heat-field/MODEL.md (version 4, D-033: two-point scrape-off layer, energy
+// conserved, CFC tiles conducting through their depth), ported from the Python reference (main/), step by step. Pure TypeScript on Float64Arrays: no DOM, no
 // three, no React.
 //
 // Every input is read from artifacts/heatfield.json exactly as written there (7 significant figures):
@@ -24,8 +24,10 @@ export interface ModelState {
   readonly n: number;
   /** LCFS temperature (keV), flat c = j·nTheta + i. */
   readonly T: Float64Array;
-  /** Tile strips (°C): diverter k, θ index i at k·nTheta + i. */
+  /** Tile surface temperatures (°C): diverter k, θ index i at k·nTheta + i. */
   readonly tiles: Float64Array;
+  /** Tile cells through the thickness (°C): strip cell x = k·nTheta + i, depth z (0 at the surface) at x·N_z + z. */
+  readonly slab: Float64Array;
 }
 
 export interface Diagnostics {
@@ -102,8 +104,16 @@ export interface HeatModel {
   heatFlow(state: ModelState, coils: Coils): { fPhi: Float64Array; fTheta: Float64Array };
   /** Cross-section fields at plane j (MODEL.md): T_xs and |B|_xs for surface m, θ index i at m·nTheta + i. */
   crossSection(state: ModelState, coils: Coils, j: number): { T: Float64Array; B: Float64Array; rho: Float64Array };
-  /** Δt/τ_tile: the only explicit update (the edge is quasi-steady). */
+  /** The tile conduction's stability number (≤ 1 is monotone): the only explicit update (the edge is quasi-steady). */
   stabilityNumber(): number;
+  /** Number of tile cells through the thickness. */
+  readonly tileCells: number;
+  /** CFC conductivity k(T) (W m⁻¹ K⁻¹). */
+  conductivity(T: number): number;
+  /** CFC specific heat c(T) (J kg⁻¹ K⁻¹). */
+  heatCapacity(T: number): number;
+  /** Steady surface temperature (°C) under a uniform load Q (MW/m²): continuous k(T) and the sink resistance. */
+  steadySurface(Q: number): number;
 }
 
 /** Every parameter value as written in the artifact. */
@@ -319,12 +329,39 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     return out;
   };
 
-  const loads = new Float64Array(nDiv * nTheta);
-  /** Step 11: tiles at step n → n+1 from the loads at t_n. */
-  const tilesInto = (n: number, tiles: Float64Array, coils: Coils, tilesN: Float64Array) => {
+  // Step 11: the CFC tiles, N_z cells through the thickness d of every strip cell.
+  const nZ = p.tileCells;
+  const dz = p.tileThickness / nZ;
+  const nStrip = nDiv * nTheta;
+  const conductivity = (T: number) => p.kRef / (1 + (T - p.Tref) / p.kScale);
+  const heatCapacity = (T: number) => p.cpHigh - (p.cpHigh - p.cpRef) * Math.exp(-(T - p.Tref) / p.cpScale);
+  const loads = new Float64Array(nStrip);
+  const kz = new Float64Array(nZ);
+  const net = new Float64Array(nZ);
+  /** Step 11: one explicit conduction step of every tile from the loads at t_n, and the new surface temperatures. */
+  const tilesInto = (n: number, slab: Float64Array, coils: Coils, slabN: Float64Array, tilesN: Float64Array) => {
     loadsInto(solve(n, coils), loads);
-    for (let x = 0; x < nDiv * nTheta; x++) {
-      tilesN[x] = tiles[x]! + (p.dt * (p.Tcool + p.tileGain * loads[x]! - tiles[x]!)) / p.tauTile;
+    for (let x = 0; x < nStrip; x++) {
+      const o = x * nZ;
+      const q = loads[x]! * p.MW;
+      for (let z = 0; z < nZ; z++) {
+        kz[z] = conductivity(slab[o + z]!);
+        net[z] = 0;
+      }
+      net[0] = q;
+      for (let z = 0; z + 1 < nZ; z++) {
+        const flux = ((2 * kz[z]! * kz[z + 1]!) / (dz * (kz[z]! + kz[z + 1]!))) * (slab[o + z]! - slab[o + z + 1]!);
+        net[z] = net[z]! - flux;
+        net[z + 1] = net[z + 1]! + flux;
+      }
+      const back = slab[o + nZ - 1]!;
+      net[nZ - 1] = net[nZ - 1]! - (back - p.Tcool) / (dz / (2 * kz[nZ - 1]!) + p.sinkResistance);
+      for (let z = 0; z < nZ; z++) {
+        const t = slab[o + z]!;
+        slabN[o + z] = t + (p.dt * net[z]!) / (p.tileDensity * heatCapacity(t) * dz);
+      }
+      const top = slabN[o]!;
+      tilesN[x] = top + (q * dz) / (2 * conductivity(top));
     }
   };
 
@@ -333,12 +370,13 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
    * A state whose LCFS map (step 12) is computed only when read: the edge is quasi-steady, so a forecast that reads
    * only the tiles (the control loop's look-ahead) never pays for the map.
    */
-  const stateAt = (n: number, coils: Coils, tiles: Float64Array): ModelState => {
+  const stateAt = (n: number, coils: Coils, tiles: Float64Array, slab: Float64Array): ModelState => {
     const fixed = Array.from({ length: nDiv }, (_, k) => coils[k] ?? 0);
     let T: Float64Array | undefined;
     return {
       n,
       tiles,
+      slab,
       get T() {
         T ??= lcfsInto(n, fixed, new Float64Array(nCells));
         return T;
@@ -348,28 +386,31 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
   const initialState = (): ModelState => ({
     n: 0,
     T: lcfsInto(0, off, new Float64Array(nCells)),
-    tiles: new Float64Array(nDiv * nTheta).fill(p.Tcool),
+    tiles: new Float64Array(nStrip).fill(p.Tcool),
+    slab: new Float64Array(nStrip * nZ).fill(p.Tcool),
   });
 
   const step = (st: ModelState, coils: Coils): ModelState => {
-    const tiles = new Float64Array(nDiv * nTheta);
-    tilesInto(st.n, st.tiles, coils, tiles);
-    return stateAt(st.n + 1, coils, tiles);
+    const tiles = new Float64Array(nStrip);
+    const slab = new Float64Array(nStrip * nZ);
+    tilesInto(st.n, st.slab, coils, slab, tiles);
+    return stateAt(st.n + 1, coils, tiles, slab);
   };
 
   const advance = (st: ModelState, coils: Coils, steps: number, controlsAt?: (step: number) => AppliedControls): ModelState => {
     if (steps <= 0) return st;
-    let tiles = new Float64Array(nDiv * nTheta);
-    let tiles2 = new Float64Array(nDiv * nTheta);
+    const tiles = new Float64Array(nStrip);
+    let slab = new Float64Array(nStrip * nZ);
+    let slab2 = new Float64Array(nStrip * nZ);
     let last: Coils = controlsAt?.(st.n)?.coils ?? coils;
-    tilesInto(st.n, st.tiles, last, tiles);
+    tilesInto(st.n, st.slab, last, slab, tiles);
     for (let s = 1; s < steps; s++) {
       last = controlsAt?.(st.n + s)?.coils ?? coils;
-      tilesInto(st.n + s, tiles, last, tiles2);
-      [tiles, tiles2] = [tiles2, tiles];
+      tilesInto(st.n + s, slab, last, slab2, tiles);
+      [slab, slab2] = [slab2, slab];
     }
     // The edge is quasi-steady: only the final state's LCFS temperature is needed (with the coils of its last step).
-    return stateAt(st.n + steps, last, tiles);
+    return stateAt(st.n + steps, last, tiles, slab);
   };
 
   const field = (coils: Coils, n: number, out = new Float64Array(nCells)) => fieldFromDrive(drive(coils, time(n)), out);
@@ -461,8 +502,19 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     return { T: Txs, B: Bxs, rho };
   };
 
-  /** Δt/τ_tile: the only explicit update (the edge is quasi-steady). */
-  const stabilityNumber = () => p.dt / p.tauTile;
+  /** Δt·(largest outflow conductance: inner 2k/dz, back k/dz + 1/(dz/2k + R_sink))/(ρ·c·dz), k and c at T_ref. */
+  const stabilityNumber = () => {
+    const inner = (2 * p.kRef) / dz;
+    const back = p.kRef / dz + 1 / (dz / (2 * p.kRef) + p.sinkResistance);
+    return (p.dt * Math.max(inner, back)) / (p.tileDensity * p.cpRef * dz);
+  };
+
+  /** Steady state with k(T) (Kirchhoff): ∫k dT = q·d through the CFC, T_back = T_cool + q·R_sink behind it. */
+  const steadySurface = (Q: number) => {
+    const q = Q * p.MW;
+    const back = p.Tcool + q * p.sinkResistance;
+    return p.Tref + p.kScale * ((1 + (back - p.Tref) / p.kScale) * Math.exp((q * p.tileThickness) / (p.kRef * p.kScale)) - 1);
+  };
 
   return {
     nTheta,
@@ -495,6 +547,10 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     heatFlow,
     crossSection,
     stabilityNumber,
+    tileCells: nZ,
+    conductivity,
+    heatCapacity,
+    steadySurface,
   };
 }
 
@@ -528,5 +584,5 @@ export function spunUpState(model: HeatModel): ModelState {
 }
 
 export function cloneState(st: ModelState): ModelState {
-  return { n: st.n, T: Float64Array.from(st.T), tiles: Float64Array.from(st.tiles) };
+  return { n: st.n, T: Float64Array.from(st.T), tiles: Float64Array.from(st.tiles), slab: Float64Array.from(st.slab) };
 }

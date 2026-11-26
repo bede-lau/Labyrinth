@@ -28,9 +28,9 @@ export interface EquationPanelProps {
   stability: number;
 }
 
-/** The only explicit update, the tile relaxation, is monotone while Δt/τ_tile is at most 1 (the edge is quasi-steady). */
+/** The only explicit update, the tile conduction, is monotone while Δt·G_max/(ρ·c_ref·dz) is at most 1 (the edge is quasi-steady). */
 export const isStable = (stability: number) => stability <= 1;
-export const UNSTABLE_TITLE = 'Tile update unstable: Δt exceeds τ_tile';
+export const UNSTABLE_TITLE = 'Tile update unstable: Δt exceeds the conduction limit';
 
 export function EquationPanel({ art, stability }: EquationPanelProps) {
   const [main, ...rest] = art.model.equations;
@@ -51,7 +51,7 @@ export function EquationPanel({ art, stability }: EquationPanelProps) {
       )}
       {!stable && (
         <Callout tone="warn" title={<SubscriptText text={UNSTABLE_TITLE} />}>
-          Δt/τ<sub>tile</sub> of this artifact is <span className="lab-num">{formatNumber(stability, 4)}</span>, above 1: the tile
+          The tile conduction number of this artifact is <span className="lab-num">{formatNumber(stability, 4)}</span>, above 1: the tile
           update overshoots, so the tile temperatures in this view can be wrong.
         </Callout>
       )}
@@ -97,7 +97,7 @@ export function EquationPanel({ art, stability }: EquationPanelProps) {
           </table>
         </div>
         <p className="hf-small" data-testid="stability">
-          Stability (the edge is quasi-steady; the only explicit update is the tile relaxation): Δt/τ<sub>tile</sub> ={' '}
+          Stability (the edge is quasi-steady; the only explicit update is the tile conduction): Δt·G<sub>max</sub>/(ρ·c<sub>ref</sub>·dz) ={' '}
           <span className="lab-num">{formatNumber(stability, 4)}</span>{' '}
           {stable ? '≤ 1, computed here from the artifact.' : '> 1, computed here from the artifact: the tile update is unstable.'}
         </p>

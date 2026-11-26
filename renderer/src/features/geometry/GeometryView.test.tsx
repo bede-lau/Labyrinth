@@ -309,5 +309,5 @@ test('the plasma explorer states its heating scenario: power, range, factor over
   serve(JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/heatfield.json'), 'utf8')));
   render(<GeometryContent g={geometryFixture()} assignmentsAnchor={null} />);
   const line = await screen.findByTestId('heating-scenario');
-  expect(line).toHaveTextContent(/Heating scenario \(model\): 7\.5 MW mean, 6\.6–8\.4 MW, 1\.25× the model's Pheat of 6 MW, over 5 schematic divertors; chosen so the field coils are needed\./);
+  expect(line).toHaveTextContent(/Heating scenario \(model\): 9\.4 MW mean, 8\.2–10\.5 MW, 1\.25× the model's Pheat of 7\.5 MW, over 5 schematic divertors; chosen so the field coils are needed\./);
 });

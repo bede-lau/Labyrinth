@@ -260,15 +260,17 @@ def test_H3_four_schematic_diverters_at_quarter_turns():
 
 
 # ---- H4: the reference model ----------------------------------------------------------------------------------------
-MODEL_MD_TABLE = {  # tasks/10-heat-field/MODEL.md "Parameters", version 3 (Pheat and wettedArea set the operating point)
+MODEL_MD_TABLE = {  # tasks/10-heat-field/MODEL.md "Parameters", version 4 (Pheat and wettedArea set the operating point)
     "Tcore0": (3.0, "keV"), "rhoBlend": (0.7, "–"), "B0": (2.5, "T"), "sigmaPhi": (0.06, "rad"),
     "sigmaTheta": (0.12, "rad"), "sweepAmplitude": (0.30, "rad"), "sweepFrequency": (2.0, "Hz"), "epsilon": (0.03, "–"),
-    "sigmaCoilPhi": (0.20, "rad"), "sigmaCoilTheta": (0.60, "rad"), "Pheat": (6.0, "MW"), "fRad": (0.3, "–"),
+    "sigmaCoilPhi": (0.20, "rad"), "sigmaCoilTheta": (0.60, "rad"), "Pheat": (7.5, "MW"), "fRad": (0.3, "–"),
     "wettedArea": (0.1, "m²"), "connectionLength": (200.0, "m"), "kappa0": (6.324555e13, "W m⁻¹ keV⁻⁷ᐟ²"),
     "conductionExponent": (3.5, "–"), "twoPointIterations": (20.0, "–"), "sheathGamma": (7.0, "–"),
     "nSep": (4.0e19, "m⁻³"), "ionMass": (1.0, "u"), "incidence": (0.03490659, "rad"), "keV": (1.602177e-16, "J"),
-    "amu": (1.660539e-27, "kg"), "MW": (1.0e6, "W"), "tileGain": (100.0, "°C per MW m⁻²"), "Tcool": (30.0, "°C"),
-    "tauTile": (1.0, "s"), "tileLimit": (1200.0, "°C"), "dt": (0.001, "s"), "spinup": (3.0, "s"),
+    "amu": (1.660539e-27, "kg"), "MW": (1.0e6, "W"), "tileThickness": (0.006, "m"), "tileCells": (6.0, "–"),
+    "tileDensity": (1900.0, "kg m⁻³"), "kRef": (350.0, "W m⁻¹ K⁻¹"), "kScale": (700.0, "°C"),
+    "cpRef": (710.0, "J kg⁻¹ K⁻¹"), "cpHigh": (2000.0, "J kg⁻¹ K⁻¹"), "cpScale": (670.0, "°C"), "Tref": (20.0, "°C"),
+    "sinkResistance": (4.5e-5, "m² K W⁻¹"), "Tcool": (30.0, "°C"), "tileLimit": (1200.0, "°C"), "dt": (0.001, "s"), "spinup": (3.0, "s"),
 }
 
 
@@ -300,9 +302,9 @@ def test_H4_the_model_consumes_the_inputs_as_written():
     assert inp.theta_d == 1.570796 != math.pi / 2
 
 
-def _literal_step(inp: model.Inputs, tiles: np.ndarray, n: int, coils) -> tuple[np.ndarray, np.ndarray]:
-    """MODEL.md steps 1-12, transcribed literally with explicit loops (independent of model.Model): the new tiles from
-    the loads at t_n, and the LCFS temperature at t_(n+1)."""
+def _literal_step(inp: model.Inputs, slab: np.ndarray, n: int, coils) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """MODEL.md steps 1-12, transcribed literally with explicit loops (independent of model.Model): the new tile cells
+    and surface temperatures from the loads at t_n, and the LCFS temperature at t_(n+1)."""
     p = inp.params
     n_t, n_p = inp.n_theta, inp.n_phi
     dth, dph = TAU / n_t, TAU / n_p
@@ -354,7 +356,32 @@ def _literal_step(inp: model.Inputs, tiles: np.ndarray, n: int, coils) -> tuple[
 
     now = solve(n)
     Q = np.array([[now[k][1] * g(wrap(th[i] - now[k][0]), p["sigmaTheta"]) for i in range(n_t)] for k in range(4)])  # 9
-    tiles_new = tiles + p["dt"] * (p["Tcool"] + p["tileGain"] * Q - tiles) / p["tauTile"]  # 11
+    n_z = int(p["tileCells"])
+    dz = p["tileThickness"] / n_z
+
+    def k_of(T):
+        return p["kRef"] / (1 + (T - p["Tref"]) / p["kScale"])
+
+    def c_of(T):
+        return p["cpHigh"] - (p["cpHigh"] - p["cpRef"]) * math.exp(-(T - p["Tref"]) / p["cpScale"])
+
+    slab_new = np.empty_like(slab)
+    tiles_new = np.empty((4, n_t))
+    for k in range(4):  # 11
+        for i in range(n_t):
+            S = [float(v) for v in slab[k, i]]
+            q = Q[k, i] * p["MW"]
+            net = [0.0] * n_z
+            net[0] = q
+            for z in range(n_z - 1):
+                kz, kn = k_of(S[z]), k_of(S[z + 1])
+                F = 2 * kz * kn / (dz * (kz + kn)) * (S[z] - S[z + 1])
+                net[z] -= F
+                net[z + 1] += F
+            net[-1] -= (S[-1] - p["Tcool"]) / (dz / (2 * k_of(S[-1])) + p["sinkResistance"])
+            new = [S[z] + p["dt"] * net[z] / (p["tileDensity"] * c_of(S[z]) * dz) for z in range(n_z)]
+            slab_new[k, i] = new
+            tiles_new[k, i] = new[0] + q * dz / (2 * k_of(new[0]))
     nxt = solve(n + 1)
     nu = p["conductionExponent"]
     T = np.empty((n_p, n_t))
@@ -363,7 +390,7 @@ def _literal_step(inp: model.Inputs, tiles: np.ndarray, n: int, coils) -> tuple[
         for i in range(n_t):
             gk = [g(wrap(ph[j] - inp.phi_k[k]), p["sigmaPhi"]) * g(wrap(th[i] - nxt[k][0]), p["sigmaTheta"]) for k in range(4)]
             T[j, i] = (max(0.0, 1 - sum(gk)) * t_up ** nu + sum(gk[k] * nxt[k][3] ** nu for k in range(4))) ** (1 / nu)  # 12
-    return T, tiles_new
+    return T, slab_new, tiles_new
 
 
 def test_H4_one_step_is_model_md_transcribed_literally():
@@ -372,12 +399,44 @@ def test_H4_one_step_is_model_md_transcribed_literally():
     rng = np.random.default_rng(4)
     p = inp.params
     for n, coils in ((137, (1, 0, 1, 1)), (0, (0, 0, 0, 0)), (2501, (0, 1, 0, 1))):
-        tiles = rng.uniform(p["Tcool"], 1500.0, (4, N_THETA))
-        got = m.step(model.State(n, np.zeros((N_PHI, N_THETA)), tiles), coils)
-        want_T, want_tiles = _literal_step(inp, tiles, n, coils)
+        slab = rng.uniform(p["Tcool"], 1500.0, (4, N_THETA, int(p["tileCells"])))
+        got = m.step(model.State(n, np.zeros((N_PHI, N_THETA)), slab[..., 0], slab), coils)
+        want_T, want_slab, want_tiles = _literal_step(inp, slab, n, coils)
         assert got.n == n + 1
         np.testing.assert_allclose(got.T, want_T, rtol=1e-12, atol=0)
+        np.testing.assert_allclose(got.slab, want_slab, rtol=1e-12, atol=0)
         np.testing.assert_allclose(got.tiles, want_tiles, rtol=1e-12, atol=0)
+
+
+def test_H4_the_tile_conducts_and_conserves_energy():
+    inp = written_inputs()
+    p = inp.params
+    m = model.Model(inp)
+    n_z = int(p["tileCells"])
+    dz = p["tileThickness"] / n_z
+    # energy: what enters the surface either stays in the tile (rho c dT dz) or goes to the water, every step
+    st = m.initial_state()
+    for _ in range(400):
+        loads = m.heat_flux_loads(st, (0, 0, 0, 0))
+        nxt = m.step(st, (0, 0, 0, 0))
+        stored = (p["tileDensity"] * m.heat_capacity(st.slab) * dz * (nxt.slab - st.slab)).sum(axis=-1) / p["dt"]
+        np.testing.assert_allclose(stored + m.sink_flux(st.slab), loads * p["MW"], rtol=1e-9, atol=1e-3)
+        st = nxt
+    # the material fits: k falls, c rises with temperature (NB31: ~170 W/m/K and ~1600 J/kg/K at 800 C)
+    assert m.conductivity(800.0) == pytest.approx(170, rel=0.05) and m.heat_capacity(800.0) == pytest.approx(1600, rel=0.05)
+    # steady state under a uniform load: the closed form with k(T) (Kirchhoff transform) and the sink resistance
+    q_mw = 10.0
+    slab = np.full((1, 1, n_z), p["Tcool"])
+    for _ in range(20000):
+        slab, surf = m.conduct(slab, np.array([[q_mw]]))
+    q = q_mw * p["MW"]
+    t_back = p["Tcool"] + q * p["sinkResistance"]
+    a = p["kRef"] * p["kScale"]
+    want = p["Tref"] + p["kScale"] * ((1 + (t_back - p["Tref"]) / p["kScale"]) * math.exp(q * p["tileThickness"] / a) - 1)
+    assert float(surf[0, 0]) == pytest.approx(want, rel=0.02)
+    assert float(m.sink_flux(slab)[0, 0]) == pytest.approx(q, rel=1e-6)
+    # the effective sink resistance is consistent with element tests (interlayer approaching ~1100 C above 22 MW/m^2)
+    assert p["Tcool"] + 22e6 * p["sinkResistance"] == pytest.approx(1100, rel=0.1)
 
 
 def test_H4_energy_is_conserved_power_in_equals_power_on_the_targets():
@@ -396,7 +455,7 @@ def test_H4_energy_is_conserved_power_in_equals_power_on_the_targets():
     # no heating, no load and no plasma: the tiles stay at the coolant temperature
     cold = model.Model(inp.with_params(Pheat=0.0))
     _, st = model.run(cold, model.ALL_OFF, [200])
-    assert np.all(st.tiles == p["Tcool"]) and np.all(st.T == 0)
+    assert np.all(st.tiles == p["Tcool"]) and np.all(st.slab == p["Tcool"]) and np.all(st.T == 0)
 
 
 def test_H4_the_two_point_solution_satisfies_conduction_sheath_and_pressure_balance():
@@ -434,12 +493,21 @@ def test_H4_the_lcfs_map_runs_from_target_to_upstream_temperature():
     assert T[j_mid, 36] == pytest.approx(float((m.sector[:, j_mid] * sol["Tu"]).sum()), rel=1e-6)
 
 
-def test_H4_stability_is_the_tile_update():
+def test_H4_stability_is_the_tile_conduction():
     inp = written_inputs()
     p = inp.params
     m = model.Model(inp)
-    assert m.check_stability() == p["dt"] / p["tauTile"]
-    assert f"here {p['dt'] / p['tauTile']:.4f}" in built()["model"]["discretization"]
+    dz = p["tileThickness"] / p["tileCells"]
+    number = p["dt"] * 2 * p["kRef"] / (p["tileDensity"] * p["cpRef"] * dz * dz)  # inner cells bind here
+    assert m.check_stability() == number and 0 < number <= 1
+    # without a sink resistance the back cell binds (k/dz + 2k/dz): 1.5 times the inner number
+    bare = model.Model(inp.with_params(sinkResistance=0.0))
+    assert bare.stability_number() == pytest.approx(1.5 * number, rel=1e-12)
+    with pytest.raises(ValueError, match="unstable"):
+        model.Model(inp.with_params(sinkResistance=0.0, dt=p["dt"] / number * 0.9)).check_stability()
+    with pytest.raises(ValueError, match="whole number"):
+        model.Model(inp.with_params(tileCells=6.5)).check_stability()
+    assert f"here {number:.4f}" in built()["model"]["discretization"]
     with pytest.raises(ValueError, match="unstable"):
         model.Model(inp.with_params(dt=2.0)).check_stability()
     # the two-point iteration is checked converged at the operating loads (conduction-limited: T_t << T_u)...
@@ -564,14 +632,14 @@ def test_H5_regime_requirements_hold():
     lim = built()["model"]["limitations"]
     assert "both kept at MODEL.md's starting values" in lim
     assert "high-power case" in lim and "Energy is conserved by construction" in lim
-    assert "D1, D4 above the illustrative 1200 °C tile limit and D2, D3 below it" in lim
+    assert "D1, D4 above the 1200 °C tile limit and D2, D3 below it" in lim
     assert "all below the limit" in lim
     assert model.regime(model.Model(written_inputs()), built()["model"]["golden"]["scenarios"])["ok"] is True
 
 
 def test_H5_model_text_states_what_the_model_is():
     m = built()["model"]
-    assert m["version"] == 3 and m["name"] and m["summary"]
+    assert m["version"] == 4 and m["name"] and m["summary"]
     ids = [e["id"] for e in m["equations"]]
     assert ids == ["power", "target-load", "two-point", "lcfs-map", "field", "strike-line", "footprint", "tiles"]
     assert all(e["text"] and e["meaning"] for e in m["equations"])
@@ -625,7 +693,7 @@ def test_H6_artifact_is_schema_valid_and_byte_identical_on_rebuild():
     # the contract rejects what it must
     for bad in (lambda x: x.pop("model"), lambda x: x["diverters"]["items"].pop(),
                 lambda x: x["provenance"].update(kind="measured"), lambda x: x.update(extra=1),
-                lambda x: x["model"]["parameters"].pop("tileGain"), lambda x: x["surfaces"][0]["B"].__setitem__(0, 0.0),
+                lambda x: x["model"]["parameters"].pop("kRef"), lambda x: x["surfaces"][0]["B"].__setitem__(0, 0.0),
                 lambda x: x["model"]["golden"]["scenarios"][0]["coilSchedule"][0]["coils"].append(1)):
         doc = copy.deepcopy(a)
         bad(doc)

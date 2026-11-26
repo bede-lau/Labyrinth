@@ -27,9 +27,17 @@ export const PARAMETER_NAMES = [
   'keV',
   'amu',
   'MW',
-  'tileGain',
+  'tileThickness',
+  'tileCells',
+  'tileDensity',
+  'kRef',
+  'kScale',
+  'cpRef',
+  'cpHigh',
+  'cpScale',
+  'Tref',
+  'sinkResistance',
   'Tcool',
-  'tauTile',
   'tileLimit',
   'dt',
   'spinup',
@@ -192,6 +200,8 @@ export function checkHeatfield(a: HeatfieldArtifact): string | null {
   if (!m || !m.parameters) return 'model.parameters is missing';
   for (const name of PARAMETER_NAMES) {
     if (!isNum(m.parameters[name]?.value)) return `model.parameters.${name}.value is missing or not finite`;
+    if (name === 'tileCells' && !(isInt(m.parameters[name].value) && m.parameters[name].value >= 2))
+      return 'model.parameters.tileCells.value must be a whole number of at least 2';
   }
   if (!(m.parameters.dt.value > 0)) return 'model.parameters.dt must be positive';
   if (!Array.isArray(m.probes) || m.probes.length < 1) return 'model.probes is empty';

@@ -33,8 +33,11 @@ test('H7 every broken shape is rejected with a message that names the problem', 
   expect(broken((a) => a.diverters.items.pop())).toBe('expected exactly four diverters D1–D4, found 3');
   expect(broken((a) => (a.diverters.items[1]!.id = 'D3'))).toMatch(/diverters must be D1, D2, D3, D4 in order, found D1,D3,D3,D4/);
   expect(broken((a) => (a.diverters.halfWidthTheta = 0))).toMatch(/halfWidthTheta/);
-  expect(broken((a) => delete (a.model.parameters as Partial<typeof a.model.parameters>).tileGain)).toBe(
-    'model.parameters.tileGain.value is missing or not finite',
+  expect(broken((a) => delete (a.model.parameters as Partial<typeof a.model.parameters>).kRef)).toBe(
+    'model.parameters.kRef.value is missing or not finite',
+  );
+  expect(broken((a) => (a.model.parameters.tileCells.value = 6.5))).toBe(
+    'model.parameters.tileCells.value must be a whole number of at least 2',
   );
   expect(broken((a) => (a.model.probes[2] = [48, 0]))).toBe('model.probes[2] = [48, 0] is outside the grid (i < 48, j < 72)');
   expect(broken((a) => (a.model.probes[0] = [0, -1]))).toMatch(/model.probes\[0\] = \[0, -1\] is outside the grid/);

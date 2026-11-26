@@ -429,3 +429,31 @@ maintainer to decide without asking.
    parameters illustrative; lumped tile.
 **Consequences.** Artifact and goldens regenerated natively (as in D-031); tasks 08, 09 and 10 stay reopened until
 re-verified; `verify.sh` is not run (the owner chose to skip WSL).
+
+## D-033 · Heat model version 4: conducting CFC tiles with a water-cooled heat sink (maintainer, 2026-11-26)
+**Context.** The owner asked to make the tiles physical ("do that and continue until most of the things are
+physical") and to decide without asking. Version 3's tile was lumped: T relaxed to T_cool + K·Q with τ_tile = 1 s,
+two tuned numbers with no material behind them.
+**Decision.**
+1. MODEL.md version 4, step 11: every strip cell of every divertor holds N_z = 6 finite-volume cells through a 6 mm CFC
+   armour (the machined NB31 thickness of the W7-X target elements). ρ c(T) ∂T/∂t = ∂_z(k(T) ∂_z T); the load enters
+   the surface, the back loses (T − T_cool)/(dz/2k + R_sink) to the water. k(T) = k_ref/(1 + (T − T_ref)/T_k) with
+   350 W m⁻¹ K⁻¹ at 20 °C and ~170 at 800 °C; c(T) = c_∞ − (c_∞ − c_ref) exp(−(T − T_ref)/T_c), 710 → ~1600 J kg⁻¹ K⁻¹ at
+   800 °C; ρ = 1900 kg m⁻³ (approximate NB31/graphite fits). R_sink = 4.5e-5 m² K W⁻¹ is an effective lumped resistance
+   of the Cu interlayer, CuCrZr heat sink and water film, not calibrated: it puts the CFC/Cu interface at ~1000 °C at
+   22 MW/m², consistent with element tests in which the interlayer approached its ~1100 °C melting point above
+   22 MW/m². Cooling water 30 °C (the design inlet). The reported tile temperature is the
+   surface, S[0] + q dz/(2k).
+2. Removed parameters: tileGain, tauTile. Added: tileThickness, tileCells, tileDensity, kRef, kScale, cpRef, cpHigh,
+   cpScale, Tref, sinkResistance. Contract and both implementations updated; the renderer state carries the tile
+   cells (`slab`) besides the surface temperatures (`tiles`). The stability number is Δt·G_max/(ρ c_ref dz), G_max the larger outflow conductance of an inner (2k/dz) or the
+   back cell (k/dz + 1/(dz/2k + R_sink)): 0.519 (review: the back cell was first left out).
+3. Operating point: with the physical tile 6 MW no longer passes the 1200 °C limit (D1 1035 °C at 3 s), so P_heat
+   becomes 7.5 MW (inside its 2–8 MW range): coils off at 3 s D1 1346, D2 1089, D3 1074, D4 1337 °C
+   (16.2/13.5/13.4/16.1 MW/m²); all on 549/451/427/545 °C. The W7-X view keeps SCENARIO_POWER = 1.25 (now 9.4 MW mean,
+   8.2–10.5 MW): at 1.0 its five targets never reach the limit. The view's footprint colour scale uses the load whose
+   steady surface temperature is the limit (closed form with k(T)).
+4. Known and stated: 1D through the thickness (no lateral conduction along the strip, no erosion or surface
+   radiation); the heat sink is a resistance without heat capacity; the material fits are approximate.
+**Consequences.** Artifact and goldens regenerated natively; tasks 08, 09 and 10 stay reopened until re-verified;
+`verify.sh` not run (WSL skipped by the owner).

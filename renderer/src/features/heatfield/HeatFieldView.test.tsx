@@ -824,13 +824,13 @@ test('H16 the equation, the parameter table and the honesty notes are shown; eve
   // Parameter table: symbol, value, unit and meaning of all 30 parameters, from the artifact.
   const params = screen.getByRole('table', { name: /Parameters as written in artifacts\/heatfield.json/ });
   const rows = within(params).getAllByRole('row').slice(1);
-  expect(rows).toHaveLength(30);
+  expect(rows).toHaveLength(38);
   for (const [name, p] of Object.entries(ART.model.parameters)) {
     const row = params.querySelector<HTMLElement>(`tr[data-parameter="${name}"]`)!;
     expect(row.querySelector('th')!.textContent).toBe(p.symbol.replace('_', ''));
     expect(cells(row)).toEqual([trimNumber(p.value), p.unit, p.description]);
   }
-  expect(params.querySelector('tr[data-parameter="tileGain"] td')).toHaveTextContent('100');
+  expect(params.querySelector('tr[data-parameter="kRef"] td')).toHaveTextContent('350');
   expect(screen.getByText(norm(ART.model.limitations))).toBeInTheDocument();
 
   // Model status on every panel that shows model numbers; geometry and |B| say Derived (VMEC).
@@ -892,7 +892,7 @@ test('H16 the stability line says ≤ 1 only when the computed number is at most
   const line = screen.getByTestId('stability');
   expect(line).toHaveTextContent('= 1.2000 > 1, computed here from the artifact: the tile update is unstable.');
   expect(line).not.toHaveTextContent('≤ 1');
-  const warn = screen.getByRole('note', { name: /Tile update unstable: Δt exceeds τtile/ });
+  const warn = screen.getByRole('note', { name: /Tile update unstable: Δt exceeds the conduction limit/ });
   expect(warn).toHaveAttribute('data-tone', 'warn');
   expect(warn).toHaveTextContent('1.2000');
   // Outside the collapsed disclosure, so it is seen without opening it.
@@ -903,7 +903,7 @@ test('H16 an artifact whose tile update is unstable is flagged at the top of the
   // A tile time constant below the step (and no spin-up, so the unstable update has no time to blow the tiles up
   // before the view draws them).
   const fast = structuredClone(ART);
-  fast.model.parameters.tauTile.value = ART.model.parameters.dt.value / 2;
+  fast.model.parameters.dt.value = 4 * ART.model.parameters.dt.value;
   fast.model.parameters.spinup.value = 0;
   const k = modelFor(fast).stabilityNumber();
   expect(k).toBeGreaterThan(1);

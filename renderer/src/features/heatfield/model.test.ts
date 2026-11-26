@@ -62,16 +62,16 @@ test('H8 every input comes from the artifact: grid, |B|, ι, θ_d, φ_k and ever
   expect(model.phiK).toEqual(ART.diverters.items.map((d) => d.phi));
   expect(model.probes).toEqual(ART.model.probes);
   for (const name of PARAMETER_NAMES) expect(P[name]).toBe(ART.model.parameters[name].value);
-  expect(paramsOf(ART).tileGain).toBe(100);
-  expect(paramsOf(ART).Pheat).toBe(6); // the high-power operating point (D-032)
+  expect(paramsOf(ART).kRef).toBe(350);
+  expect(paramsOf(ART).Pheat).toBe(7.5); // the high-power operating point (D-033)
 
   // A changed parameter in the artifact changes the result: nothing is cached in the code.
   const hotter = structuredClone(ART);
-  hotter.model.parameters.tileGain.value = 2 * ART.model.parameters.tileGain.value;
+  hotter.model.parameters.sinkResistance.value = 2 * ART.model.parameters.sinkResistance.value;
   const a = createModel(ART).advance(createModel(ART).initialState(), OFF, 200);
   const b = createModel(hotter).advance(createModel(hotter).initialState(), OFF, 200);
   const rise = (x: Float64Array) => Math.max(...x) - ART.model.parameters.Tcool.value;
-  expect(rise(b.tiles) / rise(a.tiles)).toBeCloseTo(2, 10);
+  expect(rise(b.tiles)).toBeGreaterThan(rise(a.tiles));
   const shifted = structuredClone(ART);
   shifted.diverters.thetaCentre = ART.diverters.thetaCentre + 0.2;
   expect(createModel(shifted).strikeLines(OFF, 0)[0]).toBeCloseTo(ART.diverters.thetaCentre + 0.2, 12);
@@ -134,8 +134,11 @@ test('H8 energy is conserved: the power on the wetted areas is the heating power
 
 test('H8 T stays between the target and upstream temperatures; the only explicit update (the tiles) is stable', () => {
   const k = model.stabilityNumber();
-  expect(k).toBe(P.dt / P.tauTile);
-  expect(ART.model.discretization).toContain('here 0.0010');
+  const dz = P.tileThickness / P.tileCells;
+  const back = P.kRef / dz + 1 / (dz / (2 * P.kRef) + P.sinkResistance);
+  expect(k).toBe((P.dt * Math.max((2 * P.kRef) / dz, back)) / (P.tileDensity * P.cpRef * dz));
+  expect(k).toBeLessThanOrEqual(1);
+  expect(ART.model.discretization).toContain(`here ${k.toFixed(4)}`);
   const sched = ART.model.golden.scenarios.find((s) => s.id === 'switch-at-1s')!.coilSchedule;
   let st = model.initialState();
   for (let n = 0; n < 1600; n += 100) {
@@ -210,7 +213,7 @@ test('H8 heat-flow vector and cross-section fields follow MODEL.md', () => {
   const st = spunUpState(model);
   const { fPhi, fTheta } = model.heatFlow(st, OFF);
   // Uniform temperature carries no heat flow.
-  const flat = model.heatFlow({ n: 0, T: new Float64Array(model.nCells).fill(0.1), tiles: st.tiles }, OFF);
+  const flat = model.heatFlow({ n: 0, T: new Float64Array(model.nCells).fill(0.1), tiles: st.tiles, slab: st.slab }, OFF);
   expect(flat.fPhi.every((v) => v === 0) && flat.fTheta.every((v) => v === 0)).toBe(true);
   expect(fPhi.some((v) => Math.abs(v) > 1e-3)).toBe(true);
   // Heat flows towards the cold D1 footprint (φ = 0, θ = θ_d): just before it in φ, F_φ > 0; just after, F_φ < 0.
@@ -237,4 +240,42 @@ test('H8 heat-flow vector and cross-section fields follow MODEL.md', () => {
   const e = model.edge(st.n, ALL_ON);
   expect(edgeT).toBeGreaterThanOrEqual(Math.min(...e.Tu) * (1 - 1e-9));
   expect(edgeT).toBeLessThanOrEqual(Math.max(...e.Tu) * (1 + 1e-9));
+});
+test('H8 the CFC tile conducts heat into the water and conserves energy every step (MODEL.md step 11)', () => {
+  // Material fits: k falls and c rises with temperature (NB31: ~170 W/m/K and ~1600 J/kg/K at 800 °C).
+  expect(model.conductivity(P.Tref)).toBe(P.kRef);
+  expect(model.conductivity(800)).toBeCloseTo(170, -1);
+  expect(model.heatCapacity(P.Tref)).toBe(P.cpRef);
+  expect(Math.abs(model.heatCapacity(800) / 1600 - 1)).toBeLessThan(0.05);
+
+  // Energy: what enters the surface either stays in the tile cells or goes to the water.
+  const nZ = model.tileCells;
+  const dz = P.tileThickness / nZ;
+  let st = model.advance(model.initialState(), OFF, 300);
+  for (let s = 0; s < 50; s++) {
+    const q = model.stripLoads(st, OFF);
+    const next = model.step(st, OFF);
+    for (let x = 0; x < q.length; x += 7) {
+      let stored = 0;
+      for (let z = 0; z < nZ; z++) {
+        const t = st.slab[x * nZ + z]!;
+        stored += (P.tileDensity * model.heatCapacity(t) * dz * (next.slab[x * nZ + z]! - t)) / P.dt;
+      }
+      const back = st.slab[x * nZ + nZ - 1]!;
+      const sink = (back - P.Tcool) / (dz / (2 * model.conductivity(back)) + P.sinkResistance);
+      expect(Math.abs(stored + sink - q[x]! * P.MW)).toBeLessThan(1e-6 * P.MW);
+    }
+    st = next;
+  }
+
+  // Steady state under a uniform load: the closed form with k(T) and the sink resistance, reached by the scheme.
+  const flat = structuredClone(ART);
+  const one = createModel(flat);
+  const Q = 10;
+  const back = P.Tcool + Q * P.MW * P.sinkResistance;
+  const want = P.Tref + P.kScale * ((1 + (back - P.Tref) / P.kScale) * Math.exp((Q * P.MW * P.tileThickness) / (P.kRef * P.kScale)) - 1);
+  expect(one.steadySurface(Q)).toBeCloseTo(want, 9);
+  expect(one.steadySurface(0)).toBeCloseTo(P.Tcool, 9);
+  // the steady surface rises with the load, and a hotter limit needs more load
+  expect(one.steadySurface(12)).toBeGreaterThan(one.steadySurface(10));
 });

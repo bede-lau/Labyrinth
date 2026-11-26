@@ -47,7 +47,7 @@ PARAMETERS: dict[str, tuple[float, str, str, str]] = {
     "epsilon": (0.03, "–", "ε", "relative |B| perturbation of one coil at its centre (illustrative)"),
     "sigmaCoilPhi": (0.20, "rad", "σ_cφ", "coil envelope width in φ (illustrative)"),
     "sigmaCoilTheta": (0.60, "rad", "σ_cθ", "coil envelope width in θ (illustrative)"),
-    "Pheat": (6.0, "MW", "P_heat", "heating power crossing the LCFS (W7-X: ECRH up to ~8 MW, more with NBI)"),
+    "Pheat": (7.5, "MW", "P_heat", "heating power crossing the LCFS (W7-X: ECRH up to ~8 MW, more with NBI)"),
     "fRad": (0.3, "–", "f_rad", "fraction of the heating power radiated before it reaches the targets"),
     "wettedArea": (0.1, "m²", "A_wet", "effective wetted target area per divertor at B_0"),
     "connectionLength": (200.0, "m", "L_c", "parallel connection length, upstream to target (island divertor)"),
@@ -61,14 +61,25 @@ PARAMETERS: dict[str, tuple[float, str, str, str]] = {
     "keV": (1.602176634e-16, "J", "keV", "one keV in joules (unit conversion)"),
     "amu": (1.66053906660e-27, "kg", "u", "atomic mass unit (unit conversion)"),
     "MW": (1.0e6, "W", "MW", "one megawatt in watts (unit conversion)"),
-    "tileGain": (100.0, "°C per MW m⁻²", "K", "steady tile surface temperature rise per unit heat flux"),
-    "Tcool": (30.0, "°C", "T_cool", "coolant / cold tile temperature"),
-    "tauTile": (1.0, "s", "τ_tile", "tile thermal time constant"),
-    "tileLimit": (1200.0, "°C", "T_lim", "illustrative tile surface limit"),
+    "tileThickness": (0.006, "m", "d", "CFC armour thickness (W7-X target elements: NB31 tiles, ~6 mm machined)"),
+    "tileCells": (6.0, "–", "N_z", "conduction cells through the tile thickness"),
+    "tileDensity": (1900.0, "kg m⁻³", "ρ", "CFC NB31 density"),
+    "kRef": (350.0, "W m⁻¹ K⁻¹", "k_ref", "CFC conductivity through the thickness at T_ref (approximate NB31 fit)"),
+    "kScale": (700.0, "°C", "T_k", "k(T) = k_ref/(1 + (T − T_ref)/T_k): ~170 W m⁻¹ K⁻¹ at 800 °C (approximate fit)"),
+    "cpRef": (710.0, "J kg⁻¹ K⁻¹", "c_ref", "graphite specific heat at T_ref"),
+    "cpHigh": (2000.0, "J kg⁻¹ K⁻¹", "c_∞", "high-temperature limit of the graphite specific heat"),
+    "cpScale": (670.0, "°C", "T_c", "c(T) = c_∞ − (c_∞ − c_ref)·exp(−(T − T_ref)/T_c): ~1600 at 800 °C (approximate fit)"),
+    "Tref": (20.0, "°C", "T_ref", "reference temperature of the material fits"),
+    "sinkResistance": (4.5e-5, "m² K W⁻¹", "R_sink",
+                       "effective lumped resistance of the Cu interlayer, CuCrZr heat sink and water film per unit area (not "
+                       "calibrated; it puts the CFC/Cu interface at ~1000 °C at 22 MW m⁻², consistent with element tests "
+                       "in which the interlayer approached its ~1100 °C melting point above 22 MW m⁻²)"),
+    "Tcool": (30.0, "°C", "T_cool", "cooling-water temperature (W7-X design inlet 30 °C)"),
+    "tileLimit": (1200.0, "°C", "T_lim", "tile surface temperature limit (operational, illustrative)"),
     "dt": (0.001, "s", "Δt", "time step"),
     "spinup": (3.0, "s", "t_spin", "the view starts from the state after this time with every coil off"),
 }
-MODEL_MD_START = {"Pheat": 6.0, "wettedArea": 0.1}  # MODEL.md's values of the two operating-point parameters
+MODEL_MD_START = {"Pheat": 7.5, "wettedArea": 0.1}  # MODEL.md's values of the two operating-point parameters
 TUNED = ("Pheat", "wettedArea")
 TUNING_RANGES = {"Pheat": (2.0, 8.0), "wettedArea": (0.1, 0.2)}
 
@@ -151,7 +162,8 @@ def inputs_from_artifact(art: Mapping) -> Inputs:
 class State:
     n: int  # steps taken from the initial condition; t_n = n*dt
     T: np.ndarray  # (nPhi, nTheta), keV
-    tiles: np.ndarray  # (4, nTheta), degC: target strip of diverter k along theta, at phi_k
+    tiles: np.ndarray  # (4, nTheta), degC: surface temperature of the target strip of diverter k along theta, at phi_k
+    slab: np.ndarray  # (4, nTheta, N_z), degC: cell temperatures through the tile thickness (index 0 at the surface)
 
 
 @dataclass
@@ -284,7 +296,9 @@ class Model:
     def initial_state(self) -> State:
         p = self.inp.params
         off = (0,) * N_DIVERTERS
-        return State(0, self.lcfs_temperature(0, off), np.full((N_DIVERTERS, self.inp.n_theta), p["Tcool"]))
+        n_z = int(p["tileCells"])
+        return State(0, self.lcfs_temperature(0, off), np.full((N_DIVERTERS, self.inp.n_theta), p["Tcool"]),
+                     np.full((N_DIVERTERS, self.inp.n_theta, n_z), p["Tcool"]))
 
     def time(self, n: int) -> float:
         return n * self.inp.params["dt"]
@@ -294,8 +308,46 @@ class Model:
         p = self.inp.params
         sol = self.solve(st.n, coils)
         loads = self.strip_loads(sol["q_t"], sol["a"])
-        tiles = st.tiles + p["dt"] * (p["Tcool"] + p["tileGain"] * loads - st.tiles) / p["tauTile"]  # 11
-        return State(st.n + 1, self.lcfs_temperature(st.n + 1, coils), tiles)
+        slab, tiles = self.conduct(st.slab, loads)  # 11
+        return State(st.n + 1, self.lcfs_temperature(st.n + 1, coils), tiles, slab)
+
+    # ---- step 11: the tiles ---------------------------------------------------------------------------------------
+    def conductivity(self, T):
+        """k(T) = k_ref / (1 + (T - T_ref)/T_k) (W m^-1 K^-1)."""
+        p = self.inp.params
+        return p["kRef"] / (1 + (T - p["Tref"]) / p["kScale"])
+
+    def heat_capacity(self, T):
+        """c(T) = c_inf - (c_inf - c_ref) exp(-(T - T_ref)/T_c) (J kg^-1 K^-1)."""
+        p = self.inp.params
+        return p["cpHigh"] - (p["cpHigh"] - p["cpRef"]) * np.exp(-(T - p["Tref"]) / p["cpScale"])
+
+    def conduct(self, slab: np.ndarray, loads: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Step 11: one explicit conduction step through the tile thickness, cell-centred, dz = d/N_z. The load
+        q = Q MW (W/m^2) enters cell 0; neighbours exchange G (T_j - T_j+1), G = 2 k_j k_j+1 / (dz (k_j + k_j+1));
+        the last cell loses (T - T_cool) / (dz/(2k) + R_sink) to the water; each cell rho c(T) dz dT/dt = net.
+        Returns the new slab and the surface temperature T_0 + q dz / (2 k(T_0)) of the new slab."""
+        p = self.inp.params
+        dz = p["tileThickness"] / p["tileCells"]
+        q = loads * p["MW"]
+        k = self.conductivity(slab)
+        g = 2 * k[..., :-1] * k[..., 1:] / (dz * (k[..., :-1] + k[..., 1:]))
+        flux = g * (slab[..., :-1] - slab[..., 1:])
+        sink = (slab[..., -1] - p["Tcool"]) / (dz / (2 * k[..., -1]) + p["sinkResistance"])
+        net = np.zeros_like(slab)
+        net[..., 0] = q
+        net[..., :-1] = net[..., :-1] - flux
+        net[..., 1:] = net[..., 1:] + flux
+        net[..., -1] = net[..., -1] - sink
+        new = slab + p["dt"] * net / (p["tileDensity"] * self.heat_capacity(slab) * dz)
+        surface = new[..., 0] + q * dz / (2 * self.conductivity(new[..., 0]))
+        return new, surface
+
+    def sink_flux(self, slab: np.ndarray) -> np.ndarray:
+        """Heat flux into the water (W/m^2) per strip cell."""
+        p = self.inp.params
+        dz = p["tileThickness"] / p["tileCells"]
+        return (slab[..., -1] - p["Tcool"]) / (dz / (2 * self.conductivity(slab[..., -1])) + p["sinkResistance"])
 
     # ---- diagnostics ------------------------------------------------------------------------------------------------
     def heat_flux_loads(self, st: State, coils: Sequence[int]) -> np.ndarray:
@@ -315,19 +367,28 @@ class Model:
 
     # ---- stability ---------------------------------------------------------------------------------------------------
     def stability_number(self) -> float:
-        """dt / tau_tile: the only explicit update left (the edge is quasi-steady)."""
+        """The explicit conduction step's number: dt * (largest total outflow conductance of a cell) / (rho c dz),
+        with k and c at T_ref (k falls and c rises with temperature, so above T_ref this bounds every cell). An inner
+        cell has 2k/dz, the back cell k/dz + 1/(dz/(2k) + R_sink); the update is monotone while the number is <= 1."""
         p = self.inp.params
-        return p["dt"] / p["tauTile"]
+        dz = p["tileThickness"] / p["tileCells"]
+        inner = 2 * p["kRef"] / dz
+        back = p["kRef"] / dz + 1 / (dz / (2 * p["kRef"]) + p["sinkResistance"])
+        return p["dt"] * max(inner, back) / (p["tileDensity"] * p["cpRef"] * dz)
 
     def check_stability(self) -> float:
-        """The tile update is monotone when dt <= tau_tile; the coil perturbation must keep |B| positive."""
+        """The tile update is monotone when its number is <= 1; the coil perturbation must keep |B| positive."""
         p = self.inp.params
         b_min = self.b_s * (1.0 - p["epsilon"] * self.h.sum(axis=0))
         if not np.all(b_min > 0):
             raise ValueError("the coil perturbation drives |B| to zero")
         number = self.stability_number()
         if not 0 < number <= 1:
-            raise ValueError(f"unstable parameters: dt/tau_tile {number:.4g} not in (0, 1] (MODEL.md)")
+            raise ValueError(f"unstable parameters: conduction number {number:.4g} not in (0, 1] (MODEL.md)")
+        if not (p["Tcool"] >= p["Tref"] and p["tileCells"] >= 2 and float(p["tileCells"]).is_integer()):
+            raise ValueError("the tiles need T_cool >= T_ref (the stability bound) and a whole number (>= 2) of cells")
+        if not p["sinkResistance"] >= 0:
+            raise ValueError("the heat-sink resistance must not be negative")
         # The fixed N_2pt iterations converge while the layer is conduction-limited (the map's slope -2(T_t/T_u)^nu
         # stays small); far beyond, they oscillate. Check the result at the operating loads, every coil off and every
         # coil on: the sheath with pressure balance must hold, q_par = gamma n_t keV T_t c_s(T_t), to 1e-6.

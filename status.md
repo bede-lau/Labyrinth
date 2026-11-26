@@ -1,11 +1,21 @@
 # Labyrinth · status
 
 > **Read "Current state" first, then `interface.md`, `architecture.md` and `decision.md`.**
-> Last updated 2026-11-25 on branch `control-loop-hysteresis` (`origin/control-loop-hysteresis` is behind the local branch; not merged into `main`).
+> Last updated 2026-11-26 on branch `control-loop-hysteresis` (`origin/control-loop-hysteresis` is behind the local branch; not merged into `main`).
 > The sections after "Current state" record earlier sessions.
 > Run checks through `scripts/dev.sh`, inside WSL on Windows (D-020).
 
 ## Current state
+
+### 2026-11-26: heat model version 4 — conducting CFC tiles (D-033)
+The owner asked for the physical tile next and for most of the model to become physical, deciding without asking.
+- **Tile v4** (MODEL.md step 11, `model.py`, `model.ts`, contract, artifact): 6 finite-volume cells through 6 mm of
+  NB31 CFC with k(T), c(T) fits, a heat-sink + water-film resistance R_sink 4.5e-5 m² K/W to 30 °C water. Replaces
+  tileGain and tauTile. Energy conserved cell by cell (tested every step), closed-form steady state reproduced.
+- **Operating point:** P_heat 6 → 7.5 MW. Coils off at 3 s: D1 1346, D2 1089, D3 1074, D4 1337 °C; all on:
+  549/451/427/545 °C. W7-X view scenario 1.25× → 9.4 MW mean.
+- **Checks (native):** renderer 49 files / 1,738 tests, `tsc` clean; backend `test_heatfield` 25/26 (Windows path).
+- **Review 2026-11-26: APPROVED** on the second pass (first pass: back-cell stability bound, R_sink overclaim, stale text, integer tileCells, thin TS tests, restored MODEL.md caveats).
 
 ### 2026-11-26: heat model version 3 — two-point scrape-off layer, energy conserved (D-032)
 The owner asked for maximum physical accuracy and chose energy conservation. Version 2 could not conserve energy as

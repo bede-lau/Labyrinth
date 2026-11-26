@@ -20,17 +20,19 @@ SCHEMA = "heatfield.schema.json"
 RUNTIME = "not recorded (artifact is byte-deterministic; no wall-clock values are stored)"
 MODEL_SPEC = "tasks/10-heat-field/MODEL.md"
 
-MODEL_NAME = "Two-point scrape-off-layer model with energy conservation (MODEL.md version 3)"
-MODEL_VERSION = 3
+MODEL_NAME = "Two-point scrape-off layer and conducting CFC tiles, energy conserved (MODEL.md version 4)"
+MODEL_VERSION = 4
 SUMMARY = (
     "Edge heat model on the last closed flux surface (LCFS) of the real W7-X VMEC equilibrium. A fixed heating power "
-    "(6 MW, 30 % radiated) crosses the LCFS and leaves through four schematic divertors: each takes the power of its "
+    "(7.5 MW, 30 % radiated) crosses the LCFS and leaves through four schematic divertors: each takes the power of its "
     "toroidal sector, compressed by |B| at its strike line, onto its wetted target area, so the power on the targets is "
     "exactly the heating power less the radiated part. The textbook two-point model (Spitzer parallel conduction along "
     "the field lines, sheath at the target, pressure balance) gives each divertor's upstream and target temperature, "
     "and the LCFS map draws that temperature drop into each footprint. Control coils perturb |B| and sweep each strike "
-    "line, spreading the load over the tile strip. The heating, transport and sheath inputs are W7-X orders of "
-    "magnitude; the footprint, coil-sweep and tile parameters remain illustrative. The operating point is a high-power "
+    "line, spreading the load over the tile strip. Each tile is 6 mm of CFC armour that conducts the heat through its "
+    "thickness, with temperature-dependent conductivity and heat capacity, into a water-cooled copper heat sink. The "
+    "heating, transport, sheath and tile-material inputs are W7-X orders of magnitude; the footprint and coil-sweep "
+    "parameters remain illustrative. The operating point is a high-power "
     "case (with every coil off the peak load passes the 10 MW/m² target design load at the two divertors with the "
     "higher |B|). Not fitted, not a simulation of W7-X, and every number it gives is labelled model."
 )
@@ -67,9 +69,10 @@ EQUATIONS = [
      "meaning": "Gaussian footprint of diverter k on the LCFS map, centred on its strike line (angles wrapped into "
                 "[−π, π))."},
     {"id": "tiles",
-     "text": "τ_tile dT_tile,k/dt = T_cool + K·Q_k − T_tile,k",
-     "meaning": "Lumped tile surface temperature of diverter k: relaxes to the coolant temperature plus a rise "
-                "proportional to the load; compared with the illustrative tile limit T_lim."},
+     "text": "ρ·c(T)·∂T/∂t = ∂/∂z(k(T)·∂T/∂z), −k ∂T/∂z = Q·MW at z = 0, −k ∂T/∂z = (T − T_cool)/R_sink at z = d",
+     "meaning": "Heat conduction through the CFC tile of diverter k (depth z, every θ cell of its strip): the load "
+                "enters the surface, the water-cooled heat sink takes it away at the back; k(T) falls and c(T) rises "
+                "with temperature as for NB31 CFC. The surface temperature is compared with the tile limit T_lim."},
 ]
 
 
@@ -89,14 +92,20 @@ def discretization(stability: float) -> str:
         "B_k = (1 − w)·B[j_k, i₀] + w·B[j_k, i₀+1], b_k = B_k/B_0; (8) q_t,k = P_k·b_k/A_wet (MW/m²); "
         "(9) Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ); (10) q_∥ = q_t,k·MW/sin α (W/m²; none: T_u = T_t = 0), "
         "X = ν·q_∥·L_c/κ_0, T_u = X^(1/ν), then N_2pt times: c = 2·q_∥/(γ·n_u·keV·T_u), T_t = m_i·amu·c²/(2·keV), "
-        "T_u = (T_t^ν + X)^(1/ν) (keV). One step n → n+1: (11) Tt_k[i] ← Tt_k[i] + Δt·(T_cool + K·Q_k[i] − Tt_k[i])/τ_tile "
-        "with Q_k at t_n and the coils of step n; (12) the new state's LCFS temperature at t_(n+1) with the same coils, "
+        "T_u = (T_t^ν + X)^(1/ν) (keV). One step n → n+1: (11) every strip cell k, i holds N_z tile cells "
+        "S[z] (°C, z = 0 at the surface), dz = d/N_z, k(T) = k_ref/(1 + (T − T_ref)/T_k), "
+        "c(T) = c_∞ − (c_∞ − c_ref)·exp(−(T − T_ref)/T_c), q = Q_k[i]·MW (W/m²) with Q_k at t_n and the coils of step n; "
+        "G_z = 2·k_z·k_(z+1)/(dz·(k_z + k_(z+1))), F_z = G_z·(S[z] − S[z+1]), sink = (S[N_z−1] − T_cool)/(dz/(2k_(N_z−1)) + "
+        "R_sink); net[0] = q, net[z] −= F_z, net[z+1] += F_z, net[N_z−1] −= sink (in that order); "
+        "S[z] ← S[z] + Δt·net[z]/(ρ·c(S[z])·dz), with k and c of the old S; the surface temperature "
+        "Tt_k[i] = S[0] + q·dz/(2·k(S[0])) from the new S[0]; (12) the new state's LCFS temperature at t_(n+1) with the same coils, "
         "T_u[c] = Σ_k s_k[j]·T_u,k, T[c] = (max(0, 1 − Σ_k g_k[c])·T_u[c]^ν + Σ_k g_k[c]·T_t,k^ν)^(1/ν). The initial state: "
-        "tiles T_cool, T from (12) at t_0 with every coil off. "
+        "every tile cell and surface T_cool, T from (12) at t_0 with every coil off. "
         "Diagnostics of the state after n steps (golden checkpoints): t = n·Δt; probesT = T at each model.probes [i, j]; "
         "meanT = arithmetic mean of T over all cells; peakTileC[k] = max_i Tt_k[i]; peakHeatFlux[k] = max_i Q_k[i] at t_n "
-        "with the coils of step n. Stability: the only explicit update is the tile relaxation, monotone when "
-        f"Δt/τ_tile ≤ 1; here {stability:.4f}."
+        "with the coils of step n. Stability: the only explicit update is the tile conduction, monotone when "
+        "Δt·max(2k_ref/dz, k_ref/dz + 1/(dz/(2k_ref) + R_sink))/(ρ·c_ref·dz) ≤ 1 (inner and back cell; k and c at T_ref "
+        f"bound every cell above T_ref ≤ T_cool); here {stability:.4f}."
     )
 
 
@@ -129,13 +138,15 @@ def limitations(reg: dict, params: dict) -> str:
     return (
         "Reduced model, not a simulation of W7-X. The heating power, radiated fraction, wetted area, connection length, "
         "Spitzer coefficient, sheath coefficient, separatrix density and incidence angle are W7-X orders of magnitude; "
-        "the footprint widths, the coil perturbation and sweep, and the tile gain and time constant remain illustrative. "
+        "the tile armour (6 mm CFC NB31) and the 30 °C cooling water follow the W7-X target elements, the material fits "
+        "are approximate and the heat-sink resistance is an effective lumped value, not calibrated; the footprint widths and the coil perturbation and sweep remain illustrative. "
         "The parameters are not fitted to measurements, and the model is not verified against measurements or a W7-X "
         "simulation (this repo holds no measured or simulated W7-X temperature, divertor-load or coil-response data). "
         "The geometry and |B| are real (VMEC wout_w7x_kjm.nc); temperatures, heat fluxes and tile temperatures are model "
         "output. Energy is conserved by construction: the power on the targets is the heating power less the radiated "
         "fraction; the wetted width is taken to shrink as 1/B with the compression, but the drawn strip profile keeps "
-        "its width σ_θ, so its integral is not the divertor's power (only its peak is used for the tiles). "
+        "its width σ_θ, so its integral is not the divertor's power (its peak is the wetted-area load; every θ cell "
+        "of the strip heats its own tile column). "
         "The two-point model is a textbook simplification: no volume losses along the field line other than "
         "the single radiated fraction, no momentum or particle losses (no detachment), electrons only in the conduction "
         "and T_e = T_i at the sheath; the iteration is run a fixed number of times, converged while the scrape-off layer "
@@ -146,15 +157,18 @@ def limitations(reg: dict, params: dict) -> str:
         "lies: it is not a 2D transport solution, and heat does not spread across the surface in time (the edge is "
         "quasi-steady; only the tiles evolve). The control-coil response is not validated: ε, the sweep amplitude, "
         "frequency and envelope are illustrative (the PRD keeps a validated coil response, state transfer across "
-        "equilibria and matched divertor and core-energy measurements for a later milestone). The tile is lumped (no "
-        "conduction through its depth). The prediction is this model run ahead from the current state, not the GENE-X "
+        "equilibria and matched divertor and core-energy measurements for a later milestone). Each tile cell conducts only "
+        "through its depth (1D: no lateral conduction along the strip, no erosion, no radiation from the surface); the "
+        "heat sink and water film are one thermal resistance without heat capacity, and the CFC fits k(T), c(T) are "
+        "approximations to published NB31 data; the surface temperature extrapolates with k at the first cell's centre "
+        "(a few °C below the Kirchhoff form at 16 MW/m²). The prediction is this model run ahead from the current state, not the GENE-X "
         "spatial-parallel run (D-027 §6). "
         f"Operating point (MODEL.md, Pheat and wettedArea within their stated ranges, chosen so that two divertors "
         f"pass the tile limit): {tuned}. It is a high-power case: "
-        "at 5 MW or with a larger wetted area no diverter reaches the tile limit; the two divertors whose strike lines "
-        "sit at the higher |B| (field compression ~1.23 against ~1.02) pass it. With every coil off, at "
+        "at 6 MW or with a larger wetted area no diverter reaches the tile limit; the two divertors whose strike lines "
+        "sit at the higher |B| (field compression ~1.23 against ~1.02) pass it, above the 10 MW/m² design load of the W7-X targets. With every coil off, at "
         f"{model.REGIME_STEP * params['dt']:g} s (the view's starting state) the peak tile temperatures are "
-        f"{_tiles(reg['off'])}: {', '.join(above) or 'none'} above the illustrative {limit:g} °C tile limit and "
+        f"{_tiles(reg['off'])}: {', '.join(above) or 'none'} above the {limit:g} °C tile limit and "
         f"{', '.join(below) or 'none'} below it. With every coil on from 0 s they are {_tiles(reg['on'])} at the same "
         f"time, {'all below the limit' if all(v < limit for v in reg['on']) else 'NOT all below the limit'}."
     )

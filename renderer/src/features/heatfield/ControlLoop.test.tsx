@@ -230,7 +230,7 @@ test('a coil switched by hand while a decision runs is not reverted when that de
   // Just past the minimum on-time the release probe (3,000+ steps, ~70 frames) is running: switch D1 off mid-probe.
   const handFrame = Math.round((DEFAULT_LOOP_CONFIG.minOnS + 0.1) / (17 * dt));
   let handTime = -1;
-  // 4 s after the hand switch: D1's tile (τ_tile 1 s) climbs back towards the limit within that time.
+  // 4 s after the hand switch: D1's tile (CFC plus heat sink: ~0.5–1 s to respond) climbs back towards the limit within that time.
   const run = drive(sim, 17, DEFAULT_LOOP_CONFIG.minOnS + 4, (f) => {
     if (f === handFrame) {
       sim.setCoil(0, false);

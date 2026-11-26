@@ -118,7 +118,8 @@
             "Tcore0", "rhoBlend", "B0", "sigmaPhi", "sigmaTheta", "sweepAmplitude", "sweepFrequency", "epsilon",
             "sigmaCoilPhi", "sigmaCoilTheta", "Pheat", "fRad", "wettedArea", "connectionLength", "kappa0", "conductionExponent",
             "twoPointIterations", "sheathGamma", "nSep", "ionMass", "incidence", "keV", "amu", "MW",
-            "tileGain", "Tcool", "tauTile", "tileLimit", "dt", "spinup"
+            "tileThickness", "tileCells", "tileDensity", "kRef", "kScale", "cpRef",
+            "cpHigh", "cpScale", "Tref", "sinkResistance", "Tcool", "tileLimit", "dt", "spinup"
           ],
           "additionalProperties": false,
           "properties": {
@@ -146,9 +147,17 @@
             "keV": { "$ref": "#/$defs/parameter" },
             "amu": { "$ref": "#/$defs/parameter" },
             "MW": { "$ref": "#/$defs/parameter" },
-            "tileGain": { "$ref": "#/$defs/parameter" },
+            "tileThickness": { "$ref": "#/$defs/parameter" },
+            "tileCells": { "$ref": "#/$defs/parameter" },
+            "tileDensity": { "$ref": "#/$defs/parameter" },
+            "kRef": { "$ref": "#/$defs/parameter" },
+            "kScale": { "$ref": "#/$defs/parameter" },
+            "cpRef": { "$ref": "#/$defs/parameter" },
+            "cpHigh": { "$ref": "#/$defs/parameter" },
+            "cpScale": { "$ref": "#/$defs/parameter" },
+            "Tref": { "$ref": "#/$defs/parameter" },
+            "sinkResistance": { "$ref": "#/$defs/parameter" },
             "Tcool": { "$ref": "#/$defs/parameter" },
-            "tauTile": { "$ref": "#/$defs/parameter" },
             "tileLimit": { "$ref": "#/$defs/parameter" },
             "dt": { "$ref": "#/$defs/parameter" },
             "spinup": { "$ref": "#/$defs/parameter" }
