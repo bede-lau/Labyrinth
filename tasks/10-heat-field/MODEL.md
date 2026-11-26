@@ -1,4 +1,4 @@
-# Edge heat model, version 7: two-point scrape-off layer, energy conserved, conducting CFC tiles (D-027, D-031–D-036)
+# Edge heat model, version 8: two-point scrape-off layer with an edge-dependent footprint width, energy conserved, conducting CFC tiles (D-027, D-031–D-036, D-041)
 
 **What this is.** A reduced model of the owner's loop (heat map → predicted heat load → change the magnetic field →
 new heat map) on the **real** W7-X geometry and |B| of `wout_w7x_kjm.nc`. Version 3 (D-032) replaces version 2's 2D
@@ -36,7 +36,7 @@ document exactly; a change here changes both implementations and the golden valu
 
 | Name | Symbol | Value | Unit | Meaning |
 |---|---|---|---|---|
-| Tcore0 | T_0 | 3.38144 | keV | core temperature on axis (cross-sections only), from energy confinement: the ISS04 stellarator scaling at P_heat gives the stored energy, hence the mean and axis temperature |
+| Tcore0 | T_0 | 3.38133 | keV | core temperature on axis (cross-sections only), from energy confinement: the ISS04 stellarator scaling at P_heat gives the stored energy, hence the mean and axis temperature |
 | majorRadius | R | 5.5 | m | W7-X major radius |
 | minorRadius | a | 0.53 | m | W7-X effective minor radius |
 | coreDensity | n̄ | 6e+19 | m⁻³ | line-averaged density (flat profile assumed; W7-X high-performance range) |
@@ -50,7 +50,9 @@ document exactly; a change here changes both implementations and the golden valu
 | iss04Iota | α_ι | 0.41 | – | ISS04 exponent of the rotational transform at two-thirds of the minor radius |
 | rhoBlend | ρ_b | 0.7 | – | inside ρ_b the cross-section shows the core profile only |
 | B0 | B_0 | 2.5 | T | reference field |
-| sigmaTheta | σ_θ | 0.12 | rad | width in θ of the target strip at B_0 (illustrative) |
+| sigmaTheta | σ_θ | 0.12 | rad | width in θ of the target strip at B_0 and T_λ (illustrative) |
+| widthExponent | e_λ | -1.25 | – | footprint width ∝ T_u^e_λ: λ_q = (χ_⊥ τ_∥)^½ with the conduction-limited parallel loss time τ_∥ ∝ L_c² n/(κ_0 T_u^(5/2)), χ_⊥ and n fixed (a modelling choice: the sheath-limited estimate gives −1/4, measured widths depend mainly on the poloidal field) |
+| widthRefTu | T_λ | 0.216125 | keV | upstream temperature at which σ_θ and A_wet are given (the mean coils-off nominal T_u) |
 | sweepAmplitude | A_s | 0.3 | rad | strike-line excursion when a coil is on (illustrative) |
 | sweepFrequency | f | 2 | Hz | coil (sweep) frequency (illustrative) |
 | epsilon | ε | 0.03 | – | relative |B| perturbation of one coil at its centre (illustrative) |
@@ -59,7 +61,7 @@ document exactly; a change here changes both implementations and the golden valu
 | shareShift | η | 0.3 | – | a coil fully on lowers its divertor's power weight by 1 − η (its static field moves the island); the shares are renormalised so the total is unchanged: D1 alone sheds ~24 % to the others, every coil on moves nothing (illustrative, no validated coil response) |
 | Pheat | P_heat | 7.5 | MW | heating power crossing the LCFS (W7-X: ECRH up to ~8 MW, more with NBI) |
 | fRad | f_rad | 0.3 | – | fraction of the heating power radiated before it reaches the targets |
-| wettedArea | A_wet | 0.1 | m² | effective wetted target area per divertor at B_0 |
+| wettedArea | A_wet | 0.1 | m² | effective wetted target area per divertor at B_0 and T_λ |
 | connectionLength | L_c | 200 | m | parallel connection length, upstream to target (island divertor) |
 | kappa0 | κ_0 | 6.32456e+13 | W m⁻¹ keV⁻⁷ᐟ² | Spitzer parallel conductivity coefficient (2000 W m⁻¹ eV⁻⁷ᐟ²) |
 | conductionExponent | ν | 3.5 | – | Spitzer exponent: q_∥ L_c = (κ_0/ν)(T_u^ν − T_t^ν), ν = 7/2 |
@@ -118,13 +120,24 @@ Let `wrap(x) = x − 2π·floor(x/(2π) + 0.5)` and `g(x, σ) = exp(−x²/(2σ�
    off or every coil on nothing moves. Σ_k P_k = P_heat·(1 − f_rad) for any coils.
 7. Field compression at the strike line: j_k = round(φ_k/dφ) mod nPhi; x = θ_s,k/dθ, i₀ = floor(x), w = x − i₀;
    b_k = ((1 − w)·B[j_k, i₀] + w·B[j_k, i₀+1])/B_0 (indices mod nTheta).
-8. Peak target load: q_t,k = P_k·b_k/A_wet (MW/m²): a flux tube's cross-section shrinks as 1/B.
-9. Strip load: Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ/b_k) (MW/m²). The flux tube narrows as 1/B, so with each
-   radian of strip A_wet/(√(2π)·σ_θ) of target area the strip deposits exactly P_k (version 5, D-034).
+8. Peak target load: q_t,k = P_k·b_k/(A_wet·w_k) (MW/m²): a flux tube's cross-section shrinks as 1/B.
+8b. Footprint width (version 8, D-041): w_k = (T_u,k/T_λ)^e_λ (1 if T_u,k = 0). The width is λ_q = (χ_⊥ τ_∥)^½, the
+   distance heat diffuses across the field while it drains along it. This scrape-off layer is conduction-limited
+   (T_t ≪ T_u), so the drain time is Spitzer conduction, τ_∥ ∝ L_c² n/(κ_0 T_u^(5/2)), and with χ_⊥ and n fixed the
+   width goes as T_u^(−5/4): a hotter edge drains faster along the field and the heat spreads less across it. (The
+   sheath-limited estimate τ_∥ = L_c/c_s gives −1/4 instead, and measured widths depend mainly on the poloidal field:
+   the exponent is a modelling choice, not a fit.) Steps 8, 8b and 10 depend on each other, so they are
+   solved together in one loop: from w_k = 1 and step 10's start (T_u = X^(1/ν)), N_2pt passes, each updating T_t and
+   T_u (step 10), then w_k (8b) and q_t,k and X with the new w_k (8). The width part contracts by |e_λ|·2/7 = 5/14 per
+   pass (20 passes: converged to ~1e-9).
+9. Strip load: Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ·w_k/b_k) (MW/m²). The flux tube narrows as 1/B and widens with
+   w_k, and A_wet scales the same way, so with each radian of strip A_wet/(√(2π)·σ_θ) of target area the strip deposits
+   exactly P_k (version 5, D-034).
 10. Two-point model (T in keV): q_∥ = q_t,k·MW/sin α (W/m²; if q_∥ ≤ 0 then T_u = T_t = 0); X = ν·q_∥·L_c/κ_0;
     T_u = X^(1/ν); then N_2pt times: c = 2q_∥/(γ·n_u·keV·T_u), T_t = m_i·amu·c²/(2·keV), T_u = (T_t^ν + X)^(1/ν).
     This solves Spitzer conduction T_u^ν = T_t^ν + ν q_∥ L_c/κ_0 (ν = 7/2), the sheath q_∥ = γ n_t e T_t c_s(T_t),
-    c_s = √(2eT_t/m_i) (T_e = T_i), and pressure balance 2 n_t T_t = n_u T_u.
+    c_s = √(2eT_t/m_i) (T_e = T_i), and pressure balance 2 n_t T_t = n_u T_u. In version 8 this loop runs inside the
+    joint loop of step 8b (each pass also updates w_k, q_t,k and X).
 
 ## One step, n → n+1
 
@@ -153,7 +166,7 @@ balance to 1e-6 at the operating loads (loads beyond ~50 MW/m² would not conver
 - `meanT` = arithmetic mean of T over all cells.
 - `peakTileC[k]` = max_i Tt_k[i] (the surface temperature).
 - `peakHeatFlux[k]` = max_i Q_k[i] at t_n with the coils of step n (steps 1–9). The narrowed strip (σ_θ/b_k ≈ 0.1 rad)
-  is finer than dθ ≈ 0.13 rad, so while a strike line sits between nodes this grid-sampled peak reads up to ~20 % below
+  is finer than dθ ≈ 0.13 rad, so while a strike line sits between nodes this grid-sampled peak reads up to ~20–25 % below
   q_t,k; the deposited power is unaffected.
 - Heat-flow vector (renderer only, not golden): conduction along the field lines, F_φ = −T^(ν−1)·(T₊ − T₋)/(2dφ) with
   T± the field-line neighbours (pitch ι), F_θ = ι·F_φ, in angle space; mapped to 3D with the grid tangents.
@@ -190,11 +203,13 @@ within its stated range. Requirements, checked by tests and recorded in `model.l
   `tileLimit` at step 3000.
 - The stability condition above holds.
 
-Outcome (D-033/D-034): `Pheat` 7.5 MW, `fRad` 0.3, `wettedArea` 0.1 m². The field compression at the strike lines is ~1.23
-at D1 and D4 and ~1.02 at D2 and D3, so with every coil off at 3 s the peak loads are 16.2, 13.5, 13.4, 16.1 MW/m²
-(above the 10 MW/m² design load of the W7-X targets) and the tile surfaces D1 1346, D2 1089, D3 1074, D4 1337 °C; all
-coils on from 0 s: D1 499, D2 443, D3 425, D4 497 °C (version 5's narrower strip; version 4: 549/451/427/545). The two-point model gives T_u ≈ 0.21–0.22 keV upstream and
-T_t ≈ 0.034–0.045 keV at the targets. At 6 MW (D1 1035 °C) or with a larger wetted area no diverter reaches the limit,
+Outcome (D-033/D-034, version 8 D-041): `Pheat` 7.5 MW, `fRad` 0.3, `wettedArea` 0.1 m². The field compression at the
+strike lines is ~1.23 at D1 and D4 and ~1.02 at D2 and D3, so with every coil off at 3 s the edge-dependent widths are
+w ≈ 0.95, 1.05, 1.06, 0.95 (the hotter edge narrower), the peak loads 17.0, 12.9, 12.6, 16.9 MW/m² (above the 10 MW/m²
+design load of the W7-X targets) and the tile surfaces D1 1434, D2 1029, D3 1007, D4 1419 °C; all coils on from 0 s:
+D1 526, D2 436, D3 409, D4 522 °C (version 5: 1346/1089/1074/1337 and 499/443/425/497; version 4 all on:
+549/451/427/545). The two-point model gives T_u ≈ 0.21–0.23 keV upstream and T_t ≈ 0.03–0.05 keV at the targets (up to ~0.07 keV with a coil on). At
+6 MW (D1 951 °C) or with a larger wetted area no diverter reaches the limit,
 so this is a high-power case, and the model says so. The tile values follow the W7-X target elements: NB31 CFC ~6 mm
 thick on a CuCrZr heat sink, 30 °C inlet water, designed for 10 MW/m². R_sink is an effective lumped value, not
 calibrated: it puts the CFC/Cu interface at ~1000 °C at 22 MW/m², consistent with element tests in which the interlayer

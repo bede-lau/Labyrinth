@@ -813,7 +813,7 @@ test('H16 the equation, the parameter table and the honesty notes are shown; eve
   // Parameter table: symbol, value, unit and meaning of all 30 parameters, from the artifact.
   const params = screen.getByRole('table', { name: /Parameters as written in artifacts\/heatfield.json/ });
   const rows = within(params).getAllByRole('row').slice(1);
-  expect(rows).toHaveLength(49);
+  expect(rows).toHaveLength(51);
   for (const [name, p] of Object.entries(ART.model.parameters)) {
     const row = params.querySelector<HTMLElement>(`tr[data-parameter="${name}"]`)!;
     expect(row.querySelector('th')!.textContent).toBe(p.symbol.replace('_', ''));

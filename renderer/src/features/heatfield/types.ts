@@ -18,6 +18,8 @@ export const PARAMETER_NAMES = [
   'rhoBlend',
   'B0',
   'sigmaTheta',
+  'widthExponent',
+  'widthRefTu',
   'sweepAmplitude',
   'sweepFrequency',
   'epsilon',

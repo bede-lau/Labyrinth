@@ -21,7 +21,7 @@ RUNTIME = "not recorded (artifact is byte-deterministic; no wall-clock values ar
 MODEL_SPEC = "tasks/10-heat-field/MODEL.md"
 
 MODEL_NAME = "Two-point scrape-off layer and conducting CFC tiles, energy conserved (MODEL.md version 7)"
-MODEL_VERSION = 7
+MODEL_VERSION = 8
 SUMMARY = (
     "Edge heat model on the last closed flux surface (LCFS) of the real W7-X VMEC equilibrium. A fixed heating power "
     "(7.5 MW, 30 % radiated) crosses the LCFS and leaves through four schematic divertors: each takes the power of its "
@@ -48,10 +48,14 @@ EQUATIONS = [
                 "the total never changes (one coil alone sheds ~24 %, every coil on moves nothing); the two-point "
                 "model below turns each share into the target load and the edge temperatures."},
     {"id": "target-load",
-     "text": "q_t,k = P_k·(B_k/B_0)/A_wet,  Q_k(θ) = q_t,k·g(θ − θ_s,k(t), σ_θ/b_k),  b_k = B_k/B_0",
+     "text": "q_t,k = P_k·b_k/(A_wet·w_k),  Q_k(θ) = q_t,k·g(θ − θ_s,k(t), σ_θ·w_k/b_k),  b_k = B_k/B_0,  "
+             "w_k = (T_u,k/T_λ)^e_λ  (e_λ = −5/4)",
      "meaning": "Peak heat flux on target k (MW/m²): its power on the wetted area, compressed with |B| at the strike "
                 "line (a flux tube's cross-section shrinks as 1/B); spread along the tile strip around the strike line, "
-                "narrowed as 1/B, so the strip deposits exactly P_k."},
+                "narrowed as 1/B, so the strip deposits exactly P_k. The footprint width follows the edge (version 8): "
+                "λ_q = (χ_⊥τ_∥)^½ with the conduction-limited drain time τ_∥ ∝ L_c²n/(κ_0T_u^(5/2)), so a hotter edge gives a "
+                "narrower footprint and a higher peak (a modelling choice: measured widths depend mainly on the poloidal field); solved together with the two-point model (they depend on each "
+                "other)."},
     {"id": "two-point",
      "text": "q_∥ = q_t/sin α,  T_u^ν = T_t^ν + ν·q_∥·L_c/κ_0  (ν = 7/2),  q_∥ = γ·n_t·e·T_t·c_s(T_t),  2·n_t·T_t = n_u·T_u",
      "meaning": "The two-point model of the scrape-off layer: Spitzer conduction along the connection length L_c sets the "
@@ -99,10 +103,11 @@ def discretization(stability: float) -> str:
         "(6) s_k[j] = G_k[j]/Σ_m G_m[j], G_k[j] = g(wrap(φ_j − φ_k), π/N_div), u_k = mean_c s_k, f_k = 1 − η·c_k, "
         "P_k = P_heat·(1 − f_rad)·u_k·f_k·(Σ_m u_m)/(Σ_m u_m·f_m) (MW, sums in order m = 0…3); "
         "(7) j_k = round(φ_k/dφ) mod nPhi, x = θ_s,k/dθ, i₀ = floor(x), w = x − i₀, "
-        "B_k = (1 − w)·B[j_k, i₀] + w·B[j_k, i₀+1], b_k = B_k/B_0; (8) q_t,k = P_k·b_k/A_wet (MW/m²); "
-        "(9) Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ/b_k); (10) q_∥ = q_t,k·MW/sin α (W/m²; none: T_u = T_t = 0), "
-        "X = ν·q_∥·L_c/κ_0, T_u = X^(1/ν), then N_2pt times: c = 2·q_∥/(γ·n_u·keV·T_u), T_t = m_i·amu·c²/(2·keV), "
-        "T_u = (T_t^ν + X)^(1/ν) (keV). One step n → n+1: (11) every strip cell k, i holds N_z tile cells "
+        "B_k = (1 − w)·B[j_k, i₀] + w·B[j_k, i₀+1], b_k = B_k/B_0; (8) q_t,k = P_k·b_k/(A_wet·w_k) (MW/m²); "
+        "(8b) w_k = (T_u,k/T_λ)^e_λ (1 with no plasma); (9) Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ·w_k/b_k); "
+        "(10) q_∥ = q_t,k·MW/sin α (W/m²; no power: q_t = T_u = T_t = 0, w = 1), X = ν·q_∥·L_c/κ_0, T_u = X^(1/ν) "
+        "from w_k = 1, then N_2pt times: c = 2·q_∥/(γ·n_u·keV·T_u), T_t = m_i·amu·c²/(2·keV), "
+        "T_u = (T_t^ν + X)^(1/ν) (keV), then w_k (8b), q_t,k (8), q_∥ and X with the new w_k (8, 8b, 10 solved together). One step n → n+1: (11) every strip cell k, i holds N_z tile cells "
         "S[z] (°C, z = 0 at the surface), dz = d/N_z, k(T) = k_ref/(1 + (T − T_ref)/T_k), "
         "c(T) = c_∞ − (c_∞ − c_ref)·exp(−(T − T_ref)/T_c), q = Q_k[i]·MW (W/m²) with Q_k at t_n and the coils of step n; "
         "G_z = 2·k_z·k_(z+1)/(dz·(k_z + k_(z+1))), F_z = G_z·(S[z] − S[z+1]), sink = (S[N_z−1] − T_cool)/(dz/(2k_(N_z−1)) + "
@@ -149,7 +154,7 @@ def limitations(reg: dict, params: dict) -> str:
         "Reduced model, not a simulation of W7-X. The heating power, radiated fraction, wetted area, connection length, "
         "Spitzer coefficient, sheath coefficient, separatrix density and incidence angle are W7-X orders of magnitude; "
         "the tile armour (6 mm CFC NB31) and the 30 °C cooling water follow the W7-X target elements, the material fits "
-        "are approximate and the heat-sink resistance is an effective lumped value, not calibrated; the strip width and the coil perturbation and sweep remain illustrative. "
+        "are approximate and the heat-sink resistance is an effective lumped value, not calibrated; the strip width at T_λ and the coil perturbation and sweep remain illustrative (since version 8 the width follows the edge temperature as T_u^(−5/4), a conduction-limited scrape-off layer with a fixed cross-field diffusivity; measured widths depend mainly on the poloidal field). "
         "The parameters are not fitted to measurements, and the model is not verified against measurements or a W7-X "
         "simulation (this repo holds no measured or simulated W7-X temperature, divertor-load or coil-response data). "
         "The geometry and |B| are real (VMEC wout_w7x_kjm.nc); temperatures, heat fluxes and tile temperatures are model "
@@ -157,7 +162,7 @@ def limitations(reg: dict, params: dict) -> str:
         "fraction, and the target strip narrows as 1/B with the compression so that it deposits exactly its divertor's "
         "power (each radian of strip is A_wet/(√(2π)·σ_θ) of target area). The narrowed strip (σ_θ/b_k ≈ 0.1 rad) is "
         "finer than the θ grid (0.13 rad): while a strike line sits between nodes the sampled peak heat flux reads up "
-        "to ~20 % below q_t (the deposited power is unaffected). "
+        "to ~20–25 % below q_t (the deposited power is unaffected). "
         "The two-point model is a textbook simplification: no volume losses along the field line other than "
         "the single radiated fraction, no momentum or particle losses (no detachment), electrons only in the conduction "
         "and T_e = T_i at the sheath; the iteration is run a fixed number of times, converged while the scrape-off layer "

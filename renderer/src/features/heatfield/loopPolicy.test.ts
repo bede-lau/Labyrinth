@@ -24,7 +24,7 @@ test('one diverter predicted hot switches every coil on; nothing is switched whi
       return;
     }
     expect(outcome.coils).toEqual([0, 0, 0, 0, 0]); // nothing predicted hot, nothing switched on
-    seconds(sim, 0.25);
+    seconds(sim, 0.05); // fine steps, so the first crossing is caught while only the hottest diverters are over
     expect(sim.time).toBeLessThan(20);
   }
 }, 60_000);

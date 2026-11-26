@@ -116,7 +116,7 @@
           "type": "object",
           "required": [
             "Tcore0", "majorRadius", "minorRadius", "coreDensity", "densityUnit", "iss04C", "iss04A", "iss04R", "iss04P", "iss04N", "iss04B", "iss04Iota",
-            "rhoBlend", "B0", "sigmaTheta", "sweepAmplitude", "sweepFrequency", "epsilon",
+            "rhoBlend", "B0", "sigmaTheta", "widthExponent", "widthRefTu", "sweepAmplitude", "sweepFrequency", "epsilon",
             "sigmaCoilPhi", "sigmaCoilTheta", "shareShift", "Pheat", "fRad", "wettedArea", "connectionLength", "kappa0", "conductionExponent",
             "twoPointIterations", "sheathGamma", "nSep", "ionMass", "incidence", "keV", "amu", "MW",
             "tileThickness", "tileCells", "tileDensity", "kRef", "kScale", "cpRef",
@@ -139,6 +139,8 @@
             "rhoBlend": { "$ref": "#/$defs/parameter" },
             "B0": { "$ref": "#/$defs/parameter" },
             "sigmaTheta": { "$ref": "#/$defs/parameter" },
+            "widthExponent": { "$ref": "#/$defs/parameter" },
+            "widthRefTu": { "$ref": "#/$defs/parameter" },
             "sweepAmplitude": { "$ref": "#/$defs/parameter" },
             "sweepFrequency": { "$ref": "#/$defs/parameter" },
             "epsilon": { "$ref": "#/$defs/parameter" },

@@ -26,32 +26,39 @@ function ramp(time: number, duration: number) {
 }
 
 /**
- * 0-D core energy balance (physical): dW/dt = P_in(t) − W/τ_E, with τ_E the ISS04 confinement time at the scenario's
- * mean power. The power that leaves the core, W/τ_E, is what crosses the LCFS and reaches the divertors (energy
- * conserved: until the core has filled, part of the heating goes into stored energy). The core temperature follows from
- * W (flat density, T_e = T_i, the MODEL.md profile) and the edge temperature from the two-point law T_u ∝ P^(1/ν).
+ * 0-D core energy balance (physical): dW/dt = P_in(t) − W/τ_E(P_in(t)), with τ_E the ISS04 confinement time at the
+ * heating power of the moment (τ_E ∝ P^−0.61: confinement degrades as the power rises). The power that leaves the core,
+ * W/τ_E, is what crosses the LCFS and reaches the divertors (energy conserved: until the core has filled, part of the
+ * heating goes into stored energy). The core temperature follows from W (flat density, T_e = T_i, the MODEL.md profile)
+ * and the edge temperature from the two-point law T_u ∝ P^(1/ν).
  */
 export function scenarioCoreEnergy(art: HeatfieldArtifact) {
   const p = paramsOf(art);
   const nominal = createModel(art);
   const mean = SCENARIO_POWER * p.Pheat;
+  /** τ_E at the scenario's mean power (the frequency response of the modulation is quoted with it). */
   const tau = nominal.confinementTime(mean);
   const heating = (t: number) => mean * ramp(t - HEATING_ON, HEATING_RAMP) * (1 + MODULATION * Math.sin(OMEGA * Math.max(0, t - HEATING_ON)));
-  // W on the model's time grid (exponential integrator, exact for P constant over a step), extended on demand.
+  /** ISS04 τ_E at the power of time t. Below 1 % of the mean power the heating is off and nothing is stored; τ is held
+   * at that floor so it stays finite (ISS04 diverges as P → 0). */
+  const tauAt = (t: number) => nominal.confinementTime(Math.max(heating(t), 0.01 * mean));
+  // W on the model's time grid (exponential integrator with τ_E frozen over a step: exact for P and τ constant over it),
+  // extended on demand.
   const dt = p.dt;
-  const decay = Math.exp(-dt / tau);
   const W = [0];
   const energyAt = (t: number) => {
     const n = Math.max(0, t / dt);
     while (W.length <= Math.ceil(n)) {
       const k = W.length - 1;
-      W.push(W[k]! * decay + heating(k * dt) * p.MW * tau * (1 - decay));
+      const tk = tauAt(k * dt);
+      const decay = Math.exp(-dt / tk);
+      W.push(W[k]! * decay + heating(k * dt) * p.MW * tk * (1 - decay));
     }
     const k = Math.floor(n);
     const f = n - k;
     return (1 - f) * W[k]! + f * W[Math.min(k + 1, W.length - 1)]!;
   };
-  const lossPower = (t: number) => energyAt(t) / tau / p.MW; // MW crossing the LCFS
+  const lossPower = (t: number) => energyAt(t) / tauAt(t) / p.MW; // MW crossing the LCFS
   const upstreamNominal = (() => {
     const u = nominal.upstream(0, art.diverters.items.map(() => 0));
     let s = 0;
@@ -70,8 +77,10 @@ export function scenarioCoreEnergy(art: HeatfieldArtifact) {
     heating,
     lossPower,
     coreAt: (t: number) => coreT(energyAt(t), lossPower(t)),
-    /** Steady state at a constant power P (MW). */
-    steadyCore: (P: number) => coreT(P * p.MW * nominal.confinementTime(mean), P),
+    /** τ_E (s) at time t: ISS04 at the heating power of that moment. */
+    tauAt,
+    /** Steady state at a constant power P (MW): W = P·τ_E(P). */
+    steadyCore: (P: number) => coreT(P * p.MW * nominal.confinementTime(P), P),
   };
 }
 

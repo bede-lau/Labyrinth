@@ -37,7 +37,7 @@ N_DIVERTERS = 4
 # four schematic diverters carry the power W7-X's ten units share. Spitzer's exponent and the fixed iteration count of
 # the two-point solve are data, so that neither implementation holds a numeric constant of the model.
 PARAMETERS: dict[str, tuple[float, str, str, str]] = {
-    "Tcore0": (3.381445, "keV", "T_0", "core temperature on axis (cross-sections only), from energy confinement: the "
+    "Tcore0": (3.381326, "keV", "T_0", "core temperature on axis (cross-sections only), from energy confinement: the "
                "ISS04 stellarator scaling at P_heat gives the stored energy, hence the mean and axis temperature"),
     "majorRadius": (5.5, "m", "R", "W7-X major radius"),
     "minorRadius": (0.53, "m", "a", "W7-X effective minor radius"),
@@ -52,7 +52,14 @@ PARAMETERS: dict[str, tuple[float, str, str, str]] = {
     "iss04Iota": (0.41, "–", "α_ι", "ISS04 exponent of the rotational transform at two-thirds of the minor radius"),
     "rhoBlend": (0.7, "–", "ρ_b", "inside ρ_b the cross-section shows the core profile only"),
     "B0": (2.5, "T", "B_0", "reference field"),
-    "sigmaTheta": (0.12, "rad", "σ_θ", "width in θ of the target strip at B_0 (illustrative)"),
+    "sigmaTheta": (0.12, "rad", "σ_θ", "width in θ of the target strip at B_0 and T_λ (illustrative)"),
+    "widthExponent": (-1.25, "–", "e_λ", "the footprint width scales as T_u^e_λ: λ_q = (χ_⊥ τ_∥)^(1/2), and in this "
+                      "conduction-limited scrape-off layer (T_t ≪ T_u) the parallel loss time is Spitzer conduction, "
+                      "τ_∥ ∝ L_c² n/(κ_0 T_u^(5/2)), so with χ_⊥ and n fixed e_λ = −5/4 (a hotter edge drains faster "
+                      "along the field, so the heat spreads less across it; the sheath-limited estimate would give −1/4, "
+                      "and measured widths depend mainly on the poloidal field: a modelling choice, not a fit)"),
+    "widthRefTu": (0.216125, "keV", "T_λ", "upstream temperature at which σ_θ and A_wet are given: the mean coils-off "
+                   "nominal T_u, so the nominal operating point is unchanged"),
     "sweepAmplitude": (0.30, "rad", "A_s", "strike-line excursion when a coil is on (illustrative)"),
     "sweepFrequency": (2.0, "Hz", "f", "coil (sweep) frequency (illustrative)"),
     "epsilon": (0.03, "–", "ε", "relative |B| perturbation of one coil at its centre (illustrative)"),
@@ -63,7 +70,7 @@ PARAMETERS: dict[str, tuple[float, str, str, str]] = {
                   "others, every coil on moves nothing (illustrative, no validated coil response)"),
     "Pheat": (7.5, "MW", "P_heat", "heating power crossing the LCFS (W7-X: ECRH up to ~8 MW, more with NBI)"),
     "fRad": (0.3, "–", "f_rad", "fraction of the heating power radiated before it reaches the targets"),
-    "wettedArea": (0.1, "m²", "A_wet", "effective wetted target area per divertor at B_0"),
+    "wettedArea": (0.1, "m²", "A_wet", "effective wetted target area per divertor at B_0 and T_λ"),
     "connectionLength": (200.0, "m", "L_c", "parallel connection length, upstream to target (island divertor)"),
     "kappa0": (6.324555e13, "W m⁻¹ keV⁻⁷ᐟ²", "κ_0", "Spitzer parallel conductivity coefficient (2000 W m⁻¹ eV⁻⁷ᐟ²)"),
     "conductionExponent": (3.5, "–", "ν", "Spitzer exponent: q_∥ L_c = (κ_0/ν)(T_u^ν − T_t^ν), ν = 7/2"),
@@ -262,16 +269,25 @@ class Model:
             out.append(((1 - fr) * row[i0 % self.inp.n_theta] + fr * row[(i0 + 1) % self.inp.n_theta]) / self.inp.params["B0"])
         return np.array(out)
 
-    def target_loads(self, shares: np.ndarray, b: np.ndarray) -> np.ndarray:
-        """Step 8: peak target heat flux q_t,k = P_k b_k / A_wet (MW/m^2)."""
-        return shares * b / self.inp.params["wettedArea"]
+    def target_loads(self, shares: np.ndarray, b: np.ndarray, w: np.ndarray | None = None) -> np.ndarray:
+        """Step 8: peak target heat flux q_t,k = P_k b_k / (A_wet w_k) (MW/m^2), w_k the footprint-width factor (8b)."""
+        w = np.ones(len(shares)) if w is None else w
+        return shares * b / (self.inp.params["wettedArea"] * w)
 
-    def strip_loads(self, q_t: np.ndarray, a: np.ndarray, b: np.ndarray) -> np.ndarray:
-        """Step 9: Q_k[i] = q_t,k * g(wrap(theta_i - theta_s,k), sigma_theta / b_k) (MW/m^2); (4, nTheta). The flux tube
-        narrows as 1/B, so the strip deposits exactly P_k: sum_i Q_k[i] dtheta * A_wet / (sqrt(2 pi) sigma_theta)."""
+    def width_factor(self, t_u: float) -> float:
+        """Step 8b (version 8): footprint width relative to T_lambda, w = (T_u / T_lambda)^e_lambda (conduction-limited
+        SOL, lambda_q ~ T_u^(-5/4)); 1 with no plasma."""
+        p = self.inp.params
+        return (t_u / p["widthRefTu"]) ** p["widthExponent"] if t_u > 0 else 1.0
+
+    def strip_loads(self, q_t: np.ndarray, a: np.ndarray, b: np.ndarray, w: np.ndarray | None = None) -> np.ndarray:
+        """Step 9: Q_k[i] = q_t,k * g(wrap(theta_i - theta_s,k), sigma_theta w_k / b_k) (MW/m^2); (4, nTheta). The flux
+        tube narrows as 1/B and widens with w_k, and A_wet scales the same way, so the strip deposits exactly P_k:
+        sum_i Q_k[i] dtheta * A_wet / (sqrt(2 pi) sigma_theta)."""
         ts = self.strike_lines(a)
         s = self.inp.params["sigmaTheta"]
-        return np.stack([q_t[k] * gauss(wrap(self.theta - ts[k]), s / b[k]) for k in range(N_DIVERTERS)])
+        w = np.ones(N_DIVERTERS) if w is None else w
+        return np.stack([q_t[k] * gauss(wrap(self.theta - ts[k]), s * w[k] / b[k]) for k in range(N_DIVERTERS)])
 
     def two_point(self, q_t: float) -> tuple[float, float]:
         """Step 10: (T_u, T_t) in keV from the peak target load q_t (MW/m^2): q_par = q_t MW / sin(alpha),
@@ -291,6 +307,29 @@ class Model:
             t_u = (t_t ** nu + x) ** (1 / nu)
         return t_u, t_t
 
+    def edge_point(self, load: float) -> tuple[float, float, float, float]:
+        """Steps 8, 8b, 10 together for one divertor (version 8): (q_t, T_u, T_t, w) from load = P_k b_k (MW). One
+        fixed-point loop of N_2pt passes: each pass updates T_t and T_u (step 10), then the width w (8b) and the load
+        q_t = load/(A_wet w) (8). The width part contracts by |e_lambda| 2/7 = 5/14 per pass. No power: (0, 0, 0, 1)."""
+        p = self.inp.params
+        if not load > 0:
+            return 0.0, 0.0, 0.0, 1.0
+        nu = p["conductionExponent"]
+        w = 1.0
+        q_t = load / p["wettedArea"]
+        x = nu * q_t * p["MW"] / math.sin(p["incidence"]) * p["connectionLength"] / p["kappa0"]
+        t_u = x ** (1 / nu)
+        t_t = 0.0
+        for _ in range(int(p["twoPointIterations"])):
+            q_par = q_t * p["MW"] / math.sin(p["incidence"])
+            c = 2 * q_par / (p["sheathGamma"] * p["nSep"] * p["keV"] * t_u)
+            t_t = p["ionMass"] * p["amu"] * c * c / (2 * p["keV"])
+            t_u = (t_t ** nu + x) ** (1 / nu)
+            w = self.width_factor(t_u)
+            q_t = load / (p["wettedArea"] * w)
+            x = nu * q_t * p["MW"] / math.sin(p["incidence"]) * p["connectionLength"] / p["kappa0"]
+        return q_t, t_u, t_t, w
+
     def solve(self, n: int, coils: Sequence[int]) -> dict:
         """Steps 1-10 at t_n for these coils (cached per (n, coils))."""
         key = (n, tuple(float(c) for c in coils))
@@ -300,9 +339,10 @@ class Model:
         a = self.coil_drive(coils, self.time(n))
         B = self.field(a)
         b = self.compression(B, a)
-        q_t = self.target_loads(self.power_shares(coils), b)
-        tp = [self.two_point(float(q)) for q in q_t]
-        out = {"a": a, "B": B, "b": b, "q_t": q_t, "Tu": np.array([u for u, _ in tp]), "Tt": np.array([t for _, t in tp])}
+        shares = self.power_shares(coils)
+        ep = [self.edge_point(float(shares[k] * b[k])) for k in range(N_DIVERTERS)]  # steps 8, 8b, 10
+        out = {"a": a, "B": B, "b": b, "w": np.array([e[3] for e in ep]), "q_t": np.array([e[0] for e in ep]),
+               "Tu": np.array([e[1] for e in ep]), "Tt": np.array([e[2] for e in ep])}
         if len(self._cache) > 64:
             self._cache.clear()
         self._cache[key] = out
@@ -347,7 +387,7 @@ class Model:
         """One step n -> n+1: tiles from the loads at t_n (step 11); T of the new state at t_(n+1) (step 12)."""
         p = self.inp.params
         sol = self.solve(st.n, coils)
-        loads = self.strip_loads(sol["q_t"], sol["a"], sol["b"])
+        loads = self.strip_loads(sol["q_t"], sol["a"], sol["b"], sol["w"])
         slab, tiles = self.conduct(st.slab, loads)  # 11
         return State(st.n + 1, self.lcfs_temperature(st.n + 1, coils), tiles, slab)
 
@@ -393,7 +433,7 @@ class Model:
     def heat_flux_loads(self, st: State, coils: Sequence[int]) -> np.ndarray:
         """Q_k[i] from the coils at the state's time t_n (steps 1-9); (4, nTheta)."""
         sol = self.solve(st.n, coils)
-        return self.strip_loads(sol["q_t"], sol["a"], sol["b"])
+        return self.strip_loads(sol["q_t"], sol["a"], sol["b"], sol["w"])
 
     def diagnostics(self, st: State, coils: Sequence[int]) -> dict:
         return {

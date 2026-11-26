@@ -260,11 +260,11 @@ def test_H3_four_schematic_diverters_at_quarter_turns():
 
 
 # ---- H4: the reference model ----------------------------------------------------------------------------------------
-MODEL_MD_TABLE = {  # tasks/10-heat-field/MODEL.md "Parameters", version 7 (Pheat and wettedArea set the operating point)
-    "Tcore0": (3.381445, "keV"), "majorRadius": (5.5, "m"), "minorRadius": (0.53, "m"), "coreDensity": (6.0e19, "m⁻³"),
+MODEL_MD_TABLE = {  # tasks/10-heat-field/MODEL.md "Parameters", version 8 (Pheat and wettedArea set the operating point)
+    "Tcore0": (3.381326, "keV"), "majorRadius": (5.5, "m"), "minorRadius": (0.53, "m"), "coreDensity": (6.0e19, "m⁻³"),
     "densityUnit": (1.0e19, "m⁻³"), "iss04C": (0.134, "s"), "iss04A": (2.28, "–"), "iss04R": (0.64, "–"),
     "iss04P": (-0.61, "–"), "iss04N": (0.54, "–"), "iss04B": (0.84, "–"), "iss04Iota": (0.41, "–"), "rhoBlend": (0.7, "–"), "B0": (2.5, "T"),
-    "sigmaTheta": (0.12, "rad"), "sweepAmplitude": (0.30, "rad"), "sweepFrequency": (2.0, "Hz"), "epsilon": (0.03, "–"),
+    "sigmaTheta": (0.12, "rad"), "widthExponent": (-1.25, "–"), "widthRefTu": (0.216125, "keV"), "sweepAmplitude": (0.30, "rad"), "sweepFrequency": (2.0, "Hz"), "epsilon": (0.03, "–"),
     "sigmaCoilPhi": (0.20, "rad"), "sigmaCoilTheta": (0.60, "rad"), "shareShift": (0.3, "–"), "Pheat": (7.5, "MW"), "fRad": (0.3, "–"),
     "wettedArea": (0.1, "m²"), "connectionLength": (200.0, "m"), "kappa0": (6.324555e13, "W m⁻¹ keV⁻⁷ᐟ²"),
     "conductionExponent": (3.5, "–"), "twoPointIterations": (20.0, "–"), "sheathGamma": (7.0, "–"),
@@ -345,21 +345,44 @@ def _literal_step(inp: model.Inputs, slab: np.ndarray, n: int, coils) -> tuple[n
             i0 = math.floor(x)
             w = x - i0
             b = ((1 - w) * B(i0) + w * B(i0 + 1)) / p["B0"]
-            q_t = shares[k] * b / p["wettedArea"]  # 8
-            q_par = q_t * p["MW"] / math.sin(p["incidence"])  # 10
             nu = p["conductionExponent"]
-            X = nu * q_par * p["connectionLength"] / p["kappa0"]
+
+            def two_point(q_t):  # 10
+                q_par = q_t * p["MW"] / math.sin(p["incidence"])
+                if not q_par > 0:
+                    return 0.0, 0.0
+                X = nu * q_par * p["connectionLength"] / p["kappa0"]
+                tu = X ** (1 / nu)
+                tt = 0.0
+                for _ in range(int(p["twoPointIterations"])):
+                    c = 2 * q_par / (p["sheathGamma"] * p["nSep"] * p["keV"] * tu)
+                    tt = p["ionMass"] * p["amu"] * c * c / (2 * p["keV"])
+                    tu = (tt ** nu + X) ** (1 / nu)
+                return tu, tt
+
+            def width(tu):  # 8b
+                return (tu / p["widthRefTu"]) ** p["widthExponent"] if tu > 0 else 1.0
+
+            # 8, 8b, 10 together: one loop of N_2pt passes, each updating T_t, T_u, then w and q_t
+            load = shares[k] * b
+            wk = 1.0
+            q_t = load / p["wettedArea"]  # 8
+            X = nu * q_t * p["MW"] / math.sin(p["incidence"]) * p["connectionLength"] / p["kappa0"]
             tu = X ** (1 / nu)
             tt = 0.0
             for _ in range(int(p["twoPointIterations"])):
+                q_par = q_t * p["MW"] / math.sin(p["incidence"])  # 10
                 c = 2 * q_par / (p["sheathGamma"] * p["nSep"] * p["keV"] * tu)
                 tt = p["ionMass"] * p["amu"] * c * c / (2 * p["keV"])
                 tu = (tt ** nu + X) ** (1 / nu)
-            out.append((ts[k], q_t, tu, tt, b))
+                wk = width(tu)  # 8b
+                q_t = load / (p["wettedArea"] * wk)  # 8
+                X = nu * q_t * p["MW"] / math.sin(p["incidence"]) * p["connectionLength"] / p["kappa0"]
+            out.append((ts[k], q_t, tu, tt, b, wk))
         return out
 
     now = solve(n)
-    Q = np.array([[now[k][1] * g(wrap(th[i] - now[k][0]), p["sigmaTheta"] / now[k][4]) for i in range(n_t)]
+    Q = np.array([[now[k][1] * g(wrap(th[i] - now[k][0]), p["sigmaTheta"] * now[k][5] / now[k][4]) for i in range(n_t)]
                   for k in range(4)])  # 9
     n_z = int(p["tileCells"])
     dz = p["tileThickness"] / n_z
@@ -475,20 +498,22 @@ def test_H4_energy_is_conserved_power_in_equals_power_on_the_targets():
         for n in (0, 77, 250):
             sol = m.solve(n, coils)
             b = m.compression(sol["B"], sol["a"])
-            # what lands on the wetted area (de-compressed to B_0) is exactly the divertor's power
-            np.testing.assert_allclose(sol["q_t"] * p["wettedArea"] / b, shares, rtol=1e-12)
-            # the strip deposits exactly that power: it narrows as 1/B, each radian of strip is A_wet/(sqrt(2pi) s_theta)
-            Q = m.strip_loads(sol["q_t"], sol["a"], sol["b"])
+            # what lands on the wetted area A_wet w_k (de-compressed to B_0) is exactly the divertor's power
+            np.testing.assert_allclose(sol["q_t"] * p["wettedArea"] * sol["w"] / b, shares, rtol=1e-12)
+            # the strip deposits exactly that power: it narrows as 1/B and widens with w_k as A_wet does, so each radian
+            # of strip is still A_wet/(sqrt(2pi) s_theta) (version 8: w_k cancels)
+            Q = m.strip_loads(sol["q_t"], sol["a"], sol["b"], sol["w"])
             area_per_rad = p["wettedArea"] / (math.sqrt(TAU) * p["sigmaTheta"])
-            # (a grid sum of the Gaussian: ~4e-5 off its integral at the narrowest width, sigma_theta/1.23 < dtheta)
-            np.testing.assert_allclose(Q.sum(axis=1) * m.dtheta * area_per_rad, shares, rtol=1e-4)
+            # (a grid sum of the Gaussian: ~1e-4 off its integral at the narrowest width, sigma_theta*w/1.23 < dtheta,
+            # w ~ 0.95 for the hottest edge in version 8)
+            np.testing.assert_allclose(Q.sum(axis=1) * m.dtheta * area_per_rad, shares, rtol=2e-4)
     # the coils move power between divertors (the field moves the islands) but never create or lose any
     total = p["Pheat"] * (1 - p["fRad"])
     for coils in ((1, 0, 1, 0), (1, 0, 0, 0), (0.5, 1, 0, 0.25), (1, 1, 1, 1)):
         moved = m.power_shares(coils)
         assert moved.sum() == pytest.approx(total, rel=1e-12)
         sol = m.solve(31, coils)
-        np.testing.assert_allclose(sol["q_t"] * p["wettedArea"] / sol["b"], moved, rtol=1e-12)
+        np.testing.assert_allclose(sol["q_t"] * p["wettedArea"] * sol["w"] / sol["b"], moved, rtol=1e-12)
     one = m.power_shares((1, 0, 0, 0))
     eta = p["shareShift"]
     assert one[0] == pytest.approx(total / 4 * (1 - eta) * 4 / (4 - eta), rel=1e-6)  # D1 sheds, the others gain equally
@@ -533,7 +558,9 @@ def test_H4_the_lcfs_sits_at_the_upstream_temperature():
         up = (m.sector * sol["Tu"][:, None]).sum(axis=0)
         np.testing.assert_allclose(T, up[:, None] * np.ones((1, N_THETA)), rtol=1e-12)
         assert T.min() >= sol["Tu"].min() * (1 - 1e-9) and T.max() <= sol["Tu"].max() * (1 + 1e-9)
-        assert T.min() > 3 * sol["Tt"].max()  # nothing on the LCFS is as cold as a target
+        # nothing on the LCFS is as cold as a target: the layer stays conduction-dominated (T_u/T_t ~ 3 at the hottest
+        # target with a coil on in version 8, where the narrower footprint raises T_t)
+        assert T.min() > 2 * sol["Tt"].max()
 
 
 def test_H4_stability_is_the_tile_conduction():
@@ -686,7 +713,7 @@ def test_H5_regime_requirements_hold():
 
 def test_H5_model_text_states_what_the_model_is():
     m = built()["model"]
-    assert m["version"] == 7 and m["name"] and m["summary"]
+    assert m["version"] == 8 and m["name"] and m["summary"]
     ids = [e["id"] for e in m["equations"]]
     assert ids == ["power", "target-load", "two-point", "lcfs-map", "field", "strike-line", "core", "tiles"]
     assert all(e["text"] and e["meaning"] for e in m["equations"])
@@ -773,3 +800,27 @@ def test_H6_manifest_lists_heatfield():
     assert entry["path"] == "heatfield.json" and entry["schema"] == "heatfield.schema.json"
     assert entry["sha256"] == io.sha256_file(paths.ARTIFACTS / "heatfield.json")
     assert (artifact.ARTIFACT_ID, artifact.SCHEMA) == ("heatfield", "heatfield.schema.json")
+
+
+def test_H4_the_footprint_width_follows_the_edge_temperature_version_8():
+    """MODEL.md step 8b: w = (T_u/T_lambda)^e_lambda (conduction-limited SOL: lambda_q ~ T_u^(-5/4)), solved with the two-point model."""
+    inp = written_inputs()
+    p = inp.params
+    m = model.Model(inp)
+    assert p["widthExponent"] == -1.25
+    sol = m.solve(0, (0, 0, 0, 0))
+    # the fixed point: each w_k is the width of its own T_u, and T_u is the two-point solution of its own load
+    for k in range(4):
+        # (N_2pt = 20 passes at contraction 5/14: converged to ~1e-9 of the first step's change)
+        assert sol["w"][k] == pytest.approx((sol["Tu"][k] / p["widthRefTu"]) ** p["widthExponent"], rel=1e-9)
+        assert sol["Tu"][k] == pytest.approx(m.two_point(float(sol["q_t"][k]))[0], rel=1e-9)
+    # T_lambda is the mean coils-off T_u, so the nominal widths straddle 1 within a few percent (0.95-1.06 at t = 0)
+    assert sol["Tu"].mean() == pytest.approx(p["widthRefTu"], rel=1e-2)
+    assert np.all(np.abs(sol["w"] - 1) < 0.06)
+    # the hotter edge has the narrower footprint
+    order = np.argsort(sol["Tu"])
+    assert np.all(np.diff(sol["w"][order]) < 0)
+    # more power: hotter edge, narrower footprint, and a peak load that rises faster than the power
+    hot = model.Model(inp.with_params(Pheat=2 * p["Pheat"])).solve(0, (0, 0, 0, 0))
+    assert np.all(hot["Tu"] > sol["Tu"]) and np.all(hot["w"] < sol["w"])
+    assert np.all(hot["q_t"] / sol["q_t"] > 2)

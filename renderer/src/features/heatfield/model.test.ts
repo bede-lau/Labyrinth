@@ -280,7 +280,7 @@ test('H8 the CFC tile conducts heat into the water and conserves energy every st
   expect(one.steadySurface(12)).toBeGreaterThan(one.steadySurface(10));
 });
 
-test('H8 each strip deposits exactly its divertor power: it narrows as 1/B (MODEL.md step 9, version 5)', () => {
+test('H8 each strip deposits exactly its divertor power: it narrows as 1/B and widens with w_k as A_wet does (MODEL.md step 9, versions 5 and 8)', () => {
   const areaPerRadian = P.wettedArea / (Math.sqrt(2 * Math.PI) * P.sigmaTheta);
   for (const coils of [OFF, [1, 1, 1, 1]]) {
     const st = model.advance(model.initialState(), coils, 137);
@@ -289,7 +289,7 @@ test('H8 each strip deposits exactly its divertor power: it narrows as 1/B (MODE
     for (let k = 0; k < model.nDiverters; k++) {
       let sum = 0;
       for (let i = 0; i < model.nTheta; i++) sum += q[k * model.nTheta + i]!;
-      expect(Math.abs((sum * model.dTheta * areaPerRadian) / shares[k]! - 1)).toBeLessThan(1e-4);
+      expect(Math.abs((sum * model.dTheta * areaPerRadian) / shares[k]! - 1)).toBeLessThan(2e-4); // the grid sum of the narrowest Gaussian (σ_θ·w/b, w ≈ 0.95)
     }
   }
 });

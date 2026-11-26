@@ -7,6 +7,10 @@
 
 ## Current state
 
+### 2026-11-26: heat model v8 — footprint width follows the edge; τ_E follows the power (D-041)
+- MODEL.md step 8b: σ_θ and A_wet scale as (T_u/T_λ)^(−5/4) (conduction-limited SOL), solved with the two-point model in
+  one loop; new parameters widthExponent, widthRefTu; Tcore0 3.381326. W7-X view: τ_E is ISS04 at the instantaneous power.
+
 ### 2026-11-26: W7-X view — field change on the 3D surface (D-040)
 - New "Field change" layer: ΔB/B₀ on the LCFS (purple weaker, grey none, orange stronger; tidy auto range), with a colour
   bar and a plain-words line. Same numbers as the "Magnetic field change" card (tested).

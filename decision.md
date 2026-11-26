@@ -587,3 +587,42 @@ are the model's own |B| with the coil drive, the same numbers the card plots alo
 
 **Consequences.** The change is the model's illustrative coil perturbation (ε, Gaussian envelopes around each divertor),
 not a field from real coil currents; the field lines still do not move (D-039 addendum 2).
+
+## D-041 · Heat model v8: footprint width follows the edge; τ_E follows the heating power (maintainer, 2026-11-26)
+**Context.** The owner asked for the next two physics fixes from the list of what is still not physical: (1) τ_E held at
+the mean power, and (2) the strike-line width as a fixed input.
+
+**Decision.**
+- **(1) τ_E follows the heating power.** In the W7-X view's 0-D core balance, τ_E is ISS04 at the heating power of the
+  moment (τ ∝ P^−0.61), integrated with τ frozen over a step (`scenarioCoreEnergy`).
+  - Below 1 % of the mean power, τ is held at that floor, since ISS04 diverges at zero power and nothing is stored there.
+  - The modulation's quoted range still uses τ at the mean power.
+- **(2) The footprint width follows the edge temperature (MODEL.md step 8b, version 8).**
+  - λ_q = (χ_⊥τ_∥)^½: how far heat diffuses across the field while it drains along it. This scrape-off layer is
+    conduction-limited (T_t ≪ T_u), so τ_∥ is Spitzer conduction, ∝ L_c²n/(κ_0T_u^(5/2)). With χ_⊥ and n fixed,
+    λ_q ∝ T_u^(−5/4) (e_λ = −1.25).
+  - A first version used the sheath-limited estimate (−1/4). The reviewer pointed out it is the wrong regime for this
+    model.
+  - Measured (Eich-type) widths depend mainly on the poloidal field, not on power, so the exponent is a modelling choice,
+    stated as such.
+  - σ_θ and A_wet both scale by w_k = (T_u,k/T_λ)^e_λ, so the strip still deposits exactly P_k.
+  - T_λ = 0.216125 keV, the self-consistent mean coils-off T_u. Tcore0 is updated to the new ISS04 value,
+    3.381326 keV.
+  - Steps 8, 8b and 10 run in one fixed-point loop of N_2pt passes (the width part contracts by 5/14 per pass). The cost
+    matches the old two-point solve.
+  - New parameters: `widthExponent` and `widthRefTu`. Contract, Python reference, TS port, goldens and MODEL.md are all
+    updated.
+
+**Consequences.**
+- **Size of the width effect:** the nominal widths differ by about ±5 % between divertors (w 0.949–1.057, the hotter ones
+  narrower). As the power changes, w ∝ P^(e_λ·2/7) = P^(−5/14): about −40 % across the 2–8 MW tuning range, so the peak
+  load rises faster than the power.
+- **v8 operating point** (coils off at 3 s, MODEL.md "Outcome"):
+  - peak loads 17.0 / 12.9 / 12.6 / 16.9 MW/m²;
+  - tiles 1434 / 1029 / 1007 / 1419 °C;
+  - all coils on: 526 / 436 / 409 / 522 °C;
+  - at 6 MW the hottest tile is 951 °C, still below the limit.
+  - (v5 was 1346 / 1089 / 1074 / 1337 and 499 / 443 / 425 / 497 °C.)
+- **The loop-policy test now steps in 0.05 s:** with τ_E following the power, every divertor crosses the limit within
+  one 0.25 s step, so the mixed case (some hot, some not) is caught with finer steps.
+- **Still illustrative:** χ_⊥ and n are held fixed, there is no island flux expansion, and σ_θ at T_λ remains an input.

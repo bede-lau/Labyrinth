@@ -249,23 +249,34 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     return Float64Array.from(u, (uk, k) => (((p.Pheat * (1 - p.fRad)) * uk) * f[k]! * total) / weighted);
   };
 
-  /** Step 10: (T_u, T_t) in keV for a peak target load q_t (MW/m²). */
-  const twoPoint = (qt: number): [number, number] => {
-    const qPar = (qt * p.MW) / Math.sin(p.incidence);
-    if (!(qPar > 0)) return [0, 0];
-    const x = (nu * qPar * p.connectionLength) / p.kappa0;
+  /** Step 8b (version 8): footprint width relative to T_λ, w = (T_u/T_λ)^e_λ (conduction-limited SOL, e_λ = −5/4); 1 with no plasma. */
+  const widthFactor = (tu: number) => (tu > 0 ? Math.pow(tu / p.widthRefTu, p.widthExponent) : 1);
+
+  /**
+   * Steps 8, 8b, 10 together for one divertor (version 8): [q_t, T_u, T_t, w] from load = P_k·b_k (MW). One fixed-point
+   * loop of N_2pt passes: each updates T_t and T_u (10), then the width w (8b) and the load q_t = load/(A_wet·w) (8).
+   */
+  const edgePoint = (load: number): [number, number, number, number] => {
+    if (!(load > 0)) return [0, 0, 0, 1];
+    let w = 1;
+    let qt = load / p.wettedArea;
+    let x = (((nu * qt * p.MW) / Math.sin(p.incidence)) * p.connectionLength) / p.kappa0;
     let tu = Math.pow(x, 1 / nu);
     let tt = 0;
     for (let it = 0; it < p.twoPointIterations; it++) {
+      const qPar = (qt * p.MW) / Math.sin(p.incidence);
       const c = (2 * qPar) / (p.sheathGamma * p.nSep * p.keV * tu);
       tt = (p.ionMass * p.amu * c * c) / (2 * p.keV);
       tu = Math.pow(Math.pow(tt, nu) + x, 1 / nu);
+      w = widthFactor(tu);
+      qt = load / (p.wettedArea * w);
+      x = (((nu * qt * p.MW) / Math.sin(p.incidence)) * p.connectionLength) / p.kappa0;
     }
-    return [tu, tt];
+    return [qt, tu, tt, w];
   };
 
   /** Steps 1, 4, 6–10 at t_n for these coils (the last few are cached). */
-  const cache = new Map<string, { a: Float64Array; strike: Float64Array; b: Float64Array; edge: EdgeSolution }>();
+  const cache = new Map<string, { a: Float64Array; strike: Float64Array; b: Float64Array; w: Float64Array; edge: EdgeSolution }>();
   const solve = (n: number, coils: Coils) => {
     const key = n + ':' + Array.from({ length: nDiv }, (_, k) => coils[k] ?? 0).join(',');
     const hit = cache.get(key);
@@ -278,6 +289,7 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
     const Tu = new Float64Array(nDiv);
     const Tt = new Float64Array(nDiv);
     const bK = new Float64Array(nDiv);
+    const wK = new Float64Array(nDiv);
     for (let k = 0; k < nDiv; k++) {
       // Step 7: |B| at the strike line on plane j_k, linear in θ between grid nodes.
       const x = strike[k]! / dTheta;
@@ -286,22 +298,22 @@ export function createModel(art: HeatfieldArtifact, heating?: (time: number) => 
       const row = jK[k]! * nTheta;
       const b = ((1 - fr) * fieldAt(a, row + mod(i0, nTheta)) + fr * fieldAt(a, row + mod(i0 + 1, nTheta))) / p.B0;
       bK[k] = b;
-      qT[k] = (shares[k]! * b) / p.wettedArea; // 8
-      [Tu[k], Tt[k]] = twoPoint(qT[k]!); // 10
+      [qT[k], Tu[k], Tt[k], wK[k]] = edgePoint(shares[k]! * b); // 8, 8b, 10
     }
-    const out = { a, strike, b: bK, edge: { shares, qT, Tu, Tt } };
+    const out = { a, strike, b: bK, w: wK, edge: { shares, qT, Tu, Tt } };
     // A small bound (any will do; the grid's θ count avoids a numeric literal, H8): a step reads t_n and t_(n+1) only.
     if (cache.size > nTheta) cache.clear();
     cache.set(key, out);
     return out;
   };
 
-  /** Step 9: Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ/b_k): the flux tube narrows as 1/B, the strip deposits P_k. */
+  /** Step 9: Q_k[i] = q_t,k·g(wrap(θ_i − θ_s,k), σ_θ·w_k/b_k): the flux tube narrows as 1/B and widens with w_k (as A_wet
+   * does), so the strip deposits P_k. */
   const loadsInto = (s: ReturnType<typeof solve>, out: Float64Array) => {
     for (let k = 0; k < nDiv; k++) {
       const ts = s.strike[k]!;
       const q = s.edge.qT[k]!;
-      const width = p.sigmaTheta / s.b[k]!;
+      const width = (p.sigmaTheta * s.w[k]!) / s.b[k]!;
       for (let i = 0; i < nTheta; i++) out[k * nTheta + i] = q * gauss(wrap(theta[i]! - ts), width);
     }
     return out;

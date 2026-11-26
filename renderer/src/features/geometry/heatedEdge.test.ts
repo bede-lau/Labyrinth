@@ -191,3 +191,18 @@ test('the scenario heating is SCENARIO_POWER times the nominal power, and the mo
     expect(total).toBeLessThanOrEqual(h.hi * (1 + 1e-9));
   }
 });
+
+test('τ_E follows the heating power (ISS04, τ ∝ P^−0.61): shorter at the modulation peak, and the loss is W/τ_E(P(t))', () => {
+  const art = fiveTargetScenario(JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/heatfield.json'), 'utf8')));
+  const core = scenarioCoreEnergy(art);
+  const p = startupSimulation(art).model.params;
+  // Over a modulation period (5 s), τ_E is shortest where the heating is highest.
+  const times = Array.from({ length: 50 }, (_, i) => 6 + 0.1 * i);
+  const hi = times.reduce((a, t) => (core.heating(t) > core.heating(a) ? t : a));
+  const lo = times.reduce((a, t) => (core.heating(t) < core.heating(a) ? t : a));
+  expect(core.tauAt(hi)).toBeLessThan(core.tauAt(lo));
+  expect(core.tauAt(hi) / core.tauAt(lo)).toBeCloseTo((core.heating(hi) / core.heating(lo)) ** p.iss04P, 10);
+  // The mean-power τ quoted in the view is ISS04 at the mean.
+  expect(core.tauAt(hi)).toBeLessThan(core.tau);
+  expect(core.tauAt(lo)).toBeGreaterThan(core.tau);
+});
