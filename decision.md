@@ -626,3 +626,26 @@ the mean power, and (2) the strike-line width as a fixed input.
 - **The loop-policy test now steps in 0.05 s:** with τ_E following the power, every divertor crosses the limit within
   one 0.25 s step, so the mixed case (some hot, some not) is caught with finer steps.
 - **Still illustrative:** χ_⊥ and n are held fixed, there is no island flux expansion, and σ_θ at T_λ remains an input.
+
+## D-042 · W7-X view: plasma tracers stream along the field into their divertor (maintainer, 2026-11-27)
+**Context.** The owner asked whether the plasma particles' movement is physical. It was not: each tracer looped in a
+small ellipse round its divertor (φ_k + 0.13·sin 1.9t, θ_c + 0.48·cos 1.9t). Only its readings came from the model.
+
+**Decision.** Charged particles stream along the magnetic field. In the scrape-off layer they run from upstream to the
+targets at about the sound speed. So now:
+- **Path:** each tracer follows the field line through its divertor's strike line, the model's own, swept by the coils.
+  - It starts 0.9·π/N toroidally upstream, inside its own sector, reaches the plate, and starts again with a fresh trail.
+  - Field lines at any label α are interpolated in α between the 8 lines traced on the VMEC equilibrium, using each
+    sample's VMEC θ found from its position, so the equilibrium's λ is kept (`fieldLineAtlas`).
+- **Timing:** what is drawn is only the last ~3 m of a ~200 m connection length that winds many times round the island.
+  - Real ions move at up to c_s; Mach 1 is reached only at the target, and upstream the flow is subsonic. So the whole
+    transit takes at least L_c/c_s(T_u) ≈ 1 ms.
+  - On screen the drawn piece takes FLIGHT_SECONDS = 1.2 s, about 2.5 m/s.
+  - The panel states the drawn length, the lower bound on the real transit, and the slow motion against the sound speed
+    (about 80,000×), and it names the simplifications below.
+
+**Consequences.**
+- **Still drawn for clarity:** the tracers run on the LCFS (the SOL lies just outside it) and only in +φ; real SOL flows
+  run from a stagnation point toward both targets. There is one tracer per divertor and no gyration or drifts.
+- **Continuity test:** it now allows the jump when a tracer lands and starts again upstream, and checks that the trail
+  restarts there.

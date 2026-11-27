@@ -426,3 +426,4 @@
 .heat-story__icon--comet { width: 1.3rem; height: .45rem; border-radius: .3rem; }
 .heat-story__icon--push { border-radius: 0; width: 1.2rem; height: .8rem; clip-path: polygon(0 35%, 60% 35%, 60% 0, 100% 50%, 60% 100%, 60% 65%, 0 65%); }
 p.heat-story { display: grid; grid-template-columns: 1.4rem 1fr; align-items: center; gap: .5rem; }
+.particle-readout__note { margin: .2rem 0 .5rem; font-size: .75rem; color: var(--lab-color-text-subtle); }
