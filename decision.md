@@ -649,3 +649,15 @@ targets at about the sound speed. So now:
   run from a stagnation point toward both targets. There is one tracer per divertor and no gyration or drifts.
 - **Continuity test:** it now allows the jump when a tracer lands and starts again upstream, and checks that the trail
   restarts there.
+
+**Addendum (owner, 2026-11-27: "why are the particles going in and repeating, it looks weird").**
+- **Restarting was the wrong picture for these tracers.** They are drawn on the LCFS, a closed flux surface, where a field
+  line never ends. A particle there keeps streaming round the torus on its own field line.
+- **Now:** each tracer keeps one fixed field line, the one through its divertor's nominal strike line θ_d at φ_k, and
+  streams continuously in +φ.
+  - It makes one toroidal turn per TURN_SECONDS = 15 s, crossing φ = 0 smoothly; the label shifts by 2πι per turn.
+  - It never restarts. The readout's "Near" column is the divertor it is passing.
+- **Slow motion:** the panel states the screen speed along the field line (a few m/s) against the ion sound speed
+  (~200 km/s).
+- **Heat to the plates:** it reaches them in the scrape-off layer just outside the LCFS, which the heat comets show. The
+  earlier landing description above is superseded.

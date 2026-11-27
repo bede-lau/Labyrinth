@@ -42,11 +42,13 @@ test('five targets share a pulsing core and edge; each tracer stays with its own
   expect(core()).toBe(model.crossSection(sim.state,sim.coils,14).T[4]);
   sim.advance(2600);
   const later = tracks.read();
-  // Nothing moves heat between targets (D-031): every tracer follows the field within a sector of its own diverter.
+  // Every tracer stays on its own field line (D-042): its θ is that line's θ at its φ, and `from` is the divertor it is
+  // passing now.
   later.forEach((p, k) => {
-    expect(p.from).toBe(k);
-    const d = p.phi - art.diverters.items[k]!.phi;
-    expect(Math.abs(Math.atan2(Math.sin(d), Math.cos(d)))).toBeLessThan(Math.PI / art.diverters.items.length);
+    expect(p.id).toBe(k + 1);
+    expect(Math.abs(Math.atan2(Math.sin(p.theta - tracks.thetaAt(p.alpha, p.phiU)), Math.cos(p.theta - tracks.thetaAt(p.alpha, p.phiU))))).toBeLessThan(1e-12);
+    const near = art.diverters.items.map((d) => Math.abs(Math.atan2(Math.sin(p.phi - d.phi), Math.cos(p.phi - d.phi))));
+    expect(p.from).toBe(near.indexOf(Math.min(...near)));
   });
   expect(tracks.read()).toBe(later);
   sim.reset();
@@ -84,11 +86,7 @@ test('tracers keep their heads, trails and readings through coil switches and sh
     const previous = tracks.read();
     sim.advance(10);
     tracks.read().forEach((p,k) => {
-      // A tracer that has just landed on its plate starts again upstream (a new particle): that is the only jump.
-      if (p.progress < previous[k]!.progress) {
-        expect(p.trail.every((q) => distance(q, p.position) < 1e-12)).toBe(true); // a fresh trail, no line back
-        return;
-      }
+      // Tracers stream continuously round the torus: no jumps, ever (D-042).
       expect(distance(previous[k]!.position,p.position)).toBeLessThan(0.33);
       expect(Math.abs(previous[k]!.temperature-p.temperature)).toBeLessThan(0.04);
       expect(Math.abs(previous[k]!.field-p.field)).toBeLessThan(0.1);

@@ -12,8 +12,8 @@ type Vec3 = ReturnType<typeof toXYZ>;
 interface Sample { time: number; position: Vec3 }
 const tailStep = 0.018;
 const tailLength = 14;
-/** Seconds of display time for a tracer's drawn flight into its plate (slow motion: see `slowdown`). */
-export const FLIGHT_SECONDS = 1.2;
+/** Seconds of display time for a tracer to stream once round the torus along its field line (slow motion). */
+export const TURN_SECONDS = 15;
 
 // Read the path the head actually traversed.
 function sampleTrail(history: Sample[], now: number) {
@@ -69,23 +69,20 @@ function fieldLineAtlas(art: HeatfieldArtifact, iota: number) {
 }
 
 /**
- * Plasma tracers (physical in path, slowed in time). Charged particles stream along the magnetic field; in the scrape-off
- * layer they run from upstream to the divertor targets at about the sound speed c_s = √(2eT_u/m_i). Each tracer follows
- * the field line that lands on its divertor's strike line (the model's own, swept by the coils), starting halfway to
- * the neighbouring divertor, and starts again upstream when it reaches the plate. What is drawn is only the last few
- * metres (`drawnLength`) of a ~200 m connection length that winds many times round the island. Real ions move at up to
- * c_s (Mach 1 is reached only at the target; upstream the flow is subsonic), so the whole transit takes at least
- * L_c/c_s ≈ 1 ms (`realFlight`). On screen a tracer covers its drawn path in FLIGHT_SECONDS; `slowdown` is c_s over that
- * screen speed.
+ * Plasma tracers (physical in path, slowed in time). Charged particles stream along the magnetic field; on a closed flux
+ * surface (the LCFS) a field line never ends, so a particle on it keeps streaming round the torus on its own field line
+ * (its label α stays fixed). Each tracer starts at its divertor's nominal strike line (θ_d at φ_k) and streams
+ * continuously in +φ, one toroidal turn per TURN_SECONDS, crossing φ = 0 smoothly (the label shifts by 2πι per turn).
+ * Heat reaches the plates only in the scrape-off layer just outside the LCFS (the heat comets show that). Real ions move
+ * at about the sound speed c_s = √(2eT_u/m_i); `slowdown` is c_s over the tracer's speed on screen.
  */
 export function createParticleTracks(art: HeatfieldArtifact, sim: Simulation) {
   const sites = art.diverters.items;
   const edge = art.surfaces.at(-1)!;
   const {nTheta, nPhi} = art.grid;
   const thetaAt = fieldLineAtlas(art, sim.model.iota);
-  // A tracer's flight covers most of the half-sector before its divertor (it never leaves its own sector).
-  const reach = 0.9 * Math.PI / sites.length;
-  const initial = () => sites.map(() => ({ history: [] as Sample[], progress: -1 }));
+  const omega = tau / TURN_SECONDS;
+  const initial = () => sites.map(() => ({ history: [] as Sample[] }));
   let tracks = initial();
   let previous = sim.time;
 
@@ -101,6 +98,25 @@ export function createParticleTracks(art: HeatfieldArtifact, sim: Simulation) {
     }
     return NaN; // no line found (the caller falls back)
   };
+  // Each tracer's field line, fixed for good: the line through its divertor's nominal strike line (if none is found, the
+  // straight-field-line label, λ neglected).
+  const labels = sites.map((site) => {
+    const found = labelThrough(sim.model.thetaD, site.phi);
+    return Number.isFinite(found) ? found : wrap(sim.model.thetaD - sim.model.iota * site.phi);
+  });
+  const pointAt = (alpha: number, phiU: number) => {
+    const phi = wrap(phiU);
+    const theta = thetaAt(alpha, phiU);
+    const [r, z] = sampleRZ(edge, nTheta, nPhi, theta, phi);
+    return { phi, theta, position: toXYZ(r, z, phi) };
+  };
+  const nearest = (phi: number) => {
+    let best = 0;
+    sites.forEach((site, k) => {
+      if (Math.abs(wrapPi(phi - site.phi)) < Math.abs(wrapPi(phi - sites[best]!.phi))) best = k;
+    });
+    return best;
+  };
 
   function frame() {
     const time = sim.time;
@@ -108,34 +124,13 @@ export function createParticleTracks(art: HeatfieldArtifact, sim: Simulation) {
     previous = time;
     const field = sim.field();
     const loads = sim.model.stripLoads(sim.state, sim.coils);
-    const strike = sim.model.strikeLines(sim.coils, sim.state.n);
     const edgeSolution = sim.model.edge(sim.state.n, sim.coils);
     const p = sim.model.params;
-    return tracks.map((track, from) => {
-      // Each tracer stays with its own diverter (it follows the field into that plate).
-      const phiK = sites[from]!.phi;
-      // The traced line through the strike point; if none is found, the straight-field-line label (λ neglected).
-      const found = labelThrough(strike[from]!, phiK);
-      const alpha = Number.isFinite(found) ? found : wrap(strike[from]! - sim.model.iota * phiK);
-      const lineAt = (s: number) => {
-        const ph = phiK - reach * (1 - s);
-        const [rr, zz] = sampleRZ(edge, nTheta, nPhi, thetaAt(alpha, ph), wrap(ph));
-        return toXYZ(rr, zz, wrap(ph));
-      };
-      // Length of the drawn piece of field line (m).
-      let drawnLength = 0;
-      for (let i = 1, last = lineAt(0); i <= 24; i++) {
-        const next = lineAt(i / 24);
-        drawnLength += Math.hypot(next[0] - last[0], next[1] - last[1], next[2] - last[2]);
-        last = next;
-      }
-      const progress = (time / FLIGHT_SECONDS + from / sites.length) % 1;
-      if (progress < track.progress) track.history = []; // landed: start again upstream, with a fresh trail
-      track.progress = progress;
-      const phi = wrap(phiK - reach * (1 - progress));
-      const theta = thetaAt(alpha, phiK - reach * (1 - progress));
-      const [r,z] = sampleRZ(edge,nTheta,nPhi,theta,phi);
-      const position = toXYZ(r,z,phi);
+    return tracks.map((track, k) => {
+      const alpha = labels[k]!;
+      // Unwrapped toroidal angle: continuous for ever (never restarts).
+      const phiU = sites[k]!.phi + omega * time;
+      const { phi, theta, position } = pointAt(alpha, phiU);
       if (track.history.at(-1)?.time === time) track.history.pop();
       track.history.push({time,position});
       const trail = sampleTrail(track.history, time);
@@ -146,13 +141,17 @@ export function createParticleTracks(art: HeatfieldArtifact, sim: Simulation) {
           (u%1)*data[(j%nPhi)*nTheta+(a+1)%nTheta]!;
         return (1-v%1)*row(b) + (v%1)*row(b+1);
       };
+      // The divertor the tracer is passing now, and its peak load.
+      const from = nearest(phi);
       const flux = Math.max(...loads.subarray(from*nTheta,(from+1)*nTheta));
-      // Slow motion: the real flight along the connection length at the sound speed, against the shown one.
+      // Speed on screen along the field line (m/s), from the line's length per radian of φ here, against c_s.
+      const h = 1e-3;
+      const ahead = pointAt(alpha, phiU + h).position;
+      const screenSpeed = (Math.hypot(ahead[0] - position[0], ahead[1] - position[1], ahead[2] - position[2]) / h) * omega;
       const tu = edgeSolution.Tu[from]!;
       const cs = tu > 0 ? Math.sqrt((2 * tu * p.keV) / (p.ionMass * p.amu)) : 0;
-      const realFlight = cs > 0 ? p.connectionLength / cs : Infinity;
-      const slowdown = cs > 0 ? cs / (drawnLength / FLIGHT_SECONDS) : 0;
-      return {id:from+1, from, flux, phi, theta, alpha, progress, position, trail, realFlight, slowdown, drawnLength,
+      const slowdown = cs > 0 ? cs / screenSpeed : 0;
+      return {id:k+1, from, flux, phi, phiU, theta, alpha, position, trail, screenSpeed, soundSpeed: cs, slowdown,
         field:value(field), temperature:value(sim.state.T)};
     });
   }

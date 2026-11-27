@@ -8,8 +8,9 @@
 ## Current state
 
 ### 2026-11-27: W7-X view — plasma tracers follow the field (D-042)
-- Tracers P1–P5 stream along the equilibrium's field line into their divertor's strike line (interpolated between the 8
-  traced lines), shown ~1,200x slower than the real ~1 ms flight (stated in the panel). Was a decorative loop.
+- Tracers P1–P5 stream continuously round the torus on their own equilibrium field line (interpolated between the 8
+  traced lines, from each divertor's strike line), slow motion against the ion sound speed stated in the panel. Was a
+  decorative loop; a first version that landed and restarted at the plate looked wrong and was replaced.
 
 ### 2026-11-26: heat model v8 — footprint width follows the edge; τ_E follows the power (D-041)
 - MODEL.md step 8b: σ_θ and A_wet scale as (T_u/T_λ)^(−5/4) (conduction-limited SOL), solved with the two-point model in

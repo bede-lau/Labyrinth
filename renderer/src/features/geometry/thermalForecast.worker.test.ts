@@ -22,4 +22,4 @@ test('the forecast worker answers a loop request with the decision a synchronous
   expect(posted).toHaveLength(1);
   expect(posted[0]).toEqual(decideLoop(heatedEdge(art), request));
   expect(posted[0]!.coils).toEqual([1, 1, 1, 1, 1]);
-});
+}, 30_000); // two full forecasts (~5 s alone): slower than the default 5 s limit under a loaded machine

@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { sampleRZ, vmecTheta } from '../heatfield/scene';
 import type { HeatfieldArtifact } from '../heatfield/types';
 import { fiveTargetScenario, startupSimulation } from './heatedEdge';
-import { createParticleTracks, FLIGHT_SECONDS } from './particleTracks';
+import { createParticleTracks, TURN_SECONDS } from './particleTracks';
 
 const saved: HeatfieldArtifact = JSON.parse(readFileSync(resolve(__dirname, '../../../../artifacts/heatfield.json'), 'utf8'));
 const wrapPi = (v: number) => Math.atan2(Math.sin(v), Math.cos(v));
@@ -44,41 +44,45 @@ test('the field-line atlas reproduces every traced line, and in-between lines wi
   }
 });
 
-test('each tracer runs along the field line through its own strike point, and the slow motion is stated', () => {
+test('each tracer streams continuously round the torus on its own field line, from its strike line, in stated slow motion', () => {
   const art = fiveTargetScenario(saved);
   const sim = startupSimulation(art);
   sim.advance(Math.round(2 / sim.model.params.dt));
   const tracks = createParticleTracks(art, sim);
-  const rows = tracks.read();
-  const strike = sim.model.strikeLines(sim.coils, sim.state.n);
   const p = sim.model.params;
+  const rows = tracks.read();
   rows.forEach((row, k) => {
-    // A line through the strike point was found (a failed search would give NaN, and the tracer would not be drawn).
+    // Its field line passes through its divertor's nominal strike line (θ_d at φ_k); the label never changes.
     expect(Number.isFinite(row.alpha)).toBe(true);
-    // At its plate (φ_k) the tracer's field line is at the divertor's strike line.
-    expect(Math.abs(wrapPi(tracks.thetaAt(row.alpha, art.diverters.items[k]!.phi) - strike[k]!))).toBeLessThan(1e-3);
+    expect(Math.abs(wrapPi(tracks.thetaAt(row.alpha, art.diverters.items[k]!.phi) - sim.model.thetaD))).toBeLessThan(1e-3);
     // Its head is on that line, on the LCFS.
+    expect(Math.abs(wrapPi(row.theta - tracks.thetaAt(row.alpha, row.phiU)))).toBeLessThan(1e-12);
     const [r, z] = sampleRZ(art.surfaces.at(-1)!, art.grid.nTheta, art.grid.nPhi, row.theta, row.phi);
     expect(Math.abs(Math.hypot(row.position[0], row.position[1]) - r)).toBeLessThan(1e-9);
     expect(Math.abs(row.position[2] - z)).toBeLessThan(1e-9);
-    // Real flight: L_c at the sound speed of the divertor's upstream temperature, about a millisecond.
-    const tu = sim.model.edge(sim.state.n, sim.coils).Tu[k]!;
+    // One toroidal turn per TURN_SECONDS, from φ_k at t = 0.
+    expect(row.phiU).toBeCloseTo(art.diverters.items[k]!.phi + (2 * Math.PI * sim.time) / TURN_SECONDS, 12);
+    // Slow motion against the sound speed of the divertor it is passing.
+    const tu = sim.model.edge(sim.state.n, sim.coils).Tu[row.from]!;
     const cs = Math.sqrt((2 * tu * p.keV) / (p.ionMass * p.amu));
-    expect(row.realFlight).toBeCloseTo(p.connectionLength / cs, 12);
-    expect(row.realFlight).toBeGreaterThan(5e-4);
-    expect(row.realFlight).toBeLessThan(5e-3);
-    // The drawn piece is a few metres of field line, a small part of L_c; on screen it moves at drawn/FLIGHT_SECONDS,
-    // so the slow motion against the sound speed is c_s over that.
-    expect(row.drawnLength).toBeGreaterThan(1);
-    expect(row.drawnLength).toBeLessThan(0.05 * p.connectionLength);
-    expect(row.slowdown).toBeCloseTo(cs / (row.drawnLength / FLIGHT_SECONDS), 6);
+    expect(row.soundSpeed).toBeCloseTo(cs, 9);
+    expect(row.screenSpeed).toBeGreaterThan(0.5);
+    expect(row.screenSpeed).toBeLessThan(20);
+    expect(row.slowdown).toBeCloseTo(cs / row.screenSpeed, 6);
   });
-  // The tracer moves toward its plate (progress grows) and in +φ toward φ_k.
-  const before = tracks.read().map((r) => [r.progress, r.phi]);
-  sim.advance(50);
+  // A whole turn later every tracer is back near where it was, on the same line, having never jumped.
+  const start = rows.map((r) => r.position);
+  let last = start;
+  const steps = Math.round(TURN_SECONDS / p.dt);
+  for (let done = 0; done < steps; done += 100) {
+    sim.advance(Math.min(100, steps - done));
+    const now = tracks.read().map((r) => r.position);
+    now.forEach((q, k) => expect(Math.hypot(q[0] - last[k]![0], q[1] - last[k]![1], q[2] - last[k]![2])).toBeLessThan(1.5));
+    last = now;
+  }
   tracks.read().forEach((r, k) => {
-    if (r.progress < before[k]![0]!) return; // landed and restarted
-    expect(r.progress).toBeGreaterThan(before[k]![0]!);
-    expect(wrapPi(r.phi - before[k]![1]!)).toBeGreaterThan(0);
+    // After one turn the line is at θ advanced by ~2πι: the same field line, a different poloidal place (it is not closed).
+    expect(Math.abs(wrapPi(r.theta - tracks.thetaAt(rows[k]!.alpha, r.phiU)))).toBeLessThan(1e-12);
+    expect(r.phiU - rows[k]!.phiU).toBeCloseTo(2 * Math.PI, 6);
   });
-});
+}, 60_000);
